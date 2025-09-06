@@ -10,7 +10,7 @@
   --card-foreground: hsl(210 25% 7.8431%);
   --popover: hsl(0 0% 100%);
   --popover-foreground: hsl(210 25% 7.8431%);
-  --primary: hsl(229 46% 44%);
+  --primary: hsl(234, 49%, 40%);
   --primary-foreground: hsl(0 0% 100%);
   --secondary: hsl(229 46% 54%);
   --secondary-foreground: hsl(0 0% 100%);
@@ -155,4 +155,10 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
+
+  .fade-gradient-mask {
+    -webkit-mask-image: linear-gradient(to right, transparent 35%, black 55%);
+    mask-image: linear-gradient(to right, transparent 35%, black 55%);
+  }
 }
+

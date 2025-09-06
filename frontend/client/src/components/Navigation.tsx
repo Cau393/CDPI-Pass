@@ -41,27 +41,12 @@ export default function Navigation() {
               className="flex items-center cursor-pointer"
               data-testid="button-logo"
             >
-              <svg
-                width="32"
-                height="32"
-                viewBox="0 0 100 100"
-                className="mr-3"
-                fill="white"
-              >
-                <circle cx="30" cy="30" r="8" />
-                <circle cx="70" cy="30" r="8" />
-                <circle cx="30" cy="70" r="8" />
-                <circle cx="70" cy="70" r="8" />
-                <circle cx="50" cy="50" r="8" />
-                <line x1="30" y1="30" x2="70" y2="30" stroke="white" strokeWidth="2" />
-                <line x1="30" y1="70" x2="70" y2="70" stroke="white" strokeWidth="2" />
-                <line x1="30" y1="30" x2="30" y2="70" stroke="white" strokeWidth="2" />
-                <line x1="70" y1="30" x2="70" y2="70" stroke="white" strokeWidth="2" />
-                <line x1="30" y1="30" x2="70" y2="70" stroke="white" strokeWidth="2" />
-                <line x1="30" y1="70" x2="70" y2="30" stroke="white" strokeWidth="2" />
-              </svg>
+              <img 
+            src="/Marca CDPI negativa 32x32px.svg" 
+            alt="CDPI Faculdade Logo" 
+            className="h-10 w-auto mr-3" 
+              />
               <span className="text-xl font-bold text-white">
-                CDPI
                 {user?.isAdmin && <span className="text-xs ml-2 bg-white/20 text-white px-2 py-1 rounded">ADMIN</span>}
               </span>
             </button>

@@ -41,7 +41,7 @@ export default function HomePage() {
   return (
     <main className="min-h-screen bg-gray-50">
       {/* Hero Section with Events */}
-      <div className="bg-white">
+      <div className="bg-[rgb(25,30,94)]"> 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Main Event Card */}
@@ -148,9 +148,9 @@ export default function HomePage() {
 
             {/* Sidebar - Próximos Eventos */}
             <div className="lg:col-span-1">
-              <div className="bg-primary text-white rounded-t-lg p-4">
-                <h3 className="text-lg font-bold">Próximos Eventos</h3>
-              </div>
+              <div className="bg-[rgb(58,57,147)] text-white rounded-t-lg p-4">
+    <h3 className="text-lg font-bold">Próximos Eventos</h3>
+  </div>
               <div className="bg-white rounded-b-lg shadow-lg">
                 {upcomingEvents.length > 0 ? (
                   <div className="divide-y">
@@ -235,42 +235,42 @@ export default function HomePage() {
       </div>
 
       {/* About Section with Star Design */}
-      <div className="bg-gray-100 py-16 relative overflow-hidden">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-            <div>
-              <h2 className="text-3xl font-bold text-gray-900 mb-6">
-                Sobre o Evento
-              </h2>
-              <p className="text-gray-600 mb-4">
-                Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Quis ipsum suspendisse ultrices gravida.
-              </p>
-              <p className="text-gray-600 mb-4">
-                Risus commodo viverra maecenas accumsan lacus vel facilisis.
-              </p>
-            </div>
-            
-            {/* Star-shaped speaker image - needs 500x500px image */}
-            <div className="relative flex justify-center">
-              <div className="relative">
-                <svg width="400" height="400" viewBox="0 0 400 400" className="absolute inset-0">
-                  <path d="M200 50 L250 150 L360 150 L275 220 L320 330 L200 250 L80 330 L125 220 L40 150 L150 150 Z" 
-                        fill="url(#starGradient)" opacity="0.1"/>
-                  <defs>
-                    <linearGradient id="starGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="#5B6EC6"/>
-                      <stop offset="100%" stopColor="#8B9DC9"/>
-                    </linearGradient>
-                  </defs>
-                </svg>
-                <div className="w-64 h-64 bg-gradient-to-br from-primary to-secondary rounded-full flex items-center justify-center">
-                  <span className="text-8xl">🎤</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+     <div className="bg-white py-16 lg:py-24 relative overflow-hidden">
+  {/* 1. Faded background with NEW gradient mask */}
+  <img 
+    src="/audience-background.jpg" 
+    alt="Audience at the event"
+    className="absolute inset-0 w-full h-full object-cover grayscale opacity-30 fade-gradient-mask"
+  />
+
+  {/* 2. Content grid that sits on top */}
+  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
+
+      {/* Text Content */}
+      <div className="lg:pr-8">
+        <h2 className="text-3xl font-bold text-gray-900 mb-6">
+          Sobre o Evento
+        </h2>
+        <p className="text-gray-600 mb-4 leading-relaxed">
+          Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Quis ipsum suspendisse ultrices gravida.
+        </p>
+        <p className="text-gray-600 leading-relaxed">
+          Risus commodo viverra maecenas accumsan lacus vel facilisis.
+        </p>
       </div>
+
+      {/* 3. LARGER Speaker image with the star mask */}
+      <div className="relative h-96 lg:h-[550px]">
+        <img
+          src="/speaker.png"
+          alt="Event speaker"
+          className="w-full h-full object-contain star-mask transform lg:scale-125 lg:-mr-16"
+        />
+      </div>
+    </div>
+  </div>
+</div>
 
       {/* FAQ Section */}
       <div className="bg-white py-16">
@@ -344,29 +344,16 @@ export default function HomePage() {
             {/* Logo and Info */}
             <div>
               <div className="flex items-center mb-4">
-                <svg
-                  width="40"
-                  height="40"
-                  viewBox="0 0 100 100"
-                  className="mr-3"
-                  fill="white"
-                >
-                  <circle cx="30" cy="30" r="8" />
-                  <circle cx="70" cy="30" r="8" />
-                  <circle cx="30" cy="70" r="8" />
-                  <circle cx="70" cy="70" r="8" />
-                  <circle cx="50" cy="50" r="8" />
-                  <line x1="30" y1="30" x2="70" y2="30" stroke="white" strokeWidth="2" />
-                  <line x1="30" y1="70" x2="70" y2="70" stroke="white" strokeWidth="2" />
-                  <line x1="30" y1="30" x2="30" y2="70" stroke="white" strokeWidth="2" />
-                  <line x1="70" y1="30" x2="70" y2="70" stroke="white" strokeWidth="2" />
-                </svg>
-                <span className="text-2xl font-bold">CDPI</span>
+                <img 
+              src="/LOGO rodape 200px 60x negativa.svg" 
+              alt="CDPI Faculdade Logo" 
+              className="h-12 w-auto" 
+                />
               </div>
               <p className="text-white/80 text-sm">
-                CDPI Recrutou. Todos os direitos<br/>
-                reservados ©️ 2025 Industria Farmacêutica<br/>
-                Rua Dr Ronoel Senna 122
+                CDPI Faculdade. Todos os direitos<br/>
+                reservados ©️ 2025 CNPJ: 40.082.785/0001-03<br/>
+                Rua 115, Setor Sul, Golania-GO
               </p>
             </div>
 
@@ -383,19 +370,16 @@ export default function HomePage() {
             {/* Social Links */}
             <div className="text-center md:text-right">
               <div className="flex justify-center md:justify-end space-x-3 mb-4">
-                <a href="#" className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition-colors">
+                <a href="https://www.facebook.com/cdpipharma/" target="_blank" className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition-colors">
                   <Facebook className="h-5 w-5" />
                 </a>
-                <a href="#" className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition-colors">
+                <a href="https://www.instagram.com/cdpipharma/" target="_blank" className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition-colors">
                   <Instagram className="h-5 w-5" />
                 </a>
-                <a href="#" className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition-colors">
-                  <Twitter className="h-5 w-5" />
-                </a>
-                <a href="#" className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition-colors">
+                <a href="https://www.linkedin.com/company/cdpi-pharma/" target="_blank" className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition-colors">
                   <Linkedin className="h-5 w-5" />
                 </a>
-                <a href="#" className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition-colors">
+                <a href="https://www.youtube.com/@cdpimoving" target="_blank" className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition-colors">
                   <Youtube className="h-5 w-5" />
                 </a>
               </div>
