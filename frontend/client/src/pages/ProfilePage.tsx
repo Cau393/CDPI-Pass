@@ -278,6 +278,32 @@ export default function ProfilePage() {
     return null;
   }
 
+  const cancelOrderMutation = useMutation({
+  mutationFn: (orderId: string) => {
+    return apiRequest("DELETE", `/api/orders/${orderId}/cancel`);
+  },
+  onSuccess: () => {
+    toast({
+      title: "Pedido cancelado",
+      description: "Seu pedido foi cancelado com sucesso.",
+    });
+    queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+  },
+  onError: (error: Error) => {
+    toast({
+      title: "Erro ao cancelar",
+      description: error.message,
+      variant: "destructive",
+    });
+  },
+});
+
+const handleCancelOrder = (orderId: string) => {
+  // Here you would open an AlertDialog for confirmation
+  // On confirmation, call:
+  cancelOrderMutation.mutate(orderId);
+};
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
@@ -447,18 +473,16 @@ export default function ProfilePage() {
                                 </div>
                               ) : order.status === "pending" && order.asaasPaymentId ? (
                                 <div className="flex gap-2">
-                                  <Button
-                                    className="bg-yellow-600 hover:bg-yellow-700"
-                                    size="sm"
-                                    onClick={() => {
-                                      // Redirect to Asaas payment link
-                                      window.open(`https://www.asaas.com/c/${order.asaasPaymentId}`, '_blank');
-                                    }}
-                                    data-testid={`button-pay-${order.id}`}
-                                  >
-                                    <CreditCard className="h-4 w-4 mr-2" />
-                                    Pagar
-                                  </Button>
+                                  {order.status === 'pending' && (
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      onClick={() => handleCancelOrder(order.id)} // You will create this handler
+                                      disabled={cancelOrderMutation.isPending}
+                                    >
+                                      Cancelar Pedido
+                                    </Button>
+                                  )}
                                   <Button
                                     variant="outline"
                                     size="sm"

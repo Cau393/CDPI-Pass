@@ -1,5 +1,7 @@
 import QRCode from 'qrcode';
 import crypto from 'crypto';
+import { s3Service } from './s3Service';
+import { storage } from '../storage';
 
 interface QRCodeData {
   orderId: string;
@@ -7,7 +9,18 @@ interface QRCodeData {
   userId: string;
 }
 
+interface QRCodeResult {
+  base64Data: string;  
+  s3Url?: string;      
+}
+
 class QRCodeService {
+  /*
+    Generate a QR code for the given data.
+    @param data - The data to encode in the QR code.
+    @returns The base64-encoded QR code data for database.
+    @returns the S3 URL of the QR code uploaded.
+  */
   async generateQRCode(data: QRCodeData): Promise<string> {
     try {
       // Create a unique identifier for the ticket
@@ -33,6 +46,8 @@ class QRCodeService {
         width: 256,
       });
 
+      this.generateQRCodeBuffer(data);
+
       return qrCodeDataUrl;
     } catch (error) {
       console.error('Error generating QR code:', error);
@@ -55,6 +70,7 @@ class QRCodeService {
       // Generate QR code as buffer
       const qrCodeBuffer = await QRCode.toBuffer(dataString, {
         errorCorrectionLevel: 'M',
+        type: 'png',
         margin: 1,
         color: {
           dark: '#0F4C75',
@@ -63,10 +79,24 @@ class QRCodeService {
         width: 256,
       });
 
+      let s3Url: string | undefined;
+      
+      // Try to upload to S3, but don't fail if it doesn't work
+      try {
+        s3Url = await s3Service.uploadQRCode(qrCodeBuffer, data.orderId);
+        console.log(`QR code uploaded to S3: ${s3Url}`);
+        // save the url in the database
+        await storage.updateOrder(data.orderId, { qr_code_s3_url: s3Url });
+        console.log("QR code S3 URL saved in database");
+      } catch (s3Error) {
+        console.warn('Failed to upload QR code to S3, using base64 only:', s3Error);
+        // Continue without S3 - fallback to base64 only
+      }
+
       return qrCodeBuffer;
     } catch (error) {
-      console.error('Error generating QR code buffer:', error);
-      throw new Error('Failed to generate QR code buffer');
+      console.error('Error generating QR code:', error);
+      throw new Error('Failed to generate QR code');
     }
   }
 
@@ -105,6 +135,20 @@ class QRCodeService {
     const secret = process.env.QR_CODE_SECRET || 'default-secret-key';
     const data = `${orderId}:${eventId}:${userId}:${secret}`;
     return crypto.createHash('sha256').update(data).digest('hex').substring(0, 16);
+  }
+
+  async uploadExistingQRCode(base64Data: string, orderId: string): Promise<string | null> {
+    try {
+      // Convert base64 data URL to buffer
+      const base64String = base64Data.replace(/^data:image\/png;base64,/, '');
+      const buffer = Buffer.from(base64String, 'base64');
+      
+      // Upload to S3
+      return await s3Service.uploadQRCode(buffer, orderId);
+    } catch (error) {
+      console.error('Failed to upload existing QR code to S3:', error);
+      return null;
+    }
   }
 }
 

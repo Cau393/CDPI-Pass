@@ -20,6 +20,7 @@ interface TicketEmailData {
   eventLocation: string;
   qrCodeData: string;
   orderId: string;
+  qrCodeS3Url: string;
 }
 
 class EmailService {
@@ -190,7 +191,7 @@ class EmailService {
               
               <div class="qr-code">
                 <p><strong>QR Code do Ingresso:</strong></p>
-                <img src="${data.qrCodeData}" alt="QR Code do Ingresso" style="max-width: 256px; height: auto; display: block; margin: 10px auto;">
+                <img src="${data.qrCodeS3Url}" alt="QR Code do Ingresso" style="max-width: 256px; height: auto; display: block; margin: 10px auto;">
                 <p style="font-size: 12px; color: #666;">
                   Apresente este QR Code na entrada do evento
                 </p>
@@ -262,6 +263,27 @@ class EmailService {
         await storage.updateEmailStatus(email.id, "failed");
       }
     }
+  }
+
+  async sendPasswordResetEmail(email: string, userId: string): Promise<boolean> {
+    // Create a password reset token that expires in 30 minutes
+    const resetToken = jwt.sign(
+        { userId, type: 'password-reset' },
+        process.env.JWT_SECRET || 'your-secret-key',
+        { expiresIn: '30m' }
+    );
+
+    const resetLink = `https://cdpipass.com.br/reset-password?token=${resetToken}`; // https://cdpipass.com.br/reset-password?token=${resetToken} in production
+
+    const html = `
+        <h1>Redefinição de Senha</h1>
+        <p>Você solicitou a redefinição de sua senha. Clique no link abaixo para criar uma nova:</p>
+        <a href="${resetLink}">Redefinir Senha</a>
+        <p>Este link expirará em 30 minutos.</p>
+    `;
+    const text = `Acesse este link para redefinir sua senha: ${resetLink}`;
+
+    return this.sendEmail(email, "Redefinição de Senha - CDPI Pass", html, text);
   }
 }
 

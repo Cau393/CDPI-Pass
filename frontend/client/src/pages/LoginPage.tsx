@@ -118,7 +118,7 @@ export default function LoginPage() {
                   Lembrar de mim
                 </Label>
               </div>
-              <a href="#" className="text-sm text-primary hover:text-secondary">
+              <a href="/forgot-password" className="text-sm text-primary hover:text-secondary">
                 Esqueceu a senha?
               </a>
             </div>

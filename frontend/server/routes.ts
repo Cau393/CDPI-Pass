@@ -174,6 +174,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ message: "O e-mail é obrigatório" });
+        }
+
+        const user = await storage.getUserByEmail(email);
+
+        // For security, always return a success message, even if the user doesn't exist.
+        if (user) {
+            await emailService.sendPasswordResetEmail(user.email, user.id);
+        }
+
+        res.status(200).json({ message: "Se o e-mail estiver cadastrado, um link de redefinição foi enviado." });
+    } catch (error) {
+        console.error("Forgot password error:", error);
+        res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+        const { token, newPassword } = req.body;
+
+        if (!token || !newPassword) {
+            return res.status(400).json({ message: "Token e nova senha são obrigatórios." });
+        }
+
+        const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; type: string };
+
+        if (decoded.type !== 'password-reset') {
+            return res.status(400).json({ message: "Token inválido." });
+        }
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        await storage.updateUser(decoded.userId, { password: hashedPassword });
+
+        res.status(200).json({ message: "Senha redefinida com sucesso." });
+    } catch (error) {
+        console.error("Reset password error:", error);
+        // Handle expired or invalid tokens specifically
+        if (error instanceof jwt.TokenExpiredError) {
+            return res.status(400).json({ message: "O link de redefinição expirou." });
+        }
+        res.status(400).json({ message: "Link de redefinição inválido ou expirado." });
+    }
+  });
+
   app.post("/api/auth/resend-verification", authenticateToken, async (req: any, res) => {
     try {
       const userId = req.user.id;
@@ -287,6 +336,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Update order with QR code
         const updatedOrder = await storage.updateOrder(order.id, {
           qrCodeData,
+          
         });
 
         // Prepare response with payment details
@@ -392,6 +442,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             eventLocation: event.location,
             qrCodeData: order.qrCodeData || '',
             orderId: order.id,
+            qrCodeS3Url: order.qr_code_s3_url || '',
           });
         }
 
@@ -417,6 +468,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Check payment status error:", error);
       res.status(500).json({ message: "Erro ao verificar status do pagamento" });
+    }
+  });
+
+  // Cancel order
+  app.delete("/api/orders/:id/cancel", authenticateToken, async (req: any, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user.id;
+
+        const order = await storage.getOrder(id);
+
+        if (!order) {
+            return res.status(404).json({ message: "Pedido não encontrado" });
+        }
+
+        if (order.userId !== userId) {
+            return res.status(403).json({ message: "Acesso não autorizado" });
+        }
+
+        if (order.status !== 'pending') {
+            return res.status(400).json({ message: "Este pedido não pode ser cancelado" });
+        }
+
+        if (order.asaasPaymentId) {
+            await asaasService.cancelPayment(order.asaasPaymentId);
+        }
+
+        await storage.deleteOrder(id);
+
+        res.status(200).json({ message: "Pedido cancelado com sucesso" });
+    } catch (error) {
+        console.error("Cancel order error:", error);
+        res.status(500).json({ message: "Erro ao cancelar o pedido" });
     }
   });
 
@@ -568,6 +652,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               eventLocation: event.location,
               qrCodeData: order.qrCodeData || '',
               orderId: order.id,
+              qrCodeS3Url: order.qr_code_s3_url || '',
             });
           }
         }
@@ -929,7 +1014,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         eventDate: event.date,
         eventLocation: event.location,
         qrCodeData: qrCodeData,
-        orderId: order.id
+        orderId: order.id,
+        qrCodeS3Url: order.qr_code_s3_url || '',
       });
 
       res.status(201).json({

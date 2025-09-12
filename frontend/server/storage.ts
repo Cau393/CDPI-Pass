@@ -163,6 +163,7 @@ export class DatabaseStorage implements IStorage {
         asaasPaymentId: orders.asaasPaymentId,
         courtesyLinkId: orders.courtesyLinkId,
         qrCodeData: orders.qrCodeData,
+        qrCodeS3Url: orders.qr_code_s3_url,
         qrCodeUsed: orders.qrCodeUsed,
         qrCodeUsedAt: orders.qrCodeUsedAt,
         createdAt: orders.createdAt,

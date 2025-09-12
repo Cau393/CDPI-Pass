@@ -8,6 +8,8 @@ import HomePage from "@/pages/HomePage";
 import EventsPage from "@/pages/EventsPage";
 import LoginPage from "@/pages/LoginPage";
 import RegisterPage from "@/pages/RegisterPage";
+import ForgotPasswordPage from "@/pages/ForgotPasswordPage";
+import ResetPasswordPage from "@/pages/ResetPasswordPage";
 import ProfilePage from "@/pages/ProfilePage";
 import VerifyEmailPage from "@/pages/VerifyEmailPage";
 import EventDetailsPage from "@/pages/EventDetailsPage";
@@ -38,6 +40,8 @@ function Router() {
         <Route path="/eventos" component={EventsPage} />
         <Route path="/login" component={LoginPage} />
         <Route path="/register" component={RegisterPage} />
+        <Route path="/forgot-password" component={ForgotPasswordPage} />
+        <Route path="/reset-password" component={ResetPasswordPage} />
         <Route path="/verify-email" component={VerifyEmailPage} />
         <Route path="/profile" component={ProfilePage} />
         <Route path="/event/:id" component={EventDetailsPage} />

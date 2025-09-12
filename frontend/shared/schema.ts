@@ -73,6 +73,7 @@ export const orders = pgTable("orders", {
   qrCodeUsedAt: timestamp("qr_code_used_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+  qr_code_s3_url: varchar("qr_code_s3_url", { length: 500 }),
 });
 
 // Email queue table for async processing

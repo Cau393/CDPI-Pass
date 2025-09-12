@@ -38,6 +38,7 @@ class PaymentStatusService {
             eventLocation: event.location,
             qrCodeData: order.qrCodeData || '',
             orderId: order.id,
+            qrCodeS3Url: order.qr_code_s3_url || '',
           });
           
           console.log(`Payment confirmed for order ${orderId}, email sent to ${user.email}`);

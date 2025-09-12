@@ -161,6 +161,16 @@ class AsaasService {
     // This is important for production to ensure webhook authenticity
     return true; // Simplified for now
   }
+
+  async cancelPayment(paymentId: string): Promise<any> {
+  try {
+    // The endpoint for deleting a payment is typically /payments/{id}
+    return await this.makeRequest(`/payments/${paymentId}`, "DELETE");
+    } catch (error) {
+    console.error("Error canceling Asaas payment:", error);
+    throw error;
+    }
+  }
 }
 
 export const asaasService = new AsaasService();

@@ -151,7 +151,7 @@ export default function PaymentModal({ isOpen, onClose, event, onSuccess }: Paym
                         <CreditCard className="h-12 w-12 mx-auto text-primary" />
                         <h3 className="font-semibold">Pagamento com Cartão</h3>
                         <p className="text-sm text-gray-600">
-                          Você será redirecionado para o ambiente seguro da Asaas
+                          O link de pagamento será enviado no seu email!
                         </p>
                         <p className="text-sm text-gray-600">
                           Aceitamos todas as bandeiras
@@ -249,16 +249,10 @@ export default function PaymentModal({ isOpen, onClose, event, onSuccess }: Paym
                   <CardContent className="pt-6">
                     <div className="text-center space-y-4">
                       <CreditCard className="h-12 w-12 mx-auto text-primary" />
-                      <h3 className="font-semibold text-lg">Redirecionando para Pagamento</h3>
+                      <h3 className="font-semibold text-lg">Pagamento Pendente, cheque seu email</h3>
                       <p className="text-sm text-gray-600">
-                        Clique no botão abaixo para completar o pagamento
+                        Foi enviado um link no seu email para finalizar o pagamento!
                       </p>
-                      <Button
-                        onClick={() => window.open(paymentData.payment.link, '_blank')}
-                        className="w-full bg-primary hover:bg-secondary"
-                      >
-                        Ir para Pagamento Seguro
-                      </Button>
                     </div>
                   </CardContent>
                 </Card>
