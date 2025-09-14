@@ -60,76 +60,27 @@ class EmailService {
   }
 
   async sendVerificationEmail(email: string, userId: string): Promise<boolean> {
-    // Create a verification token that expires in 24 hours
-    const verificationToken = jwt.sign(
-      { userId, type: 'email-verification' }, 
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '24h' }
-    );
-    
-    // Use relative URL so it works on any domain
-    const verificationLink = `/verify-email?token=${verificationToken}`;
-    
+    // Generate a 6-digit code
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    // Set an expiration time (15 minutes from now)
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    // Store the code and its expiration in the database
+    await storage.updateUser(userId, {
+        emailVerificationCode: verificationCode,
+        emailVerificationCodeExpiresAt: expiresAt,
+    });
+
     const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <title>Confirme seu email - CDPI Pass</title>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #0F4C75; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background: #f9f9f9; }
-          .button { 
-            display: inline-block; 
-            background: #3282B8; 
-            color: white; 
-            padding: 12px 30px; 
-            text-decoration: none; 
-            border-radius: 5px; 
-            margin: 20px 0; 
-          }
-          .footer { text-align: center; color: #666; font-size: 12px; margin-top: 20px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>🏥 CDPI Pass</h1>
-            <h2>Confirme seu email</h2>
-          </div>
-          <div class="content">
-            <p>Obrigado por se cadastrar no CDPI Pass!</p>
-            <p>Para completar seu cadastro e ter acesso aos eventos farmacêuticos, clique no botão abaixo:</p>
-            <p style="text-align: center;">
-              <a href="${verificationLink}" class="button">Confirmar Email</a>
-            </p>
-            <p>Se o botão não funcionar, copie e cole este link no seu navegador:</p>
-            <p style="word-break: break-all;">${verificationLink}</p>
-            <p>Este link expira em 24 horas.</p>
-          </div>
-          <div class="footer">
-            <p>CDPI Pass - Eventos Farmacêuticos</p>
-            <p>Este é um email automático, não responda.</p>
-          </div>
-        </div>
-      </body>
-      </html>
+      <h1>Confirme seu email - CDPI Pass</h1>
+      <p>Seu código de verificação é:</p>
+      <h2><b>${verificationCode}</b></h2>
+      <p>Este código expira em 15 minutos.</p>
     `;
+    const text = `Seu código de verificação para o CDPI Pass é: ${verificationCode}`;
 
-    const text = `
-      CDPI Pass - Confirmação de Email
-      
-      Obrigado por se cadastrar no CDPI Pass!
-      
-      Para completar seu cadastro, acesse: ${verificationLink}
-      
-      Este link expira em 24 horas.
-    `;
-
-    return this.sendEmail(email, "Confirme seu email - CDPI Pass", html, text);
-  }
+    return this.sendEmail(email, "Seu Código de Verificação - CDPI Pass", html, text);
+    }
 
   async sendTicketEmail(email: string, data: TicketEmailData): Promise<boolean> {
     const eventDate = new Date(data.eventDate).toLocaleDateString('pt-BR', {
@@ -286,5 +237,6 @@ class EmailService {
     return this.sendEmail(email, "Redefinição de Senha - CDPI Pass", html, text);
   }
 }
+
 
 export const emailService = new EmailService();

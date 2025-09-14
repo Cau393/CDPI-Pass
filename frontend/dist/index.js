@@ -57,7 +57,9 @@ var users = pgTable("users", {
   partnerCompany: varchar("partner_company", { length: 255 }),
   isAdmin: boolean("is_admin").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow()
+  updatedAt: timestamp("updated_at").defaultNow(),
+  emailVerificationCode: varchar("email_verification_code", { length: 6 }),
+  emailVerificationCodeExpiresAt: timestamp("email_verification_code_expires_at")
 });
 var events = pgTable("events", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -381,7 +383,7 @@ var storage = new DatabaseStorage();
 // server/routes.ts
 import { z as z2 } from "zod";
 import bcrypt from "bcrypt";
-import jwt2 from "jsonwebtoken";
+import jwt3 from "jsonwebtoken";
 
 // server/utils/validation.ts
 function validateCpf(cpf) {
@@ -463,69 +465,20 @@ var EmailService = class {
     }
   }
   async sendVerificationEmail(email, userId) {
-    const verificationToken = jwt.sign(
-      { userId, type: "email-verification" },
-      process.env.JWT_SECRET || "your-secret-key",
-      { expiresIn: "24h" }
-    );
-    const verificationLink = `/verify-email?token=${verificationToken}`;
+    const verificationCode = Math.floor(1e5 + Math.random() * 9e5).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1e3);
+    await storage.updateUser(userId, {
+      emailVerificationCode: verificationCode,
+      emailVerificationCodeExpiresAt: expiresAt
+    });
     const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <title>Confirme seu email - CDPI Pass</title>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #0F4C75; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background: #f9f9f9; }
-          .button { 
-            display: inline-block; 
-            background: #3282B8; 
-            color: white; 
-            padding: 12px 30px; 
-            text-decoration: none; 
-            border-radius: 5px; 
-            margin: 20px 0; 
-          }
-          .footer { text-align: center; color: #666; font-size: 12px; margin-top: 20px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>\u{1F3E5} CDPI Pass</h1>
-            <h2>Confirme seu email</h2>
-          </div>
-          <div class="content">
-            <p>Obrigado por se cadastrar no CDPI Pass!</p>
-            <p>Para completar seu cadastro e ter acesso aos eventos farmac\xEAuticos, clique no bot\xE3o abaixo:</p>
-            <p style="text-align: center;">
-              <a href="${verificationLink}" class="button">Confirmar Email</a>
-            </p>
-            <p>Se o bot\xE3o n\xE3o funcionar, copie e cole este link no seu navegador:</p>
-            <p style="word-break: break-all;">${verificationLink}</p>
-            <p>Este link expira em 24 horas.</p>
-          </div>
-          <div class="footer">
-            <p>CDPI Pass - Eventos Farmac\xEAuticos</p>
-            <p>Este \xE9 um email autom\xE1tico, n\xE3o responda.</p>
-          </div>
-        </div>
-      </body>
-      </html>
+      <h1>Confirme seu email - CDPI Pass</h1>
+      <p>Seu c\xF3digo de verifica\xE7\xE3o \xE9:</p>
+      <h2><b>${verificationCode}</b></h2>
+      <p>Este c\xF3digo expira em 15 minutos.</p>
     `;
-    const text2 = `
-      CDPI Pass - Confirma\xE7\xE3o de Email
-      
-      Obrigado por se cadastrar no CDPI Pass!
-      
-      Para completar seu cadastro, acesse: ${verificationLink}
-      
-      Este link expira em 24 horas.
-    `;
-    return this.sendEmail(email, "Confirme seu email - CDPI Pass", html, text2);
+    const text2 = `Seu c\xF3digo de verifica\xE7\xE3o para o CDPI Pass \xE9: ${verificationCode}`;
+    return this.sendEmail(email, "Seu C\xF3digo de Verifica\xE7\xE3o - CDPI Pass", html, text2);
   }
   async sendTicketEmail(email, data) {
     const eventDate = new Date(data.eventDate).toLocaleDateString("pt-BR", {
@@ -772,8 +725,16 @@ var AsaasService = class {
     }
   }
   // Webhook signature validation (for production use)
-  validateWebhookSignature(payload, signature) {
-    return true;
+  validateWebhookSignature(requestToken) {
+    const expectedToken = process.env.ASAAS_WEBHOOK_TOKEN;
+    if (!expectedToken) {
+      console.warn("ASAAS_WEBHOOK_TOKEN is not set. Skipping webhook validation.");
+      return true;
+    }
+    if (!requestToken) {
+      return false;
+    }
+    return requestToken === expectedToken;
   }
   async cancelPayment(paymentId) {
     try {
@@ -1000,8 +961,21 @@ var QRCodeService = class {
 };
 var qrCodeService = new QRCodeService();
 
-// server/routes.ts
+// server/middleware/auth.ts
+import jwt2 from "jsonwebtoken";
 var JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+var requireEmailVerification = (req, res, next) => {
+  if (req.user && !req.user.emailVerified) {
+    return res.status(403).json({
+      message: "E-mail n\xE3o verificado.",
+      code: "EMAIL_NOT_VERIFIED"
+    });
+  }
+  next();
+};
+
+// server/routes.ts
+var JWT_SECRET2 = process.env.JWT_SECRET || "your-secret-key";
 var authenticateToken = async (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
@@ -1009,7 +983,7 @@ var authenticateToken = async (req, res, next) => {
     return res.status(401).json({ message: "Token de acesso requerido" });
   }
   try {
-    const decoded = jwt2.verify(token, JWT_SECRET);
+    const decoded = jwt3.verify(token, JWT_SECRET2);
     const user = await storage.getUser(decoded.userId);
     if (!user) {
       return res.status(401).json({ message: "Usu\xE1rio n\xE3o encontrado" });
@@ -1048,12 +1022,11 @@ async function registerRoutes(app2) {
         cpf: formatCpf(body.cpf),
         phone: formatPhone(body.phone)
       });
-      await storage.updateUser(user.id, { emailVerified: true });
-      const token = jwt2.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
+      await emailService.sendVerificationEmail(user.email, user.id);
       res.status(201).json({
-        message: "Conta criada com sucesso!",
-        token,
-        user: { id: user.id, email: user.email, name: user.name, emailVerified: true }
+        message: "Conta criada! Um c\xF3digo de verifica\xE7\xE3o foi enviado para o seu e-mail.",
+        // We send the email back so the frontend knows who to verify
+        email: user.email
       });
     } catch (error) {
       console.error("Registration error:", error);
@@ -1061,6 +1034,40 @@ async function registerRoutes(app2) {
         return res.status(400).json({ message: error.errors[0].message });
       }
       res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+  app2.post("/api/auth/verify-code", async (req, res) => {
+    try {
+      const { email, code } = req.body;
+      const user = await storage.getUserByEmail(email);
+      if (!user || user.emailVerificationCode !== code) {
+        return res.status(400).json({ message: "C\xF3digo inv\xE1lido." });
+      }
+      if (!user.emailVerificationCodeExpiresAt || /* @__PURE__ */ new Date() > new Date(user.emailVerificationCodeExpiresAt)) {
+        return res.status(400).json({ message: "O c\xF3digo expirou." });
+      }
+      await storage.updateUser(user.id, {
+        emailVerified: true,
+        emailVerificationCode: null,
+        // Clear the code
+        emailVerificationCodeExpiresAt: null
+      });
+      const token = jwt3.sign({ userId: user.id }, JWT_SECRET2, { expiresIn: "7d" });
+      res.json({ token, user: { id: user.id, email: user.email, name: user.name, emailVerified: true } });
+    } catch (error) {
+      res.status(500).json({ message: "Erro interno do servidor." });
+    }
+  });
+  app2.post("/api/auth/resend-code", async (req, res) => {
+    try {
+      const { email } = req.body;
+      const user = await storage.getUserByEmail(email);
+      if (user && !user.emailVerified) {
+        await emailService.sendVerificationEmail(user.email, user.id);
+      }
+      res.status(200).json({ message: "Um novo c\xF3digo foi enviado." });
+    } catch (error) {
+      res.status(500).json({ message: "Erro ao reenviar o c\xF3digo." });
     }
   });
   app2.post("/api/auth/login", async (req, res) => {
@@ -1074,7 +1081,7 @@ async function registerRoutes(app2) {
       if (!isValidPassword) {
         return res.status(401).json({ message: "Email ou senha incorretos" });
       }
-      const token = jwt2.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
+      const token = jwt3.sign({ userId: user.id }, JWT_SECRET2, { expiresIn: "7d" });
       res.json({
         token,
         user: { id: user.id, email: user.email, name: user.name, emailVerified: user.emailVerified }
@@ -1098,7 +1105,7 @@ async function registerRoutes(app2) {
         return res.status(400).json({ message: "Token de verifica\xE7\xE3o inv\xE1lido" });
       }
       try {
-        const decoded = jwt2.verify(token, JWT_SECRET);
+        const decoded = jwt3.verify(token, JWT_SECRET2);
         if (decoded.type !== "email-verification") {
           return res.status(400).json({ message: "Token inv\xE1lido" });
         }
@@ -1138,7 +1145,7 @@ async function registerRoutes(app2) {
       if (!token || !newPassword) {
         return res.status(400).json({ message: "Token e nova senha s\xE3o obrigat\xF3rios." });
       }
-      const decoded = jwt2.verify(token, JWT_SECRET);
+      const decoded = jwt3.verify(token, JWT_SECRET2);
       if (decoded.type !== "password-reset") {
         return res.status(400).json({ message: "Token inv\xE1lido." });
       }
@@ -1147,7 +1154,7 @@ async function registerRoutes(app2) {
       res.status(200).json({ message: "Senha redefinida com sucesso." });
     } catch (error) {
       console.error("Reset password error:", error);
-      if (error instanceof jwt2.TokenExpiredError) {
+      if (error instanceof jwt3.TokenExpiredError) {
         return res.status(400).json({ message: "O link de redefini\xE7\xE3o expirou." });
       }
       res.status(400).json({ message: "Link de redefini\xE7\xE3o inv\xE1lido ou expirado." });
@@ -1268,7 +1275,7 @@ async function registerRoutes(app2) {
       res.status(500).json({ message: "Erro interno do servidor" });
     }
   });
-  app2.get("/api/orders", authenticateToken, async (req, res) => {
+  app2.get("/api/orders", authenticateToken, requireEmailVerification, async (req, res) => {
     try {
       const userId = req.user.id;
       const orders2 = await storage.getOrdersByUser(userId);
@@ -1457,8 +1464,13 @@ async function registerRoutes(app2) {
   });
   app2.post("/api/webhooks/asaas", async (req, res) => {
     try {
+      const asaasToken = req.headers["asaas-access-token"];
+      if (!asaasService.validateWebhookSignature(asaasToken)) {
+        console.warn("Invalid or missing Asaas webhook token received.");
+        return res.status(401).json({ error: "Unauthorized" });
+      }
       const { event: eventType, payment } = req.body;
-      console.log("Asaas webhook received:", eventType, payment?.id);
+      console.log("Asaas webhook received and validated:", eventType, payment?.id);
       console.log("Full webhook payload:", JSON.stringify(req.body, null, 2));
       if (eventType === "PAYMENT_CONFIRMED" || eventType === "PAYMENT_RECEIVED") {
         const order = await storage.getOrderByAsaasPaymentId(payment.id);

@@ -11,7 +11,7 @@ import RegisterPage from "@/pages/RegisterPage";
 import ForgotPasswordPage from "@/pages/ForgotPasswordPage";
 import ResetPasswordPage from "@/pages/ResetPasswordPage";
 import ProfilePage from "@/pages/ProfilePage";
-import VerifyEmailPage from "@/pages/VerifyEmailPage";
+import VerifyCodePage from "@/pages/VerifyCodePage";
 import EventDetailsPage from "@/pages/EventDetailsPage";
 import QRScannerPage from "@/pages/QRScannerPage";
 import AdminTestPage from "@/pages/AdminTestPage";
@@ -42,7 +42,7 @@ function Router() {
         <Route path="/register" component={RegisterPage} />
         <Route path="/forgot-password" component={ForgotPasswordPage} />
         <Route path="/reset-password" component={ResetPasswordPage} />
-        <Route path="/verify-email" component={VerifyEmailPage} />
+        <Route path="/verify-email" component={VerifyCodePage} />
         <Route path="/profile" component={ProfilePage} />
         <Route path="/event/:id" component={EventDetailsPage} />
         <Route path="/verificar">

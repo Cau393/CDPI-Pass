@@ -156,10 +156,23 @@ class AsaasService {
   }
 
   // Webhook signature validation (for production use)
-  validateWebhookSignature(payload: string, signature: string): boolean {
-    // Implement webhook signature validation based on Asaas documentation
-    // This is important for production to ensure webhook authenticity
-    return true; // Simplified for now
+  validateWebhookSignature(requestToken: string | undefined): boolean {
+    const expectedToken = process.env.ASAAS_WEBHOOK_TOKEN;
+
+        if (!expectedToken) {
+            // If the token is not configured on the server, validation is skipped.
+            // Log a warning in production environments.
+            console.warn("ASAAS_WEBHOOK_TOKEN is not set. Skipping webhook validation.");
+            return true;
+        }
+
+        if (!requestToken) {
+            // No token was provided in the request
+            return false;
+        }
+
+        // Simple, secure string comparison
+        return requestToken === expectedToken;
   }
 
   async cancelPayment(paymentId: string): Promise<any> {

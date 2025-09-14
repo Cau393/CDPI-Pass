@@ -27,6 +27,8 @@ export const users = pgTable("users", {
   isAdmin: boolean("is_admin").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+  emailVerificationCode: varchar("email_verification_code", { length: 6 }),
+  emailVerificationCodeExpiresAt: timestamp("email_verification_code_expires_at"),
 });
 
 // Events table

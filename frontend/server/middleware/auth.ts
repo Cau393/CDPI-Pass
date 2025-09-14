@@ -69,25 +69,14 @@ export const optionalAuth = async (
   }
 };
 
-export const requireEmailVerification = (
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-): void => {
-  if (!req.user) {
-    res.status(401).json({ message: "Usuário não autenticado" });
-    return;
-  }
-
-  if (!req.user.emailVerified) {
-    res.status(403).json({ 
-      message: "Email não verificado. Verifique seu email antes de continuar.",
-      code: "EMAIL_NOT_VERIFIED"
-    });
-    return;
-  }
-
-  next();
+export const requireEmailVerification = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    if (req.user && !req.user.emailVerified) {
+        return res.status(403).json({
+            message: "E-mail não verificado.",
+            code: "EMAIL_NOT_VERIFIED"
+        });
+    }
+    next();
 };
 
 export const generateToken = (userId: string): string => {
@@ -101,3 +90,5 @@ export const verifyToken = (token: string): { userId: string } | null => {
     return null;
   }
 };
+
+

@@ -31,15 +31,17 @@ export default function LoginPage() {
       return response.json();
     },
     onSuccess: (data) => {
-      localStorage.setItem("token", data.token);
-      // Force refresh of user data after login
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
-      toast({
-        title: "Login realizado com sucesso!",
-        description: "Bem-vindo ao CDPI Pass",
-      });
-      setLocation("/");
-    },
+  localStorage.setItem("token", data.token);
+  queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+
+  if (data.user.emailVerified) {
+    toast({ title: "Login realizado com sucesso!" });
+    setLocation("/");
+  } else {
+    toast({ title: "Verificação necessária", description: "Por favor, verifique seu e-mail." });
+    setLocation(`/verify-email?email=${data.user.email}`);
+    }
+  },
     onError: (error: Error) => {
       toast({
         title: "Erro no login",

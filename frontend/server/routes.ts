@@ -15,6 +15,7 @@ import { validateCpf, validateEmail, formatCpf, formatPhone } from "./utils/vali
 import { emailService } from "./services/emailService";
 import { asaasService } from "./services/asaasService";
 import { qrCodeService } from "./services/qrCodeService";
+import { requireEmailVerification } from "./middleware/auth"; 
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -86,23 +87,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
         phone: formatPhone(body.phone),
       });
       
-      // Set emailVerified to true after creation for MVP
-      await storage.updateUser(user.id, { emailVerified: true });
-
-      // Generate token immediately for MVP
-      const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
+      await emailService.sendVerificationEmail(user.email, user.id);
 
       res.status(201).json({
-        message: "Conta criada com sucesso!",
-        token,
-        user: { id: user.id, email: user.email, name: user.name, emailVerified: true }
+    message: "Conta criada! Um código de verificação foi enviado para o seu e-mail.",
+    // We send the email back so the frontend knows who to verify
+    email: user.email
       });
+    
     } catch (error) {
       console.error("Registration error:", error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: error.errors[0].message });
       }
       res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+
+  app.post("/api/auth/verify-code", async (req, res) => {
+    try {
+        const { email, code } = req.body;
+        const user = await storage.getUserByEmail(email);
+
+        if (!user || user.emailVerificationCode !== code) {
+            return res.status(400).json({ message: "Código inválido." });
+        }
+
+        if (!user.emailVerificationCodeExpiresAt || new Date() > new Date(user.emailVerificationCodeExpiresAt)) {
+            return res.status(400).json({ message: "O código expirou." });
+        }
+
+        // Success! Verify the user and log them in.
+        await storage.updateUser(user.id, {
+            emailVerified: true,
+            emailVerificationCode: null, // Clear the code
+            emailVerificationCodeExpiresAt: null,
+        });
+
+        const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
+        res.json({ token, user: { id: user.id, email: user.email, name: user.name, emailVerified: true } });
+
+    } catch (error) {
+        res.status(500).json({ message: "Erro interno do servidor." });
+    }
+  });
+
+  app.post("/api/auth/resend-code", async (req, res) => {
+    try {
+        const { email } = req.body;
+        const user = await storage.getUserByEmail(email);
+
+        if (user && !user.emailVerified) {
+            await emailService.sendVerificationEmail(user.email, user.id);
+        }
+
+        res.status(200).json({ message: "Um novo código foi enviado." });
+    } catch (error) {
+        res.status(500).json({ message: "Erro ao reenviar o código." });
     }
   });
 
@@ -372,7 +413,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/orders", authenticateToken, async (req: any, res) => {
+  app.get("/api/orders", authenticateToken, requireEmailVerification, async (req: any, res) => {
     try {
       const userId = req.user.id;
       const orders = await storage.getOrdersByUser(userId);
@@ -621,9 +662,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/webhooks/asaas", async (req, res) => {
     try {
+      const asaasToken = req.headers['asaas-access-token'] as string | undefined;
+      
+      if (!asaasService.validateWebhookSignature(asaasToken)) {
+        console.warn("Invalid or missing Asaas webhook token received.");
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      
       const { event: eventType, payment } = req.body;
       
-      console.log("Asaas webhook received:", eventType, payment?.id);
+      console.log("Asaas webhook received and validated:", eventType, payment?.id);
+
       console.log("Full webhook payload:", JSON.stringify(req.body, null, 2));
       
       // Handle different payment events

@@ -60,17 +60,15 @@ export default function RegisterPage() {
       return response.json();
     },
     onSuccess: (data) => {
-      // Auto-login after registration for MVP
-      if (data.token) {
-        localStorage.setItem("token", data.token);
-        toast({
-          title: "Conta criada com sucesso!",
-          description: "Bem-vindo ao CDPI Pass!",
-          duration: 5000,
-        });
-        setLocation("/");
-      }
-    },
+  if (data.email) {
+    toast({
+      title: "Conta criada com sucesso!",
+      description: "Enviamos um código para o seu e-mail.",
+    });
+    // Redirect to the verification page, passing the email as a URL parameter
+    setLocation(`/verify-email?email=${data.email}`);
+    }
+  },
     onError: (error: Error) => {
       toast({
         title: "Erro no cadastro",
