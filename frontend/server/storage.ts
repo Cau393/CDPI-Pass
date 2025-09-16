@@ -112,11 +112,14 @@ export class DatabaseStorage implements IStorage {
 
   // Event operations
   async getEvents(): Promise<Event[]> {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    
     return await db
       .select()
       .from(events)
       .where(eq(events.isActive, true))
-      .orderBy(asc(events.date));
+      .orderBy(desc(events.date));
   }
 
   async getEvent(id: string): Promise<Event | undefined> {
