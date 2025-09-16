@@ -360,7 +360,7 @@ export default function HomePage() {
             {/* Contact */}
             <div className="text-center">
               <h3 className="font-bold mb-4">CDPI</h3>
-              <p className="text-2xl font-bold mb-2">0800 000 0000</p>
+              <p className="text-2xl font-bold mb-2">+55 (62) 99860-6833</p>
               <p className="text-sm text-white/80">
                 Entre em contato conosco<br/>
                 e tire suas dúvidas

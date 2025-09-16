@@ -16,7 +16,7 @@ import {
   type InsertCourtesyLink,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, sql, gte, asc } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
@@ -112,11 +112,17 @@ export class DatabaseStorage implements IStorage {
 
   // Event operations
   async getEvents(): Promise<Event[]> {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    
     return await db
       .select()
       .from(events)
-      .where(eq(events.isActive, true))
-      .orderBy(desc(events.date));
+      .where(and(
+        eq(events.isActive, true),
+        gte(events.date, startOfToday)
+      ))
+      .orderBy(asc(events.date));
   }
 
   async getEvent(id: string): Promise<Event | undefined> {
