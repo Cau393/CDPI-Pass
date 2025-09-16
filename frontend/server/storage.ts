@@ -119,7 +119,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(events)
       .where(eq(events.isActive, true))
-      .orderBy(desc(events.date));
+      .orderBy(asc(events.date));
   }
 
   async getEvent(id: string): Promise<Event | undefined> {
