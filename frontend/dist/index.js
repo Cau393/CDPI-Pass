@@ -223,7 +223,7 @@ var pool = new Pool({ connectionString: process.env.DATABASE_URL });
 var db = drizzle({ client: pool, schema: schema_exports });
 
 // server/storage.ts
-import { eq, desc, sql as sql2 } from "drizzle-orm";
+import { eq, desc, sql as sql2, asc } from "drizzle-orm";
 var DatabaseStorage = class {
   // User operations
   async getUser(id) {
@@ -261,7 +261,9 @@ var DatabaseStorage = class {
   }
   // Event operations
   async getEvents() {
-    return await db.select().from(events).where(eq(events.isActive, true)).orderBy(desc(events.date));
+    const startOfToday = /* @__PURE__ */ new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    return await db.select().from(events).where(eq(events.isActive, true)).orderBy(asc(events.date));
   }
   async getEvent(id) {
     const [event] = await db.select().from(events).where(eq(events.id, id));

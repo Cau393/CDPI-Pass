@@ -35,8 +35,12 @@ export default function HomePage() {
     setIsPaymentModalOpen(true);
   };
 
-  const mainEvent = events?.[0];
-  const upcomingEvents = events?.slice(1, 3) || [];
+  const sortedEvents = events
+  ?.filter(event => new Date(event.date) > new Date())
+  ?.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  const mainEvent = sortedEvents?.[0];
+  const upcomingEvents = sortedEvents?.slice(1, 2) || [];
 
   return (
     <main className="min-h-screen bg-gray-50">
