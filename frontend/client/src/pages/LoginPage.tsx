@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { useGoogleReCaptcha } from 'react-google-recaptcha-v3';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +17,7 @@ export default function LoginPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [rememberMe, setRememberMe] = useState(false);
+  const { executeRecaptcha } = useGoogleReCaptcha();
 
   const form = useForm<LoginRequest>({
     resolver: zodResolver(loginSchema),
@@ -26,22 +28,22 @@ export default function LoginPage() {
   });
 
   const loginMutation = useMutation({
-    mutationFn: async (data: LoginRequest) => {
+    mutationFn: async (data: LoginRequest & { recaptchaToken: string }) => {
       const response = await apiRequest("POST", "/api/auth/login", data);
       return response.json();
     },
     onSuccess: (data) => {
-  localStorage.setItem("token", data.token);
-  queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      localStorage.setItem("token", data.token);
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
 
-  if (data.user.emailVerified) {
-    toast({ title: "Login realizado com sucesso!" });
-    setLocation("/");
-  } else {
-    toast({ title: "Verificação necessária", description: "Por favor, verifique seu e-mail." });
-    setLocation(`/verify-email?email=${data.user.email}`);
-    }
-  },
+      if (data.user.emailVerified) {
+        toast({ title: "Login realizado com sucesso!" });
+        setLocation("/");
+      } else {
+        toast({ title: "Verificação necessária", description: "Por favor, verifique seu e-mail." });
+        setLocation(`/verify-email?email=${data.user.email}`);
+      }
+    },
     onError: (error: Error) => {
       toast({
         title: "Erro no login",
@@ -51,9 +53,19 @@ export default function LoginPage() {
     },
   });
 
-  const onSubmit = (data: LoginRequest) => {
-    loginMutation.mutate(data);
-  };
+  // This is the new submission handler
+  const handleLogin = useCallback(async (data: LoginRequest) => {
+    if (!executeRecaptcha) {
+      toast({ title: "reCAPTCHA not ready", variant: "destructive" });
+      return;
+    }
+    // Get the token first
+    const token = await executeRecaptcha('login');
+    // Then mutate with form data + token
+    loginMutation.mutate({ ...data, recaptchaToken: token });
+  }, [executeRecaptcha, loginMutation, toast]);
+
+  // The old onSubmit function is no longer needed.
 
   return (
     <div className="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
@@ -69,7 +81,8 @@ export default function LoginPage() {
         </CardHeader>
         
         <CardContent>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+          {/* Ensure this line uses handleLogin */}
+          <form onSubmit={form.handleSubmit(handleLogin)} className="space-y-6">
             <div className="space-y-4">
               <div>
                 <Label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
