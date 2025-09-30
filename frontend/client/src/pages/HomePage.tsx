@@ -256,11 +256,11 @@ export default function HomePage() {
         <h2 className="text-3xl font-bold text-gray-900 mb-6">
           Sobre o Evento
         </h2>
-        <p className="text-gray-600 mb-4 leading-relaxed">
-          Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Quis ipsum suspendisse ultrices gravida.
+        <p className="text-gray-600 mb-6 leading-relaxed">
+          O Workshop 360° na Indústria Farmacêutica é a mais nova iniciativa do CDPI voltada à capacitação prática e estratégica de profissionais do setor. 
         </p>
-        <p className="text-gray-600 leading-relaxed">
-          Risus commodo viverra maecenas accumsan lacus vel facilisis.
+        <p className="text-gray-600 mb-6 leading-relaxed">
+          Em suas edições, o evento traz uma visão completa do ciclo de vida do produto farma abordando as principais áreas que sustentam a indústria: Regulatório, Qualidade, Desenvolvimento Analítico, Produção e P&D.
         </p>
       </div>
 
