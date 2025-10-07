@@ -1763,6 +1763,26 @@ async function registerRoutes(app2) {
       await storage.updateEvent(event.id, {
         currentAttendees: (event.currentAttendees || 0) + 1
       });
+      let finalOrderDetails = null;
+      let retries = 0;
+      const maxRetries = 100;
+      while (retries < maxRetries) {
+        finalOrderDetails = await storage.getOrder(order.id);
+        if (finalOrderDetails?.qr_code_s3_url) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200 * Math.pow(1.5, retries)));
+        retries++;
+      }
+      if (!finalOrderDetails) {
+        console.error("Could not retrieve final order details for courtesy redemption:", order.id);
+        return res.status(201).json({
+          message: "Cortesia resgatada com sucesso! Ocorreu um erro ao enviar o email do ingresso.",
+          order,
+          // Send back the initial order object
+          qrCode: qrCodeData
+        });
+      }
       await emailService.sendTicketEmail(userData.email, {
         userName: userData.name,
         eventTitle: event.title,
@@ -1770,7 +1790,7 @@ async function registerRoutes(app2) {
         eventLocation: event.location,
         qrCodeData,
         orderId: order.id,
-        qrCodeS3Url: order.qr_code_s3_url || ""
+        qrCodeS3Url: finalOrderDetails.qr_code_s3_url || ""
       });
       res.status(201).json({
         message: "Cortesia resgatada com sucesso!",

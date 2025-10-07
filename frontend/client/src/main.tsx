@@ -6,7 +6,6 @@ import App from "./App.tsx";
 import { queryClient } from "./lib/queryClient.ts";
 import "./index.css";
 
-// It's recommended to use an environment variable for your site key
 const RECAPTCHA_SITE_KEY = import.meta.env.VITE_RECAPTCHA_SITE_KEY;
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

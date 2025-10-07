@@ -153,15 +153,14 @@ class EmailService {
               <h4>📋 Instruções Importantes:</h4>
               <ul style="text-align: left;">
                 <li>Chegue com 30 minutos de antecedência</li>
-                <li>Traga um documento com foto</li>
                 <li>O QR Code pode ser apresentado impresso ou no celular</li>
                 <li>Em caso de dúvidas, entre em contato conosco</li>
               </ul>
             </div>
           </div>
           <div class="footer">
-            <p>CDPI Pass - Eventos Farmacêuticos</p>
-            <p>contato@cdpipass.com.br | (11) 3000-0000</p>
+            <p>CDPI Pass</p>
+            <p>relacionamento@cdpipharma.com.br | +55 (62) 99860-6833</p>
           </div>
         </div>
       </body>

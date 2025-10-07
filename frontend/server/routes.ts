@@ -1068,6 +1068,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         currentAttendees: (event.currentAttendees || 0) + 1
       });
 
+      // Wait for S3 URL to be available with retry logic
+      let finalOrderDetails = null;
+      let retries = 0;
+      const maxRetries = 100;
+      
+      while (retries < maxRetries) {
+        finalOrderDetails = await storage.getOrder(order.id);
+        
+        if (finalOrderDetails?.qr_code_s3_url) {
+          break; // S3 URL is available
+        }
+        
+        // Wait before retrying (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, 200 * Math.pow(1.5, retries)));
+        retries++;
+      }
+
+      // Check if the order was fetched successfully before proceeding
+      if (!finalOrderDetails) {
+        console.error("Could not retrieve final order details for courtesy redemption:", order.id);
+        // It's better to still send the response to the user even if the email fails.
+        // The main redemption logic was successful.
+        return res.status(201).json({
+          message: "Cortesia resgatada com sucesso! Ocorreu um erro ao enviar o email do ingresso.",
+          order: order, // Send back the initial order object
+          qrCode: qrCodeData
+        });
+      }
+
       // Send confirmation email with ticket
       await emailService.sendTicketEmail(userData.email, {
         userName: userData.name,
@@ -1076,7 +1105,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         eventLocation: event.location,
         qrCodeData: qrCodeData,
         orderId: order.id,
-        qrCodeS3Url: order.qr_code_s3_url || '',
+        qrCodeS3Url: finalOrderDetails.qr_code_s3_url || '',
       });
 
       res.status(201).json({

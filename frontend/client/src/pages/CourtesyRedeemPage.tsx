@@ -476,7 +476,7 @@ export default function CourtesyRedeemPage() {
         </Card>
 
         <div className="mt-6 text-center text-sm text-gray-600">
-          <p>Dúvidas? Entre em contato pelo telefone: <strong>0800 000 0000</strong></p>
+          <p>Dúvidas? Entre em contato pelo telefone: <strong>+55 (62) 99860-6833</strong></p>
         </div>
       </div>
     </div>
