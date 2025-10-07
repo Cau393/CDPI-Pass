@@ -9,6 +9,7 @@ import "dotenv/config";
 import express2 from "express";
 
 // server/routes.ts
+import rateLimit from "express-rate-limit";
 import { createServer } from "http";
 
 // shared/schema.ts
@@ -997,6 +998,16 @@ var authenticateToken = async (req, res, next) => {
   }
 };
 async function registerRoutes(app2) {
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1e3,
+    // 15 minutes
+    max: 100,
+    // Limit each IP to 100 requests per windowMs
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: "Too many requests from this IP, please try again after 15 minutes"
+  });
+  app2.use("/api/auth", authLimiter);
   app2.post("/api/auth/register", async (req, res) => {
     try {
       const apiUserSchema = insertUserSchema.extend({

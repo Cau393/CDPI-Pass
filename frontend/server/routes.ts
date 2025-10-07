@@ -1,3 +1,4 @@
+import rateLimit from 'express-rate-limit';
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
@@ -44,6 +45,17 @@ const authenticateToken = async (req: any, res: any, next: any) => {
 };
 
 export async function registerRoutes(app: Express): Promise<Server> {
+
+  // Apply rate limiting to all /api/auth routes
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per windowMs
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: 'Too many requests from this IP, please try again after 15 minutes',
+  });
+
+  app.use('/api/auth', authLimiter);
   
   // Auth routes
   app.post("/api/auth/register", async (req, res) => {
