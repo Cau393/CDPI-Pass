@@ -40,7 +40,7 @@ class EmailService {
     try {
       await mailService.send({
         to,
-        from: FROM_EMAIL,
+        from: { email: FROM_EMAIL, name: "CDPI Pass" },
         subject,
         html,
         text,
@@ -201,7 +201,7 @@ class EmailService {
       try {
         await mailService.send({
           to: email.to,
-          from: FROM_EMAIL,
+          from: { email: FROM_EMAIL, name: "CDPI Pass" },
           subject: email.subject,
           html: email.html || '',
           text: email.text || '',
