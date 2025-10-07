@@ -1,5 +1,3 @@
-// frontend/client/src/main.tsx
-
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";

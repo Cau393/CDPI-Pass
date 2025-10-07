@@ -450,7 +450,7 @@ var EmailService = class {
     try {
       await mailService.send({
         to,
-        from: FROM_EMAIL,
+        from: { email: FROM_EMAIL, name: "CDPI Pass" },
         subject,
         html,
         text: text2
@@ -596,7 +596,7 @@ var EmailService = class {
       try {
         await mailService.send({
           to: email.to,
-          from: FROM_EMAIL,
+          from: { email: FROM_EMAIL, name: "CDPI Pass" },
           subject: email.subject,
           html: email.html || "",
           text: email.text || ""
