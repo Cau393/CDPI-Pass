@@ -16,7 +16,7 @@ import {
   type InsertCourtesyLink,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql, gte, asc } from "drizzle-orm";
+import { eq, desc, sql, asc, count } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
@@ -36,7 +36,7 @@ export interface IStorage {
 
   // Order operations
   getOrder(id: string): Promise<Order | undefined>;
-  getOrdersByUser(userId: string): Promise<Order[]>;
+  getOrdersByUser(userId: string, page: number, limit: number): Promise<{ orders: Order[]; total: number }>;
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
   getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined>;
@@ -49,7 +49,7 @@ export interface IStorage {
   // Courtesy link operations
   createCourtesyLink(link: InsertCourtesyLink): Promise<CourtesyLink>;
   getCourtesyLinkByCode(code: string): Promise<CourtesyLink | undefined>;
-  getCourtesyLinksByCreator(userId: string): Promise<CourtesyLink[]>;
+  getCourtesyLinksByCreator(userId: string, page: number, limit: number): Promise<{ links: CourtesyLink[]; total: number }>;
   updateCourtesyLink(id: string, updates: Partial<CourtesyLink>): Promise<CourtesyLink | undefined>;
   incrementCourtesyLinkUsage(id: string): Promise<void>;
 }
@@ -154,8 +154,10 @@ export class DatabaseStorage implements IStorage {
     return order;
   }
 
-  async getOrdersByUser(userId: string): Promise<Order[]> {
-    return await db
+  async getOrdersByUser(userId: string, page: number = 1, limit: number = 10): Promise<{ orders: Order[]; total: number }> {
+    const offset = (page - 1) * limit;
+    
+    const ordersQuery = db
       .select({
         id: orders.id,
         userId: orders.userId,
@@ -166,7 +168,7 @@ export class DatabaseStorage implements IStorage {
         asaasPaymentId: orders.asaasPaymentId,
         courtesyLinkId: orders.courtesyLinkId,
         qrCodeData: orders.qrCodeData,
-        qrCodeS3Url: orders.qr_code_s3_url,
+        qr_code_s3_url: orders.qr_code_s3_url,
         qrCodeUsed: orders.qrCodeUsed,
         qrCodeUsedAt: orders.qrCodeUsedAt,
         createdAt: orders.createdAt,
@@ -184,8 +186,23 @@ export class DatabaseStorage implements IStorage {
       .from(orders)
       .leftJoin(events, eq(orders.eventId, events.id))
       .where(eq(orders.userId, userId))
-      .orderBy(desc(orders.createdAt));
+      .orderBy(desc(orders.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    const totalQuery = db
+      .select({ value: count() })
+      .from(orders)
+      .where(eq(orders.userId, userId));
+
+    const [ordersResult, totalResult] = await Promise.all([ordersQuery, totalQuery]);
+    
+    return {
+      orders: ordersResult,
+      total: totalResult[0].value,
+    };
   }
+  
 
   async createOrder(orderData: InsertOrder): Promise<Order> {
     const [order] = await db
@@ -279,12 +296,28 @@ export class DatabaseStorage implements IStorage {
     return link;
   }
 
-  async getCourtesyLinksByCreator(userId: string): Promise<CourtesyLink[]> {
-    return await db
+  async getCourtesyLinksByCreator(userId: string, page: number = 1, limit: number = 10): Promise<{ links: CourtesyLink[]; total: number }> {
+    const offset = (page - 1) * limit;
+
+    const linksQuery = db
       .select()
       .from(courtesyLinks)
       .where(eq(courtesyLinks.createdBy, userId))
-      .orderBy(desc(courtesyLinks.createdAt));
+      .orderBy(desc(courtesyLinks.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    const totalQuery = db
+      .select({ value: count() })
+      .from(courtesyLinks)
+      .where(eq(courtesyLinks.createdBy, userId));
+
+    const [linksResult, totalResult] = await Promise.all([linksQuery, totalQuery]);
+
+    return {
+      links: linksResult,
+      total: totalResult[0].value,
+    };
   }
 
   async updateCourtesyLink(id: string, updates: Partial<CourtesyLink>): Promise<CourtesyLink | undefined> {

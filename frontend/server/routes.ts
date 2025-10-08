@@ -428,8 +428,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/orders", authenticateToken, requireEmailVerification, async (req: any, res) => {
     try {
       const userId = req.user.id;
-      const orders = await storage.getOrdersByUser(userId);
-      res.json(orders);
+      const page = parseInt(req.query.page as string) || 1;
+      // console.log("🔍 GET /api/orders - Page:", page, "UserId:", userId);
+      const limit = 10;
+
+      const { orders, total } = await storage.getOrdersByUser(userId, page, limit);
+
+      res.json({
+        orders,
+        totalPages: Math.ceil(total / limit),
+        currentPage: page,
+      });
+    
     } catch (error) {
       console.error("Get orders error:", error);
       res.status(500).json({ message: "Erro interno do servidor" });
@@ -889,8 +899,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Courtesy Links Routes
   app.post("/api/courtesy-links", authenticateToken, async (req: any, res) => {
     try {
-      // Check if user is caueroriz@gmail.com
-      if (req.user.email !== "caueroriz@gmail.com") {
+      // Check if user is admin
+      if (!req.user.isAdmin) {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores podem criar links de cortesia." });
       }
 
@@ -929,15 +939,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/courtesy-links", authenticateToken, async (req: any, res) => {
-    try {
-      // Check if user is caueroriz@gmail.com
-      if (req.user.email !== "caueroriz@gmail.com") {
-        return res.status(403).json({ message: "Acesso negado" });
-      }
+  try {
+    // console.log("🔍 GET /api/courtesy-links - UserId:", req.user.id, "Page:", req.query.page); // Add this
+    
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ message: "Acesso negado" });
+    }
+    const userId = req.user.id;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = 10;
+    const { links, total } = await storage.getCourtesyLinksByCreator(userId, page, limit);
 
-      const links = await storage.getCourtesyLinksByCreator(req.user.id);
-      
-      // Add event details to each link
+    // Add event details to each link
       const linksWithDetails = await Promise.all(links.map(async (link) => {
         const event = await storage.getEvent(link.eventId);
         return {
@@ -947,13 +960,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           remainingTickets: link.ticketCount - (link.usedCount || 0)
         };
       }));
-
-      res.json(linksWithDetails);
-    } catch (error) {
-      console.error("Get courtesy links error:", error);
-      res.status(500).json({ message: "Erro ao buscar links de cortesia" });
-    }
-  });
+    
+    // console.log("📦 Found links:", linksWithDetails.length, "Total:", total); 
+    
+    res.json({
+      links: linksWithDetails,
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+    });
+  } catch (error) {
+    console.error("Get courtesy links error:", error);
+    res.status(500).json({ message: "Erro ao buscar links de cortesia" });
+  }
+});
 
   app.get("/api/courtesy-links/:code", async (req, res) => {
     try {

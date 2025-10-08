@@ -15,6 +15,7 @@ import { Ticket, Link, Copy, CheckCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import type { Event } from "@shared/schema";
+import { useAuth } from "@/hooks/useAuth";
 
 interface CourtesyLink {
   id: string;
@@ -35,6 +36,8 @@ export default function CourtesyAdminPage() {
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { isAuthenticated } = useAuth();
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Fetch events
   const { data: events } = useQuery<Event[]>({
@@ -42,9 +45,15 @@ export default function CourtesyAdminPage() {
   });
 
   // Fetch courtesy links
-  const { data: links, isLoading: linksLoading } = useQuery<CourtesyLink[]>({
-    queryKey: ["/api/courtesy-links"],
-    retry: false,
+  const { data: links, isLoading: linksLoading } = useQuery({
+  queryKey: ["/api/courtesy-links", currentPage],
+  queryFn: async () => {
+    const response = await apiRequest("GET", `/api/courtesy-links?page=${currentPage}`);
+    return response.json();
+  },
+  enabled: isAuthenticated,
+  staleTime: 0,
+  gcTime: 0, 
   });
 
   // Create courtesy link mutation
@@ -54,6 +63,7 @@ export default function CourtesyAdminPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/courtesy-links"] });
+      setCurrentPage(1);
       toast({
         title: "Link criado com sucesso!",
         description: "O link de cortesia foi gerado e está pronto para uso.",
@@ -174,56 +184,81 @@ export default function CourtesyAdminPage() {
             <div className="text-center py-8">
               <p className="text-gray-500">Carregando links...</p>
             </div>
-          ) : links && links.length > 0 ? (
-            <div className="space-y-4">
-              {links.map((link) => (
-                <div
-                  key={link.id}
-                  className="border rounded-lg p-4 hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-lg">
-                        {link.event?.title || "Evento"}
-                      </h3>
-                      <p className="text-sm text-gray-600 mb-2">
-                        Código: <span className="font-mono bg-gray-100 px-2 py-1 rounded">{link.code}</span>
-                      </p>
-                      <div className="flex gap-4 text-sm">
-                        <span className={`flex items-center gap-1 ${link.remainingTickets === 0 ? 'text-red-600' : 'text-green-600'}`}>
-                          <Ticket className="h-4 w-4" />
-                          {link.remainingTickets || 0} de {link.ticketCount} disponíveis
-                        </span>
-                        <span className="text-gray-500">
-                          Criado em: {new Date(link.createdAt).toLocaleDateString('pt-BR')}
-                        </span>
-                      </div>
-                      <div className="mt-2 flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={link.redeemUrl}
-                          readOnly
-                          className="flex-1 text-xs bg-gray-50 p-2 rounded border"
-                          data-testid={`input-link-${link.id}`}
-                        />
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => copyToClipboard(link.redeemUrl)}
-                          data-testid={`button-copy-${link.id}`}
-                        >
-                          {copiedLink === link.redeemUrl ? (
-                            <CheckCircle className="h-4 w-4 text-green-600" />
-                          ) : (
-                            <Copy className="h-4 w-4" />
-                          )}
-                        </Button>
+          ) : links?.links && links.links.length > 0 ? (
+            <>
+              <div className="space-y-4">
+                {links?.links?.map((link) => (
+                  <div
+                    key={link.id}
+                    className="border rounded-lg p-4 hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-lg">
+                          {link.event?.title || "Evento"}
+                        </h3>
+                        <p className="text-sm text-gray-600 mb-2">
+                          Código: <span className="font-mono bg-gray-100 px-2 py-1 rounded">{link.code}</span>
+                        </p>
+                        <div className="flex gap-4 text-sm">
+                          <span className={`flex items-center gap-1 ${link.remainingTickets === 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            <Ticket className="h-4 w-4" />
+                            {link.remainingTickets || 0} de {link.ticketCount} disponíveis
+                          </span>
+                          <span className="text-gray-500">
+                            Criado em: {new Date(link.createdAt).toLocaleDateString('pt-BR')}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={link.redeemUrl}
+                            readOnly
+                            className="flex-1 text-xs bg-gray-50 p-2 rounded border"
+                            data-testid={`input-link-${link.id}`}
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => copyToClipboard(link.redeemUrl)}
+                            data-testid={`button-copy-${link.id}`}
+                          >
+                            {copiedLink === link.redeemUrl ? (
+                              <CheckCircle className="h-4 w-4 text-green-600" />
+                            ) : (
+                              <Copy className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </div>
+                ))}
+              </div>
+
+              {/* Pagination Controls */}
+              {links?.totalPages > 1 && (
+                <div className="flex justify-center items-center gap-2 mt-6">
+                  <Button
+                    variant="outline"
+                    onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1}
+                  >
+                    Anterior
+                  </Button>
+                  <span className="text-sm font-medium px-4">
+                    Página {currentPage} de {links.totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    onClick={() => setCurrentPage((prev) => Math.min(prev + 1, links.totalPages))}
+                    disabled={currentPage === links.totalPages}
+                  >
+                    Próxima
+                  </Button>
                 </div>
-              ))}
-            </div>
+              )}
+            </>
           ) : (
             <div className="text-center py-8">
               <p className="text-gray-500">Nenhum link de cortesia criado ainda</p>
