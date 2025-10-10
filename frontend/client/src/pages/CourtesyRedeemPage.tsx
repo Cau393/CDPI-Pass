@@ -326,9 +326,11 @@ export default function CourtesyRedeemPage() {
             {linkData && (
               <div className="mt-4 p-4 bg-primary/10 rounded-lg">
                 <p className="text-center font-semibold text-lg">{linkData.event?.title}</p>
-                <p className="text-center text-sm text-gray-600">
-                  {linkData.remainingTickets} ingresso(s) disponível(is)
-                </p>
+                  {user.isAdmin && (
+                  <p className="text-center text-sm text-gray-600">
+                    {linkData.remainingTickets} ingresso(s) disponível(is)
+                  </p>
+                )}
               </div>
             )}
           </CardHeader>
