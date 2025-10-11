@@ -48388,8 +48388,8 @@ async function registerRoutes(app2) {
 // server/index.ts
 await init_vite();
 var app = express2();
-app.use(express2.json());
-app.use(express2.urlencoded({ extended: false }));
+app.use(express2.json({ limit: "50mb" }));
+app.use(express2.urlencoded({ limit: "50mb", extended: true }));
 app.use((req, res, next) => {
   const start = Date.now();
   const path5 = req.path;
