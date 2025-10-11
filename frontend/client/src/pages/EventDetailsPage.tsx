@@ -46,7 +46,18 @@ export default function EventDetailsPage() {
   };
 
   const formatTime = (date: Date | string) => {
-    return new Date(date).toLocaleTimeString("pt-BR", {
+    const dateObj = new Date(date);
+    // Get the time in the browser's local timezone, but use the database values
+    // The database stores times without timezone info, so we parse them directly
+    const timeStr = typeof date === 'string' ? date.split('T')[1] || date.split(' ')[1] : null;
+    
+    if (timeStr) {
+      // Extract HH:mm from the string directly
+      const [hours, minutes] = timeStr.split(':');
+      return `${hours}:${minutes}`;
+    }
+    
+    return dateObj.toLocaleTimeString("pt-BR", {
       hour: "2-digit",
       minute: "2-digit",
     });
