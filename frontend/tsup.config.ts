@@ -14,7 +14,11 @@ export default defineConfig({
     'vite',           // ✅ Add this
     'rollup',         // ✅ Add this
     'dotenv',         // ✅ Add this for safety
+    '@vitejs/plugin-react',
+    '@vitejs/plugin-react-swc',
+    'express',
   ],
   // Add this to handle ESM properly
   shims: true,
+  noExternal: [],
 });
