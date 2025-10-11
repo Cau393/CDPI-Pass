@@ -46992,24 +46992,103 @@ var EmailService = class {
     const text2 = `Acesse este link para redefinir sua senha: ${resetLink}`;
     return this.sendEmail(email, "Redefini\xE7\xE3o de Senha - CDPI Pass", html, text2);
   }
-  async sendCourtesyMassEmail(email, name, eventName, courtesyCode) {
+  async sendCourtesyMassEmail(email, name, eventName, courtesyCode, eventDate) {
     const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${courtesyCode}`;
     const subject = `Sua cortesia para o evento ${eventName}`;
+    const formattedEventDate = new Date(eventDate).toLocaleDateString("pt-BR", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric"
+    });
+    const redeemByDate = new Date(eventDate);
+    redeemByDate.setDate(redeemByDate.getDate() - 6);
+    const formattedRedeemByDate = redeemByDate.toLocaleDateString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    });
     const html = `
-      <h1>Ol\xE1, ${name}!</h1>
-      <p>Voc\xEA recebeu uma cortesia para o evento ${eventName}.</p>
-      <p>Para resgatar seu ingresso, clique no link abaixo:</p>
-      <a href="${redeemUrl}">${redeemUrl}</a>
-      <p>Atenciosamente,<br>Equipe CDPI Pass</p>
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${subject}</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #0F4C75; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; text-align: center; }
+          .message-box { text-align: left; margin: 20px 0; }
+          .cta-button {
+            background-color: #3282B8;
+            color: white;
+            padding: 15px 25px;
+            text-decoration: none;
+            border-radius: 5px;
+            font-size: 16px;
+            display: inline-block;
+            margin: 20px 0;
+          }
+          .important-notice {
+            background: #BBE1FA;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            text-align: left;
+          }
+          .footer { text-align: center; color: #666; font-size: 12px; margin-top: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>\u{1F381} Voc\xEA Recebeu uma Cortesia!</h1>
+            <h2>CDPI Pass</h2>
+          </div>
+          <div class="content">
+            <div class="message-box">
+              <p style="font-size: 18px;">Ol\xE1, <strong>${name}</strong>!</p>
+              <p>Voc\xEA recebeu uma cortesia para o <strong>${eventName}</strong> na data <strong>${formattedEventDate}</strong>!</p>
+              <p style="font-style: italic; color: #333;">
+                Um evento que amplia horizontes e conecta quem faz a diferen\xE7a na ind\xFAstria. Oportunidade \xEDmpar para voc\xEA dominar o Ciclo de Vida do Medicamento e acelerar a sua trajet\xF3ria profissional!
+              </p>
+              <p>Para resgatar seu ingresso, clique no bot\xE3o abaixo:</p>
+            </div>
+            
+            <a href="${redeemUrl}" class="cta-button">Resgatar Ingresso Agora</a>
+            
+            <div class="important-notice">
+              <h4>\u26A0\uFE0F Instru\xE7\xF5es Importantes:</h4>
+              <p>
+                \xC9 importante fazer o resgate da sua cortesia imediatamente ou <strong>at\xE9 dia ${formattedRedeemByDate}</strong> para garantir sua vaga e participar do evento.
+              </p>
+            </div>
+          </div>
+          <div class="footer">
+            <p>Atenciosamente,<br>Equipe CDPI Pass</p>
+            <p>relacionamento@cdpipharma.com.br | +55 (62) 99860-6833</p>
+          </div>
+        </div>
+      </body>
+      </html>
     `;
-    const text2 = `Ol\xE1, ${name}!
+    const text2 = `
+      Ol\xE1, ${name}!
 
-Voc\xEA recebeu uma cortesia para o evento ${eventName}.
+      Voc\xEA recebeu uma cortesia para o ${eventName} na data ${formattedEventDate}!
 
-Para resgatar seu ingresso, acesse o seguinte link: ${redeemUrl}
+      Um evento que amplia horizontes e conecta quem faz a diferen\xE7a na ind\xFAstria.
+      Oportunidade \xEDmpar para voc\xEA dominar o Ciclo de Vida do Medicamento e acelerar a sua trajet\xF3ria profissional!
 
-Atenciosamente,
-Equipe CDPI Pass`;
+      Para resgatar seu ingresso, acesse o seguinte link:
+      ${redeemUrl}
+
+      \u26A0\uFE0F Importante fazer o resgate da sua cortesia imediatamente ou at\xE9 dia ${formattedRedeemByDate} para garantir sua vaga e participar do evento.
+
+      Atenciosamente,
+      Equipe CDPI Pass
+    `;
     return this.sendEmail(email, subject, html, text2);
   }
 };
@@ -48248,7 +48327,7 @@ async function registerRoutes(app2) {
               isActive: true
             });
             console.log(`Courtesy link created for ${email}: ${link.code}`);
-            emailService.sendCourtesyMassEmail(email, name, event.title, link.code);
+            emailService.sendCourtesyMassEmail(email, name, event.title, link.code, event.date);
           } else {
             console.warn(`Event not found for ID in row ${i + 1}: ${event_id}`);
           }

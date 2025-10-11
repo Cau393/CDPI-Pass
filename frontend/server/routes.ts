@@ -1194,7 +1194,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               });
               console.log(`Courtesy link created for ${email}: ${link.code}`);
 
-              emailService.sendCourtesyMassEmail(email, name, event.title, link.code);
+              emailService.sendCourtesyMassEmail(email, name, event.title, link.code, event.date);
             } else {
               console.warn(`Event not found for ID in row ${i + 1}: ${event_id}`);
             }
