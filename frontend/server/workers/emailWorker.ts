@@ -12,7 +12,7 @@ interface EmailJob {
 class EmailWorker {
   private isRunning = false;
   private processInterval: NodeJS.Timeout | null = null;
-  private readonly PROCESS_INTERVAL = 5000; // 5 seconds
+  private readonly PROCESS_INTERVAL = 2000; // 2 seconds
   private readonly MAX_CONCURRENT_JOBS = 5;
 
   start(): void {
@@ -143,17 +143,17 @@ class EmailWorker {
 export const emailWorker = new EmailWorker();
 
 // Start the worker if this module is imported
-if (process.env.EMAIL_QUEUE_ENABLED !== 'false') {
-  emailWorker.start();
-}
+// if (process.env.EMAIL_QUEUE_ENABLED !== 'false') {
+//   emailWorker.start();
+// }
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('Received SIGTERM, stopping email worker...');
-  emailWorker.stop();
-});
+// // Graceful shutdown
+// process.on('SIGTERM', () => {
+//   console.log('Received SIGTERM, stopping email worker...');
+//   emailWorker.stop();
+// });
 
-process.on('SIGINT', () => {
-  console.log('Received SIGINT, stopping email worker...');
-  emailWorker.stop();
-});
+// process.on('SIGINT', () => {
+//   console.log('Received SIGINT, stopping email worker...');
+//   emailWorker.stop();
+// });
