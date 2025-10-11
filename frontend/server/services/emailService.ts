@@ -24,36 +24,49 @@ interface TicketEmailData {
 }
 
 class EmailService {
-  async sendEmail(to: string, subject: string, html: string, text?: string): Promise<boolean> {
+  async sendEmail(
+    to: string,
+    subject: string,
+    html: string,
+    text?: string,
+    attachments?: Array<{ filename: string; content: string; type: string }>
+  ): Promise<boolean> {
     if (!process.env.SENDGRID_API_KEY) {
       console.log("SendGrid not configured, queuing email:", { to, subject });
-      // Queue email for later processing
       await storage.addEmailToQueue({
         to,
         subject,
         html,
         text,
+        attachments: attachments ? JSON.stringify(attachments) : null,
       });
       return true;
     }
 
     try {
-      await mailService.send({
+      const emailPayload: any = {
         to,
         from: { email: FROM_EMAIL, name: "CDPI Pass" },
         subject,
         html,
         text,
-      });
+      };
+
+      // Only add attachments if provided
+      if (attachments && attachments.length > 0) {
+        emailPayload.attachments = attachments;
+      }
+
+      await mailService.send(emailPayload);
       return true;
     } catch (error) {
       console.error('SendGrid email error:', error);
-      // Queue for retry
       await storage.addEmailToQueue({
         to,
         subject,
         html,
         text,
+        attachments: attachments ? JSON.stringify(attachments) : null,
       });
       return false;
     }
@@ -236,7 +249,14 @@ class EmailService {
     return this.sendEmail(email, "Redefinição de Senha - CDPI Pass", html, text);
   }
 
-  async sendCourtesyMassEmail(email: string, name: string, eventName: string, courtesyCode: string, eventDate: Date): Promise<boolean> {
+  async sendCourtesyMassEmail(
+    email: string,
+    name: string,
+    eventName: string,
+    courtesyCode: string,
+    eventDate: Date,
+    attachments?: Array<{ filename: string; content: string; type: string }>
+  ): Promise<boolean> {
     const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${courtesyCode}`;
     const subject = `Sua cortesia para o evento ${eventName}`;
 
@@ -338,7 +358,7 @@ class EmailService {
       Equipe CDPI Pass
     `;
 
-    return this.sendEmail(email, subject, html, text);
+    return this.sendEmail(email, subject, html, text, attachments);
   }
 }
 

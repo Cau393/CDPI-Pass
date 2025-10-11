@@ -85,6 +85,7 @@ export const emailQueue = pgTable("email_queue", {
   subject: varchar("subject", { length: 255 }).notNull(),
   html: text("html"),
   text: text("text"),
+  attachments: text('attachments'),
   status: varchar("status", { length: 50 }).default("pending"), // pending, sent, failed
   attempts: integer("attempts").default(0),
   createdAt: timestamp("created_at").defaultNow(),

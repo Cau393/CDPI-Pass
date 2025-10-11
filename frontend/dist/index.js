@@ -5538,14 +5538,14 @@ var require_lib = __commonJS({
         super.checkParams(node, false, true);
         this.scope.exit();
       }
-      forwardNoArrowParamsConversionAt(node, parse3) {
+      forwardNoArrowParamsConversionAt(node, parse4) {
         let result;
         if (this.state.noArrowParamsConversionAt.includes(this.offsetToSourcePos(node.start))) {
           this.state.noArrowParamsConversionAt.push(this.state.start);
-          result = parse3();
+          result = parse4();
           this.state.noArrowParamsConversionAt.pop();
         } else {
-          result = parse3();
+          result = parse4();
         }
         return result;
       }
@@ -14345,7 +14345,7 @@ var require_lib = __commonJS({
         return file;
       }
     };
-    function parse2(input, options) {
+    function parse3(input, options) {
       var _options;
       if (((_options = options) == null ? void 0 : _options.sourceType) === "unambiguous") {
         options = Object.assign({}, options);
@@ -14432,7 +14432,7 @@ var require_lib = __commonJS({
       }
       return cls;
     }
-    exports.parse = parse2;
+    exports.parse = parse3;
     exports.parseExpression = parseExpression;
     exports.tokTypes = tokTypes;
   }
@@ -15562,7 +15562,7 @@ var require_ms = __commonJS({
       options = options || {};
       var type = typeof val;
       if (type === "string" && val.length > 0) {
-        return parse2(val);
+        return parse3(val);
       } else if (type === "number" && isFinite(val)) {
         return options.long ? fmtLong(val) : fmtShort(val);
       }
@@ -15570,7 +15570,7 @@ var require_ms = __commonJS({
         "val is not a non-empty string or a valid number. val=" + JSON.stringify(val)
       );
     };
-    function parse2(str) {
+    function parse3(str) {
       str = String(str);
       if (str.length > 100) {
         return;
@@ -46461,6 +46461,7 @@ var emailQueue = pgTable("email_queue", {
   subject: varchar("subject", { length: 255 }).notNull(),
   html: text("html"),
   text: text("text"),
+  attachments: text("attachments"),
   status: varchar("status", { length: 50 }).default("pending"),
   // pending, sent, failed
   attempts: integer("attempts").default(0),
@@ -46804,25 +46805,30 @@ if (process.env.SENDGRID_API_KEY) {
 }
 var FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || "relacionamento@cdpipharma.com.br";
 var EmailService = class {
-  async sendEmail(to, subject, html, text2) {
+  async sendEmail(to, subject, html, text2, attachments) {
     if (!process.env.SENDGRID_API_KEY) {
       console.log("SendGrid not configured, queuing email:", { to, subject });
       await storage.addEmailToQueue({
         to,
         subject,
         html,
-        text: text2
+        text: text2,
+        attachments: attachments ? JSON.stringify(attachments) : null
       });
       return true;
     }
     try {
-      await mailService.send({
+      const emailPayload = {
         to,
         from: { email: FROM_EMAIL, name: "CDPI Pass" },
         subject,
         html,
         text: text2
-      });
+      };
+      if (attachments && attachments.length > 0) {
+        emailPayload.attachments = attachments;
+      }
+      await mailService.send(emailPayload);
       return true;
     } catch (error) {
       console.error("SendGrid email error:", error);
@@ -46830,7 +46836,8 @@ var EmailService = class {
         to,
         subject,
         html,
-        text: text2
+        text: text2,
+        attachments: attachments ? JSON.stringify(attachments) : null
       });
       return false;
     }
@@ -46992,7 +46999,7 @@ var EmailService = class {
     const text2 = `Acesse este link para redefinir sua senha: ${resetLink}`;
     return this.sendEmail(email, "Redefini\xE7\xE3o de Senha - CDPI Pass", html, text2);
   }
-  async sendCourtesyMassEmail(email, name, eventName, courtesyCode, eventDate) {
+  async sendCourtesyMassEmail(email, name, eventName, courtesyCode, eventDate, attachments) {
     const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${courtesyCode}`;
     const subject = `Sua cortesia para o evento ${eventName}`;
     const formattedEventDate = new Date(eventDate).toLocaleDateString("pt-BR", {
@@ -47089,7 +47096,7 @@ var EmailService = class {
       Atenciosamente,
       Equipe CDPI Pass
     `;
-    return this.sendEmail(email, subject, html, text2);
+    return this.sendEmail(email, subject, html, text2, attachments);
   }
 };
 var emailService = new EmailService();
@@ -47449,8 +47456,7 @@ var requireEmailVerification = (req, res, next) => {
 
 // server/routes.ts
 import multer from "multer";
-import csv from "csv-parser";
-import { Readable } from "stream";
+import { parse } from "csv-parse/sync";
 var JWT_SECRET2 = process.env.JWT_SECRET || "your-secret-key";
 var authenticateToken = async (req, res, next) => {
   const authHeader = req.headers["authorization"];
@@ -48289,56 +48295,91 @@ async function registerRoutes(app2) {
     }
   });
   const upload = multer({ storage: multer.memoryStorage() });
-  app2.post("/api/courtesy/mass-send", authenticateToken, upload.single("csvFile"), async (req, res) => {
+  function detectDelimiter(csvBuffer) {
+    const sample = csvBuffer.toString("utf-8").split("\n")[0];
+    const commaCount = (sample.match(/,/g) || []).length;
+    const semicolonCount = (sample.match(/;/g) || []).length;
+    const tabCount = (sample.match(/\t/g) || []).length;
+    if (semicolonCount > commaCount && semicolonCount > tabCount) {
+      return ";";
+    } else if (tabCount > commaCount && tabCount > semicolonCount) {
+      return "	";
+    }
+    return ",";
+  }
+  app2.post("/api/courtesy/mass-send", authenticateToken, upload.fields([
+    { name: "csvFile", maxCount: 1 },
+    { name: "attachment", maxCount: 1 }
+  ]), async (req, res) => {
     if (!req.user.isAdmin) {
       return res.status(403).json({ message: "Acesso negado." });
     }
-    if (!req.file) {
+    if (!req.files?.csvFile) {
       return res.status(400).json({ message: "Nenhum arquivo CSV enviado." });
     }
-    const results = [];
-    const readable = new Readable();
-    readable._read = () => {
-    };
-    readable.push(req.file.buffer);
-    readable.push(null);
-    readable.pipe(csv({
-      mapHeaders: ({ header }) => header.trim()
-    })).on("data", (data) => results.push(data)).on("end", async () => {
-      console.log("CSV processing started. Rows found:", results.length);
-      try {
-        for (let i = 0; i < results.length; i++) {
-          const row = results[i];
-          const { name, email, amount_of_courtesies, event_id } = row;
-          console.log(`Processing Row ${i + 1}:`, row);
-          if (!event_id) {
-            console.warn(`Skipping row ${i + 1} due to missing event_id:`, row);
-            continue;
-          }
-          const event = await storage.getEvent(event_id);
-          if (event) {
-            console.log(`Event found for ID ${event_id}: ${event.title}`);
-            const code = `CDPI${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-            const link = await storage.createCourtesyLink({
-              code,
-              eventId: event.id,
-              ticketCount: parseInt(amount_of_courtesies, 10),
-              createdBy: req.user.id,
-              isActive: true
-            });
-            console.log(`Courtesy link created for ${email}: ${link.code}`);
-            emailService.sendCourtesyMassEmail(email, name, event.title, link.code, event.date);
-          } else {
-            console.warn(`Event not found for ID in row ${i + 1}: ${event_id}`);
-          }
-        }
-        console.log("CSV processing finished.");
-        res.status(200).json({ message: "E-mails de cortesia enfileirados para envio." });
-      } catch (error) {
-        console.error("Error processing CSV:", error);
-        res.status(500).json({ message: "Erro ao processar o arquivo CSV." });
+    try {
+      const csvBuffer = req.files.csvFile[0].buffer;
+      const delimiter = detectDelimiter(csvBuffer);
+      console.log(`Detected delimiter: ${delimiter === "," ? "comma" : delimiter === ";" ? "semicolon" : "tab"}`);
+      const results = parse(csvBuffer, {
+        columns: true,
+        skip_empty_lines: true,
+        delimiter,
+        trim: true,
+        relax_column_count: true
+      });
+      let attachment;
+      if (req.files?.attachment) {
+        const attachmentFile = req.files.attachment[0];
+        attachment = [{
+          filename: attachmentFile.originalname,
+          content: attachmentFile.buffer.toString("base64"),
+          type: attachmentFile.mimetype
+        }];
       }
-    });
+      console.log("CSV processing started. Rows found:", results.length);
+      for (let i = 0; i < results.length; i++) {
+        const row = results[i];
+        const normalizedRow = Object.keys(row).reduce((acc, key) => {
+          acc[key.trim()] = row[key];
+          return acc;
+        }, {});
+        const { name, email, amount_of_courtesies, event_id } = normalizedRow;
+        console.log(`Processing Row ${i + 1}:`, normalizedRow);
+        if (!event_id) {
+          console.warn(`Skipping row ${i + 1} due to missing event_id:`, normalizedRow);
+          continue;
+        }
+        const event = await storage.getEvent(event_id);
+        if (event) {
+          console.log(`Event found for ID ${event_id}: ${event.title}`);
+          const code = `CDPI${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+          const link = await storage.createCourtesyLink({
+            code,
+            eventId: event.id,
+            ticketCount: parseInt(amount_of_courtesies, 10),
+            createdBy: req.user.id,
+            isActive: true
+          });
+          console.log(`Courtesy link created for ${email}: ${link.code}`);
+          emailService.sendCourtesyMassEmail(
+            email,
+            name,
+            event.title,
+            link.code,
+            event.date,
+            attachment
+          );
+        } else {
+          console.warn(`Event not found for ID in row ${i + 1}: ${event_id}`);
+        }
+      }
+      console.log("CSV processing finished.");
+      res.status(200).json({ message: "E-mails de cortesia enfileirados para envio." });
+    } catch (error) {
+      console.error("Error processing CSV:", error);
+      res.status(500).json({ message: "Erro ao processar o arquivo CSV." });
+    }
   });
   const httpServer = createServer(app2);
   return httpServer;

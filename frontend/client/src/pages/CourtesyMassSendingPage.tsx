@@ -9,12 +9,11 @@ import { apiRequest } from '@/lib/queryClient';
 
 export default function CourtesyMassSendingPage() {
   const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
   const { toast } = useToast();
 
   const mutation = useMutation({
     mutationFn: (formData: FormData) => {
-      // We are not returning the JSON here because the request might take a while,
-      // and we don't want the UI to hang. The backend will process the CSV in the background.
       return apiRequest('POST', '/api/courtesy/mass-send', formData);
     },
     onSuccess: async () => {
@@ -23,6 +22,7 @@ export default function CourtesyMassSendingPage() {
         description: 'Os e-mails de cortesia estão sendo processados e serão enviados em breve.',
       });
       setCsvFile(null);
+      setAttachmentFile(null);
     },
     onError: (error: Error) => {
       toast({
@@ -33,15 +33,20 @@ export default function CourtesyMassSendingPage() {
     },
   });
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCsvChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
       setCsvFile(event.target.files[0]);
     }
   };
 
+  const handleAttachmentChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files) {
+      setAttachmentFile(event.target.files[0]);
+    }
+  };
+
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-
     if (!csvFile) {
       toast({
         title: 'Nenhum arquivo selecionado',
@@ -53,6 +58,11 @@ export default function CourtesyMassSendingPage() {
 
     const formData = new FormData();
     formData.append('csvFile', csvFile);
+    
+    // Only append attachment if one is selected
+    if (attachmentFile) {
+      formData.append('attachment', attachmentFile);
+    }
 
     mutation.mutate(formData);
   };
@@ -67,17 +77,36 @@ export default function CourtesyMassSendingPage() {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="csvFile">Arquivo CSV</Label>
+              <Label htmlFor="csvFile">Arquivo CSV *</Label>
               <Input
                 id="csvFile"
                 type="file"
                 accept=".csv"
-                onChange={handleFileChange}
+                onChange={handleCsvChange}
+                required
               />
               <p className="text-sm text-gray-500">
                 O arquivo deve conter as colunas: name, email, amount_of_courtesies, event_id
               </p>
             </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="attachment">Anexo (Opcional)</Label>
+              <Input
+                id="attachment"
+                type="file"
+                onChange={handleAttachmentChange}
+              />
+              <p className="text-sm text-gray-500">
+                Selecione um arquivo para anexar a todos os e-mails de cortesia (PDF, DOC, etc.)
+              </p>
+              {attachmentFile && (
+                <p className="text-sm text-green-600">
+                  Arquivo selecionado: {attachmentFile.name}
+                </p>
+              )}
+            </div>
+
             <Button type="submit" disabled={mutation.isPending}>
               {mutation.isPending ? 'Enviando...' : 'Enviar E-mails'}
             </Button>

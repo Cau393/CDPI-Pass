@@ -109,6 +109,7 @@ var emailQueue = pgTable("email_queue", {
   subject: varchar("subject", { length: 255 }).notNull(),
   html: text("html"),
   text: text("text"),
+  attachments: text("attachments"),
   status: varchar("status", { length: 50 }).default("pending"),
   // pending, sent, failed
   attempts: integer("attempts").default(0),
@@ -406,25 +407,30 @@ if (process.env.SENDGRID_API_KEY) {
 }
 var FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || "relacionamento@cdpipharma.com.br";
 var EmailService = class {
-  async sendEmail(to, subject, html, text2) {
+  async sendEmail(to, subject, html, text2, attachments) {
     if (!process.env.SENDGRID_API_KEY) {
       console.log("SendGrid not configured, queuing email:", { to, subject });
       await storage.addEmailToQueue({
         to,
         subject,
         html,
-        text: text2
+        text: text2,
+        attachments: attachments ? JSON.stringify(attachments) : null
       });
       return true;
     }
     try {
-      await mailService.send({
+      const emailPayload = {
         to,
         from: { email: FROM_EMAIL, name: "CDPI Pass" },
         subject,
         html,
         text: text2
-      });
+      };
+      if (attachments && attachments.length > 0) {
+        emailPayload.attachments = attachments;
+      }
+      await mailService.send(emailPayload);
       return true;
     } catch (error) {
       console.error("SendGrid email error:", error);
@@ -432,7 +438,8 @@ var EmailService = class {
         to,
         subject,
         html,
-        text: text2
+        text: text2,
+        attachments: attachments ? JSON.stringify(attachments) : null
       });
       return false;
     }
@@ -594,7 +601,7 @@ var EmailService = class {
     const text2 = `Acesse este link para redefinir sua senha: ${resetLink}`;
     return this.sendEmail(email, "Redefini\xE7\xE3o de Senha - CDPI Pass", html, text2);
   }
-  async sendCourtesyMassEmail(email, name, eventName, courtesyCode, eventDate) {
+  async sendCourtesyMassEmail(email, name, eventName, courtesyCode, eventDate, attachments) {
     const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${courtesyCode}`;
     const subject = `Sua cortesia para o evento ${eventName}`;
     const formattedEventDate = new Date(eventDate).toLocaleDateString("pt-BR", {
@@ -691,7 +698,7 @@ var EmailService = class {
       Atenciosamente,
       Equipe CDPI Pass
     `;
-    return this.sendEmail(email, subject, html, text2);
+    return this.sendEmail(email, subject, html, text2, attachments);
   }
 };
 var emailService = new EmailService();
