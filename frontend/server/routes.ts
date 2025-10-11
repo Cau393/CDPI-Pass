@@ -17,6 +17,9 @@ import { emailService } from "./services/emailService";
 import { asaasService } from "./services/asaasService";
 import { qrCodeService } from "./services/qrCodeService";
 import { requireEmailVerification } from "./middleware/auth"; 
+import multer from 'multer';
+import csv from 'csv-parser';
+import { Readable } from 'stream';
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -1136,6 +1139,73 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Redeem courtesy error:", error);
       res.status(500).json({ message: "Erro ao resgatar cortesia" });
     }
+  });
+
+  const upload = multer({ storage: multer.memoryStorage() });
+
+  app.post('/api/courtesy/mass-send', authenticateToken, upload.single('csvFile'), async (req: any, res) => {
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ message: 'Acesso negado.' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'Nenhum arquivo CSV enviado.' });
+    }
+
+    const results: any[] = [];
+    const readable = new Readable();
+    readable._read = () => {};
+    readable.push(req.file.buffer);
+    readable.push(null);
+
+    readable
+      .pipe(csv({
+      mapHeaders: ({ header }) => header.trim()
+      }))
+      .on('data', (data) => results.push(data))
+      .on('end', async () => {
+        console.log('CSV processing started. Rows found:', results.length);
+
+        try {
+          // Use a standard for loop for better type compatibility
+          for (let i = 0; i < results.length; i++) {
+            const row = results[i];
+            const { name, email, amount_of_courtesies, event_id } = row;
+
+            console.log(`Processing Row ${i + 1}:`, row);
+
+            if (!event_id) {
+              console.warn(`Skipping row ${i + 1} due to missing event_id:`, row);
+              continue;
+            }
+
+            const event = await storage.getEvent(event_id);
+
+            if (event) {
+              console.log(`Event found for ID ${event_id}: ${event.title}`);
+              const code = `CDPI${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+              
+              const link = await storage.createCourtesyLink({
+                code,
+                eventId: event.id,
+                ticketCount: parseInt(amount_of_courtesies, 10),
+                createdBy: req.user.id,
+                isActive: true,
+              });
+              console.log(`Courtesy link created for ${email}: ${link.code}`);
+
+              emailService.sendCourtesyMassEmail(email, name, event.title, link.code);
+            } else {
+              console.warn(`Event not found for ID in row ${i + 1}: ${event_id}`);
+            }
+          }
+          console.log('CSV processing finished.');
+          res.status(200).json({ message: 'E-mails de cortesia enfileirados para envio.' });
+        } catch (error) {
+          console.error('Error processing CSV:', error);
+          res.status(500).json({ message: 'Erro ao processar o arquivo CSV.' });
+        }
+      });
   });
 
   const httpServer = createServer(app);

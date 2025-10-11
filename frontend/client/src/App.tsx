@@ -20,6 +20,7 @@ import CourtesyAdminPage from "@/pages/CourtesyAdminPage";
 import NotFound from "@/pages/not-found";
 import Navigation from "@/components/Navigation";
 import AdminRoute from "@/components/AdminRoute";
+import CourtesyMassSendingPage from "@/pages/CourtesyMassSendingPage";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -55,6 +56,11 @@ function Router() {
         <Route path="/cortesia-admin">
           <AdminRoute>
             <CourtesyAdminPage />
+          </AdminRoute>
+        </Route>
+        <Route path="/cortesia-envio-em-massa">
+          <AdminRoute>
+            <CourtesyMassSendingPage />
           </AdminRoute>
         </Route>
         <Route component={NotFound} />

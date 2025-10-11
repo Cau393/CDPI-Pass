@@ -223,7 +223,7 @@ class EmailService {
         { expiresIn: '30m' }
     );
 
-    const resetLink = `https://cdpipass.com.br/reset-password?token=${resetToken}`; // https://cdpipass.com.br/reset-password?token=${resetToken} in production
+    const resetLink = `https://cdpipass.com.br/reset-password?token=${resetToken}`;
 
     const html = `
         <h1>Redefinição de Senha</h1>
@@ -234,6 +234,21 @@ class EmailService {
     const text = `Acesse este link para redefinir sua senha: ${resetLink}`;
 
     return this.sendEmail(email, "Redefinição de Senha - CDPI Pass", html, text);
+  }
+
+  async sendCourtesyMassEmail(email: string, name: string, eventName: string, courtesyCode: string): Promise<boolean> {
+    const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${courtesyCode}`;
+    const subject = `Sua cortesia para o evento ${eventName}`;
+    const html = `
+      <h1>Olá, ${name}!</h1>
+      <p>Você recebeu uma cortesia para o evento ${eventName}.</p>
+      <p>Para resgatar seu ingresso, clique no link abaixo:</p>
+      <a href="${redeemUrl}">${redeemUrl}</a>
+      <p>Atenciosamente,<br>Equipe CDPI Pass</p>
+    `;
+    const text = `Olá, ${name}!\n\nVocê recebeu uma cortesia para o evento ${eventName}.\n\nPara resgatar seu ingresso, acesse o seguinte link: ${redeemUrl}\n\nAtenciosamente,\nEquipe CDPI Pass`;
+
+    return this.sendEmail(email, subject, html, text);
   }
 }
 
