@@ -8,9 +8,13 @@ export default defineConfig({
   outDir: 'dist',
   format: ['esm'],
   target: 'node18',
-  // Add this 'external' array to exclude problematic packages
   external: [
     '@babel/preset-typescript',
     'lightningcss',
+    'vite',           // ✅ Add this
+    'rollup',         // ✅ Add this
+    'dotenv',         // ✅ Add this for safety
   ],
+  // Add this to handle ESM properly
+  shims: true,
 });
