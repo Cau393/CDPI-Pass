@@ -1,4 +1,6 @@
 from django.db import models
+from orders.models import Order
+from events.models import Event
 
 class Ticket(models.Model):
     id = models.CharField(max_length=255, primary_key=True)

@@ -11,5 +11,5 @@ def send_verification_email(email: str, verification_code: str):
     html_content = f'<strong>Your verification code is: {verification_code}</strong>'
     to_email = email
     mail = Mail(from_email, subject, to_email, plain_text_content, html_content)
-    response = sg.send(mail)
+    response = sg.send.delay(mail)
     return response

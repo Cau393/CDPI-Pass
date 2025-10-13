@@ -1,39 +1,36 @@
+import re
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from .models import User
-from tasks.email import send_verification_email
+from .utils import generate_verification_code, get_code_expiration
 
 class UserSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the User model.
+    """
     class Meta:
         model = User
         fields = [
-        'id', 'name', 'email', 'cpf', 'phone', 'birth_date', 'address', 'partner_company'
+        'id', 'first_name', 'last_name', 'email', 'cpf', 'phone', 'birth_date', 'address', 'partner_company'
         ]
 
-class RegisterSerializer(serializers.ModelSerializer):
-    # Password fields that are extra to validate and confirm the registration
-    password = serializers.CharField(write_only=True, min_length=6, max_length=128, style={'input_type': 'password'})
-    password_confirm = serializers.CharField(write_only=True, min_length=6, max_length=128, style={'input_type': 'password'})
-    
-    cpf = serializers.RegexField(
-        regex=r'^\d{3}\.\d{3}\.\d{3}-\d{2}$',
-        error_messages={
-            'invalid': 'CPF inválido. O formato deve ser XXX.XXX.XXX-XX.'
-        }
-    )
-    phone = serializers.RegexField(
-        regex=r'^\(\d{2}\)\s\d{4,5}-\d{4}$',
-        error_messages={
-            'invalid': 'Telefone inválido. O formato deve ser (XX) XXXXX-XXXX ou (XX) XXXX-XXXX.'
-        }
-    )
-    address = serializers.CharField(max_length=255, min_length=10)
+class RegisterSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    name = serializers.CharField() 
+    password = serializers.CharField(write_only=True, min_length=6)
+    password_confirm = serializers.CharField(write_only=True, min_length=6)
+    cpf = serializers.RegexField(regex=r'^\d{3}\.\d{3}\.\d{3}-\d{2}$')
+    phone = serializers.RegexField(regex=r'^\(\d{2}\)\s\d{4,5}-\d{4}$')
+    birth_date = serializers.DateField()
+    address = serializers.CharField(min_length=10)
+    partner_company = serializers.CharField(required=False, allow_blank=True)
 
-    class Meta:
-        model = User
-        fields = [
-        'email', 'password', 'password_confirm', 'name', 'cpf', 'phone', 'birth_date', 'address', 'partner_company'
-        ]
+    def validate_name(self, value):
+        """Split full name into first and last name"""
+        parts = value.split(' ', 1)  # Split on first space
+        if len(parts) < 2:
+            raise serializers.ValidationError("Please provide both first and last name")
+        return value
     
     def validate(self, attrs):
         """
@@ -54,69 +51,72 @@ class RegisterSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """
-        Remove password_confirm from validated_data and create the user.
+        # Remove fields that aren't in the model
+        # Handle password
+        # Generate verification code
+        # Create user
         """
-        validated_data.pop('password_confirm', None)
+        # Remove fields that aren't in the model
+        name = validated_data.pop('name')
         password = validated_data.pop('password')
+        password_confirm = validated_data.pop('password_confirm')
 
-        user = User(**validated_data)
-        user.set_password(password)
+        # Parse name
+        first_name, last_name = name.split(' ', 1)
         
-        user.email_verification_code = self.generate_verification_code()
-        user.email_verification_code_expires_at = self.get_code_expiration()
-
-        user.save()
-
-        send_verification_email.delay(user.email, user.email_verification_code)
-
+        user = User.objects.create_user(
+        first_name=first_name,
+        last_name=last_name,
+        password=password,
+        **validated_data
+        )
+        
         return user
     
-    # ----- Auxiliary functions -----
-    def generate_verification_code(self):
+    def validate_email(self, value):
         """
-        Generate a random 6-digit verification code.
+        Validate that the email is not already registered.
         """
-        from random import randint
-        return str(randint(100000, 999999))
-    
-    def get_code_expiration(self):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("Este email já está cadastrado.")
+        return value
+
+    def validate_cpf(self, value):
         """
-        Get the expiration time for the verification code.
+        Validate that the CPF is not already registered.
         """
-        from datetime import datetime, timedelta
-        return datetime.now() + timedelta(minutes=15)
+        if User.objects.filter(cpf=value).exists():
+            raise serializers.ValidationError("Este CPF já está cadastrado.")
+        return value
 
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField(write_only=True, min_length=6, max_length=128, style={'input_type': 'password'})
-
-    def validate(self, attrs):
-        """
-        Validate email and password.
-        """
-        email = attrs.get('email')
-        password = attrs.get('password')
-
-        if not email or not password:
-            raise serializers.ValidationError("Email e senha são obrigatórios.")
-
-        return attrs
+    email = serializers.EmailField(required=True)
+    password = serializers.CharField(required=True, write_only=True, min_length=6, max_length=128, style={'input_type': 'password'})
 
 class VerifyCodeSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    code = serializers.CharField(max_length=6, min_length=6)
+    email = serializers.EmailField(required=True)
+    code = serializers.CharField(max_length=6, min_length=6, required=True)
+
+    def validate_code(self, value):
+        """
+        Validate the verification code.
+        """
+        if not re.match(r'^\d{6}$', value):
+            raise serializers.ValidationError("Código de verificação inválido. Deve conter 6 dígitos numéricos.")
+        return value
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['name', 'phone', 'birth_date', 'address', 'partner_company', 'password']
-    
-    def validate_password(self, value):
-        """
-        Validate password using Django's built-in validators.
-        """
-        validate_password(value)
-        return value
+        fields = ['first_name', 'last_name', 'phone', 'birth_date', 'address', 'partner_company']
+        extra_kwargs = {
+            'first_name': {'required': False},
+            'last_name': {'required': False},
+            'phone': {'required': False},
+            'birth_date': {'required': False},
+            'address': {'required': False},
+            'partner_company': {'required': False},
+        }
 
 class PasswordChangeSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True, min_length=6, max_length=128, style={'input_type': 'password'})
