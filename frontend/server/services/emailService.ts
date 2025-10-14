@@ -326,6 +326,7 @@ class EmailService {
             <a href="${redeemUrl}" class="cta-button">Resgatar Ingresso Agora</a>
             
             <div class="important-notice">
+            <p>Ou se preferir, você pode resgatar a cortesia por meio do nosso site com o código:    <strong>${courtesyCode}</strong></p>
               <h4>⚠️ Instruções Importantes:</h4>
               <p>
                 É importante fazer o resgate da sua cortesia imediatamente ou <strong>até dia ${formattedRedeemByDate}</strong> para garantir sua vaga e participar do evento.
