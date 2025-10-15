@@ -364,6 +364,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const order = await storage.createOrder({
         userId,
         eventId,
+        cpf: req.user.cpf,
         paymentMethod,
         amount: totalAmount.toString(),
         status: "pending",
@@ -1053,6 +1054,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Evento não encontrado" });
       }
 
+      // Check if CPF is already registered for this event
+      const isCpfRegistered = await storage.isCpfAlreadyRegisteredForEvent(userData.cpf, link.eventId);
+      if (isCpfRegistered) {
+        return res.status(400).json({ message: "CPF já cadastrado para este evento" });
+      }
+
       // Check if event is full
       if (event.maxAttendees && (event.currentAttendees || 0) >= event.maxAttendees) {
         return res.status(400).json({ message: "Evento lotado" });
@@ -1073,6 +1080,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const order = await storage.createOrder({
         userId,
         eventId: link.eventId,
+        cpf: userData.cpf,
         paymentMethod: "courtesy",
         amount: "0.00",
         status: "paid", // Courtesy tickets are automatically confirmed

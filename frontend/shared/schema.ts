@@ -65,6 +65,7 @@ export const orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
   eventId: varchar("event_id").notNull().references(() => events.id),
+  cpf: varchar("cpf", { length: 14 }).notNull(),
   status: varchar("status", { length: 50 }).notNull().default("pending"), // pending, paid, cancelled, courtesy
   paymentMethod: varchar("payment_method", { length: 50 }).notNull(),
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),

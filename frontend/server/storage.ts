@@ -16,7 +16,7 @@ import {
   type InsertCourtesyLink,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, sql, asc, count } from "drizzle-orm";
+import { eq, desc, sql, asc, count, and } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
@@ -40,6 +40,7 @@ export interface IStorage {
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
   getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined>;
+  isCpfAlreadyRegisteredForEvent(cpf: string, eventId: string): Promise<boolean>;
 
   // Email queue operations
   addEmailToQueue(email: InsertEmailQueue): Promise<EmailQueue>;
@@ -231,6 +232,17 @@ export class DatabaseStorage implements IStorage {
       .from(orders)
       .where(eq(orders.asaasPaymentId, paymentId));
     return order;
+  }
+
+  async isCpfAlreadyRegisteredForEvent(cpf: string, eventId: string): Promise<boolean> {  
+  const existingOrder = await db.select().from(orders).where(
+    and(
+      eq(orders.cpf, cpf),
+      eq(orders.eventId, eventId)
+    )
+  ).limit(1);
+
+  return existingOrder.length > 0;
   }
 
   // Email queue operations

@@ -46442,6 +46442,7 @@ var orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
   eventId: varchar("event_id").notNull().references(() => events.id),
+  cpf: varchar("cpf", { length: 14 }).notNull(),
   status: varchar("status", { length: 50 }).notNull().default("pending"),
   // pending, paid, cancelled, courtesy
   paymentMethod: varchar("payment_method", { length: 50 }).notNull(),
@@ -46577,7 +46578,7 @@ var pool = new Pool({ connectionString: process.env.DATABASE_URL });
 var db = drizzle({ client: pool, schema: schema_exports });
 
 // server/storage.ts
-import { eq, desc, sql as sql2, asc, count } from "drizzle-orm";
+import { eq, desc, sql as sql2, asc, count, and } from "drizzle-orm";
 var DatabaseStorage = class {
   // User operations
   async getUser(id) {
@@ -46689,6 +46690,15 @@ var DatabaseStorage = class {
   async getOrderByAsaasPaymentId(paymentId) {
     const [order] = await db.select().from(orders).where(eq(orders.asaasPaymentId, paymentId));
     return order;
+  }
+  async isCpfAlreadyRegisteredForEvent(cpf, eventId) {
+    const existingOrder = await db.select().from(orders).where(
+      and(
+        eq(orders.cpf, cpf),
+        eq(orders.eventId, eventId)
+      )
+    ).limit(1);
+    return existingOrder.length > 0;
   }
   // Email queue operations
   async addEmailToQueue(emailData) {
@@ -47066,7 +47076,7 @@ var EmailService = class {
             <a href="${redeemUrl}" class="cta-button">Resgatar Ingresso Agora</a>
             
             <div class="important-notice">
-            <p>Ou se preferir, voc\xEA pode resgatar a cortesia por meio do nosso site com o c\xF3digo: <strong>${courtesyCode}</strong></p>
+            <p>Ou se preferir, voc\xEA pode resgatar a cortesia por meio do nosso site com o c\xF3digo:    <strong>${courtesyCode}</strong></p>
               <h4>\u26A0\uFE0F Instru\xE7\xF5es Importantes:</h4>
               <p>
                 \xC9 importante fazer o resgate da sua cortesia imediatamente ou <strong>at\xE9 dia ${formattedRedeemByDate}</strong> para garantir sua vaga e participar do evento.
@@ -47710,6 +47720,7 @@ async function registerRoutes(app2) {
       const order = await storage.createOrder({
         userId,
         eventId,
+        cpf: req.user.cpf,
         paymentMethod,
         amount: totalAmount.toString(),
         status: "pending"
@@ -48223,6 +48234,10 @@ async function registerRoutes(app2) {
       if (!event) {
         return res.status(404).json({ message: "Evento n\xE3o encontrado" });
       }
+      const isCpfRegistered = await storage.isCpfAlreadyRegisteredForEvent(userData.cpf, link.eventId);
+      if (isCpfRegistered) {
+        return res.status(400).json({ message: "CPF j\xE1 cadastrado para este evento" });
+      }
       if (event.maxAttendees && (event.currentAttendees || 0) >= event.maxAttendees) {
         return res.status(400).json({ message: "Evento lotado" });
       }
@@ -48238,6 +48253,7 @@ async function registerRoutes(app2) {
       const order = await storage.createOrder({
         userId,
         eventId: link.eventId,
+        cpf: userData.cpf,
         paymentMethod: "courtesy",
         amount: "0.00",
         status: "paid",
