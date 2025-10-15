@@ -2,18 +2,20 @@ from __future__ import absolute_import, unicode_literals
 import os
 from celery import Celery
 
-# Set default Django settings
+# Set the default Django settings module
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
 
-# Create Celery app
+# Create the Celery application
 app = Celery('backend')
 
-# Load config from Django settings, with a CELERY_ prefix
+# Load task modules from all registered Django apps
 app.config_from_object('django.conf:settings', namespace='CELERY')
 
-# Discover tasks across all Django apps automatically
+# Auto-discover tasks in all installed apps
+# This will look for tasks.py in each app
 app.autodiscover_tasks(['users', 'tasks'])
 
-@app.task(bind=True)
+@app.task(bind=True, ignore_result=True)
 def debug_task(self):
+    """Debug task to test Celery is working"""
     print(f'Request: {self.request!r}')

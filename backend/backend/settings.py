@@ -90,14 +90,20 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20,
 }
 
-# Celery configuration
-CELERY_BROKER_URL = getenv('CELERY_BROKER_URL')
-CELERY_RESULT_BACKEND = getenv('CELERY_RESULT_BACKEND')
+# Celery Configuration
+CELERY_BROKER_URL = getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')
+CELERY_RESULT_BACKEND = getenv('CELERY_RESULT_BACKEND', 'redis://redis:6379/0')
+# Serialization
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = 'UTC'
-
+# Timezone
+CELERY_TIMEZONE = 'America/Sao_Paulo'  # Use Brazilian timezone or 'UTC'
+# Task results
+CELERY_RESULT_EXPIRES = 3600  # Results expire after 1 hour
+# Task execution
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60
 
 ROOT_URLCONF = 'backend.urls'
 
