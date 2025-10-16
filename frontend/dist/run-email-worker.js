@@ -86,7 +86,8 @@ var courtesyLinks = pgTable("courtesy_links", {
   createdBy: varchar("created_by").notNull().references(() => users.id),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow()
+  updatedAt: timestamp("updated_at").defaultNow(),
+  overridePrice: decimal("override_price", { precision: 10, scale: 2 })
 });
 var orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

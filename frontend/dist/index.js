@@ -46438,7 +46438,8 @@ var courtesyLinks = pgTable("courtesy_links", {
   createdBy: varchar("created_by").notNull().references(() => users.id),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow()
+  updatedAt: timestamp("updated_at").defaultNow(),
+  overridePrice: decimal("override_price", { precision: 10, scale: 2 })
 });
 var orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -47734,7 +47735,7 @@ async function registerRoutes(app2) {
   });
   app2.post("/api/orders", authenticateToken, async (req, res) => {
     try {
-      const { eventId, paymentMethod } = req.body;
+      const { eventId, paymentMethod, promoCode } = req.body;
       const userId = req.user.id;
       const event = await storage.getEvent(eventId);
       if (!event) {
@@ -47743,16 +47744,28 @@ async function registerRoutes(app2) {
       if (event.maxAttendees && (event.currentAttendees || 0) >= event.maxAttendees) {
         return res.status(400).json({ message: "Evento lotado" });
       }
-      const eventPrice = parseFloat(event.price);
+      let finalPrice = parseFloat(event.price);
+      let promoLinkId = null;
+      if (promoCode) {
+        const link = await storage.getCourtesyLinkByCode(promoCode);
+        const remainingUses = link ? link.ticketCount - (link.usedCount || 0) : 0;
+        if (link && link.isActive && remainingUses > 0 && link.overridePrice) {
+          finalPrice = parseFloat(link.overridePrice);
+          promoLinkId = link.id;
+        } else {
+          return res.status(400).json({ message: "C\xF3digo promocional inv\xE1lido ou esgotado." });
+        }
+      }
       const convenienceFee = 5;
-      const totalAmount = eventPrice + convenienceFee;
+      const totalAmount = finalPrice + convenienceFee;
       const order = await storage.createOrder({
         userId,
         eventId,
         cpf: req.user.cpf,
         paymentMethod,
         amount: totalAmount.toString(),
-        status: "pending"
+        status: "pending",
+        courtesyLinkId: promoLinkId
       });
       try {
         const paymentData = await asaasService.createPayment({
@@ -48018,6 +48031,9 @@ async function registerRoutes(app2) {
           await storage.updateOrder(order.id, { status: "paid" });
           const event = await storage.getEvent(order.eventId);
           const user = await storage.getUser(order.userId);
+          if (order.courtesyLinkId) {
+            await storage.incrementCourtesyLinkUsage(order.courtesyLinkId);
+          }
           if (event && user) {
             await storage.updateEvent(event.id, {
               currentAttendees: (event.currentAttendees || 0) + 1
@@ -48160,7 +48176,7 @@ async function registerRoutes(app2) {
       if (!req.user.isAdmin) {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores podem criar links de cortesia." });
       }
-      const { eventId, ticketCount } = req.body;
+      const { eventId, ticketCount, overridePrice } = req.body;
       if (!eventId || !ticketCount || ticketCount < 1) {
         return res.status(400).json({ message: "Dados inv\xE1lidos. Forne\xE7a eventId e ticketCount." });
       }
@@ -48174,11 +48190,18 @@ async function registerRoutes(app2) {
         eventId,
         ticketCount: parseInt(ticketCount),
         createdBy: req.user.id,
-        isActive: true
+        isActive: true,
+        overridePrice: overridePrice || null
       });
+      let finalUrl = "";
+      if (link.overridePrice) {
+        finalUrl = `${req.protocol}://${req.get("host")}/event/${link.eventId}?promo=${link.code}`;
+      } else {
+        finalUrl = `${req.protocol}://${req.get("host")}/cortesia?code=${link.code}`;
+      }
       res.status(201).json({
         ...link,
-        redeemUrl: `${req.protocol}://${req.get("host")}/cortesia?code=${link.code}`
+        redeemUrl: finalUrl
       });
     } catch (error) {
       console.error("Create courtesy link error:", error);
@@ -48196,10 +48219,16 @@ async function registerRoutes(app2) {
       const { links, total } = await storage.getCourtesyLinksByCreator(userId, page, limit);
       const linksWithDetails = await Promise.all(links.map(async (link) => {
         const event = await storage.getEvent(link.eventId);
+        let finalUrl = "";
+        if (link.overridePrice) {
+          finalUrl = `${req.protocol}://${req.get("host")}/event/${link.eventId}?promo=${link.code}`;
+        } else {
+          finalUrl = `${req.protocol}://${req.get("host")}/cortesia?code=${link.code}`;
+        }
         return {
           ...link,
           event,
-          redeemUrl: `${req.protocol}://${req.get("host")}/cortesia?code=${link.code}`,
+          redeemUrl: finalUrl,
           remainingTickets: link.ticketCount - (link.usedCount || 0)
         };
       }));
@@ -48252,6 +48281,9 @@ async function registerRoutes(app2) {
       const link = await storage.getCourtesyLinkByCode(code);
       if (!link) {
         return res.status(404).json({ message: "Link de cortesia n\xE3o encontrado" });
+      }
+      if (link.overridePrice) {
+        return res.status(400).json({ message: "Este \xE9 um c\xF3digo de desconto e deve ser usado na p\xE1gina do evento, n\xE3o no resgate de cortesia." });
       }
       if (!link.isActive) {
         return res.status(400).json({ message: "Link de cortesia inativo" });

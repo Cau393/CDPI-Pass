@@ -58,6 +58,7 @@ export const courtesyLinks = pgTable("courtesy_links", {
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+  overridePrice: decimal("override_price", { precision: 10, scale: 2 }),
 });
 
 // Orders table

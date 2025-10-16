@@ -7,15 +7,27 @@ import { CreditCard, QrCode, FileText, Copy, CheckCircle, Clock } from "lucide-r
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import type { Event } from "@shared/schema";
+
+interface EventForModal {
+  id: string;
+  title: string;
+  date: string;
+  location: string;
+  price: string;
+  promoCode?: string | null; // <-- Add promoCode here
+}
 
 interface PaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
-  event: any;
+  event: Event; // Use the real Event type
+  promoCode: string | null; // The promo code to be sent to the backend
+  displayPrice: number; // The final price to display and use
   onSuccess: () => void;
 }
 
-export default function PaymentModal({ isOpen, onClose, event, onSuccess }: PaymentModalProps) {
+export default function PaymentModal({ isOpen, onClose, event, promoCode, displayPrice, onSuccess }: PaymentModalProps) {
   const { toast } = useToast();
   const [selectedMethod, setSelectedMethod] = useState<"pix" | "credit_card" | "boleto">("pix");
   const [paymentData, setPaymentData] = useState<any>(null);
@@ -25,6 +37,7 @@ export default function PaymentModal({ isOpen, onClose, event, onSuccess }: Paym
       const response = await apiRequest("POST", "/api/orders", {
         eventId: event.id,
         paymentMethod,
+        promoCode: promoCode, // <-- This is the crucial addition
       });
       return response.json();
     },

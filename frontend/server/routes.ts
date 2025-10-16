@@ -342,7 +342,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Orders routes
   app.post("/api/orders", authenticateToken, async (req: any, res) => {
     try {
-      const { eventId, paymentMethod } = req.body;
+      const { eventId, paymentMethod, promoCode } = req.body;
       const userId = req.user.id;
 
       const event = await storage.getEvent(eventId);
@@ -356,9 +356,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Calculate total amount (event price + convenience fee)
-      const eventPrice = parseFloat(event.price);
+      let finalPrice = parseFloat(event.price);
+      let promoLinkId: string | null = null;
+      
+      if (promoCode) {
+        const link = await storage.getCourtesyLinkByCode(promoCode);
+        const remainingUses = link ? link.ticketCount - (link.usedCount || 0) : 0;
+
+        // It correctly checks for an overridePrice to apply the discount
+        if (link && link.isActive && remainingUses > 0 && link.overridePrice) {
+          finalPrice = parseFloat(link.overridePrice);
+          promoLinkId = link.id;
+        } else {
+          return res.status(400).json({ message: "Código promocional inválido ou esgotado." });
+        }
+      }
+      
       const convenienceFee = 5.00;
-      const totalAmount = eventPrice + convenienceFee;
+      const totalAmount = finalPrice + convenienceFee;
 
       // Create order
       const order = await storage.createOrder({
@@ -368,6 +383,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentMethod,
         amount: totalAmount.toString(),
         status: "pending",
+        courtesyLinkId: promoLinkId,
       });
 
       // Create payment with Asaas
@@ -721,6 +737,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Get event and user details
           const event = await storage.getEvent(order.eventId);
           const user = await storage.getUser(order.userId);
+
+          if (order.courtesyLinkId) {
+          await storage.incrementCourtesyLinkUsage(order.courtesyLinkId);
+          }
           
           if (event && user) {
             // Increment event attendees
@@ -917,7 +937,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores podem criar links de cortesia." });
       }
 
-      const { eventId, ticketCount } = req.body;
+      const { eventId, ticketCount, overridePrice } = req.body;
 
       if (!eventId || !ticketCount || ticketCount < 1) {
         return res.status(400).json({ message: "Dados inválidos. Forneça eventId e ticketCount." });
@@ -939,11 +959,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ticketCount: parseInt(ticketCount),
         createdBy: req.user.id,
         isActive: true,
+        overridePrice: overridePrice || null,
       });
+
+      let finalUrl = "";
+      if (link.overridePrice) {
+        // If it has a price, it's a PROMO link. Point to the event page.
+        finalUrl = `${req.protocol}://${req.get('host')}/event/${link.eventId}?promo=${link.code}`;
+      } else {
+        // Otherwise, it's a FREE courtesy link. Point to the redemption page.
+        finalUrl = `${req.protocol}://${req.get('host')}/cortesia?code=${link.code}`;
+      }
 
       res.status(201).json({
         ...link,
-        redeemUrl: `${req.protocol}://${req.get('host')}/cortesia?code=${link.code}`
+        redeemUrl: finalUrl
       });
     } catch (error) {
       console.error("Create courtesy link error:", error);
@@ -966,10 +996,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Add event details to each link
       const linksWithDetails = await Promise.all(links.map(async (link) => {
         const event = await storage.getEvent(link.eventId);
+        
+        let finalUrl = "";
+        if (link.overridePrice) {
+          finalUrl = `${req.protocol}://${req.get('host')}/event/${link.eventId}?promo=${link.code}`;
+        } else {
+          finalUrl = `${req.protocol}://${req.get('host')}/cortesia?code=${link.code}`;
+        }
+        
         return {
           ...link,
           event,
-          redeemUrl: `${req.protocol}://${req.get('host')}/cortesia?code=${link.code}`,
+          redeemUrl: finalUrl,
           remainingTickets: link.ticketCount - (link.usedCount || 0)
         };
       }));
@@ -1036,6 +1074,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const link = await storage.getCourtesyLinkByCode(code);
       if (!link) {
         return res.status(404).json({ message: "Link de cortesia não encontrado" });
+      }
+
+      if (link.overridePrice) {
+      return res.status(400).json({ message: "Este é um código de desconto e deve ser usado na página do evento, não no resgate de cortesia." });
       }
 
       if (!link.isActive) {

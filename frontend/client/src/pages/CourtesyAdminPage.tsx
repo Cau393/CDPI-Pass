@@ -27,6 +27,7 @@ interface CourtesyLink {
   createdAt: string;
   redeemUrl: string;
   event?: Event;
+  overridePrice?: number;
   remainingTickets?: number;
 }
 
@@ -38,6 +39,7 @@ export default function CourtesyAdminPage() {
   const queryClient = useQueryClient();
   const { isAuthenticated } = useAuth();
   const [currentPage, setCurrentPage] = useState(1);
+  const [overridePrice, setOverridePrice] = useState("");
 
   // Fetch events
   const { data: events } = useQuery<Event[]>({
@@ -58,7 +60,7 @@ export default function CourtesyAdminPage() {
 
   // Create courtesy link mutation
   const createLinkMutation = useMutation({
-    mutationFn: async (data: { eventId: string; ticketCount: number }) => {
+    mutationFn: async (data: { eventId: string; ticketCount: number; overridePrice: number | null }) => {
       return await apiRequest("POST", "/api/courtesy-links", data);
     },
     onSuccess: () => {
@@ -93,6 +95,7 @@ export default function CourtesyAdminPage() {
     createLinkMutation.mutate({
       eventId: selectedEventId,
       ticketCount: parseInt(ticketCount),
+      overridePrice: overridePrice ? parseFloat(overridePrice) : null,
     });
   };
 
@@ -156,7 +159,20 @@ export default function CourtesyAdminPage() {
                 data-testid="input-ticket-count"
               />
             </div>
-            
+
+            <div className="space-y-2">
+              <Label htmlFor="price">Preço Promocional (deixe em branco para cortesia)</Label>
+              <Input
+                id="price"
+                type="number"
+                min="0"
+                placeholder="Ex: 50.00"
+                value={overridePrice}
+                onChange={(e) => setOverridePrice(e.target.value)}
+                data-testid="input-override-price"
+              />
+            </div>
+                        
             <div className="flex items-end">
               <Button
                 onClick={handleCreateLink}
@@ -197,6 +213,17 @@ export default function CourtesyAdminPage() {
                         <h3 className="font-semibold text-lg">
                           {link.event?.title || "Evento"}
                         </h3>
+                        <div className="mb-2">
+                          {link.overridePrice ? (
+                            <span className="text-sm font-bold text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
+                              Promocional: R$ {parseFloat(link.overridePrice).toFixed(2)}
+                            </span>
+                          ) : (
+                            <span className="text-sm font-bold text-green-600 bg-green-100 px-2 py-1 rounded-full">
+                              Cortesia (Grátis)
+                            </span>
+                          )}
+                        </div>
                         <p className="text-sm text-gray-600 mb-2">
                           Código: <span className="font-mono bg-gray-100 px-2 py-1 rounded">{link.code}</span>
                         </p>
