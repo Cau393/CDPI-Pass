@@ -1067,24 +1067,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Update user information with courtesy data
       const birthDateObj = new Date(userData.birthDate);
-      await storage.updateUser(userId, {
-        name: userData.name,
-        cpf: userData.cpf,
-        phone: userData.phone,
-        birthDate: birthDateObj,
-        address: userData.address,
-        partnerCompany: userData.partnerCompany,
-      });
+
+      const newAttendee = await storage.createCourtesyAttendee({
+      name: userData.name,
+      email: userData.email,
+      cpf: userData.cpf,
+      phone: userData.phone,
+      birthDate: birthDateObj,
+      address: userData.address,
+      partnerCompany: userData.partnerCompany,
+    });
 
       // Create courtesy order
       const order = await storage.createOrder({
-        userId,
+        userId, // The user who performed the redemption
         eventId: link.eventId,
-        cpf: userData.cpf,
+        cpf: newAttendee.cpf,
         paymentMethod: "courtesy",
         amount: "0.00",
-        status: "paid", // Courtesy tickets are automatically confirmed
+        status: "paid",
         courtesyLinkId: link.id,
+        courtesyAttendeeId: newAttendee.id, // Link to the new attendee record
       });
 
       // Generate QR code for the ticket
@@ -1138,7 +1141,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Send confirmation email with ticket
       await emailService.sendTicketEmail(userData.email, {
-        userName: userData.name,
+        userName: newAttendee.name,
         eventTitle: event.title,
         eventDate: event.date,
         eventLocation: event.location,

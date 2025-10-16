@@ -4,6 +4,7 @@ import {
   orders,
   emailQueue,
   courtesyLinks,
+  courtesyAttendees,
   type User,
   type InsertUser,
   type Event,
@@ -14,6 +15,8 @@ import {
   type InsertEmailQueue,
   type CourtesyLink,
   type InsertCourtesyLink,
+  type CourtesyAttendee,
+  type InsertCourtesyAttendee,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, sql, asc, count, and } from "drizzle-orm";
@@ -41,6 +44,7 @@ export interface IStorage {
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
   getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined>;
   isCpfAlreadyRegisteredForEvent(cpf: string, eventId: string): Promise<boolean>;
+  createCourtesyAttendee(attendee: InsertCourtesyAttendee): Promise<CourtesyAttendee>;
 
   // Email queue operations
   addEmailToQueue(email: InsertEmailQueue): Promise<EmailQueue>;
@@ -215,6 +219,14 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return order;
+  }
+
+  async createCourtesyAttendee(attendee: InsertCourtesyAttendee): Promise<CourtesyAttendee> {
+    const [newAttendee] = await db
+      .insert(courtesyAttendees)
+      .values(attendee)
+      .returning();
+    return newAttendee;
   }
 
   async updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined> {

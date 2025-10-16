@@ -14,12 +14,14 @@ import jwt from "jsonwebtoken";
 // shared/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
+  courtesyAttendees: () => courtesyAttendees,
   courtesyLinks: () => courtesyLinks,
   courtesyLinksRelations: () => courtesyLinksRelations,
   courtesyRedemptionSchema: () => courtesyRedemptionSchema,
   emailQueue: () => emailQueue,
   events: () => events,
   eventsRelations: () => eventsRelations,
+  insertCourtesyAttendeeSchema: () => insertCourtesyAttendeeSchema,
   insertCourtesyLinkSchema: () => insertCourtesyLinkSchema,
   insertEmailQueueSchema: () => insertEmailQueueSchema,
   insertEventSchema: () => insertEventSchema,
@@ -90,6 +92,7 @@ var orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
   eventId: varchar("event_id").notNull().references(() => events.id),
+  courtesyAttendeeId: varchar("courtesy_attendee_id").references(() => courtesyAttendees.id),
   cpf: varchar("cpf", { length: 14 }).notNull(),
   status: varchar("status", { length: 50 }).notNull().default("pending"),
   // pending, paid, cancelled, courtesy
@@ -117,6 +120,18 @@ var emailQueue = pgTable("email_queue", {
   createdAt: timestamp("created_at").defaultNow(),
   processedAt: timestamp("processed_at")
 });
+var courtesyAttendees = pgTable("courtesy_attendees", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 255 }).notNull(),
+  cpf: varchar("cpf", { length: 14 }).notNull(),
+  phone: varchar("phone", { length: 20 }).notNull(),
+  birthDate: timestamp("birth_date").notNull(),
+  address: text("address").notNull(),
+  partnerCompany: varchar("partner_company", { length: 255 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow()
+});
 var usersRelations = relations(users, ({ many }) => ({
   orders: many(orders),
   courtesyLinks: many(courtesyLinks)
@@ -137,6 +152,10 @@ var ordersRelations = relations(orders, ({ one }) => ({
   courtesyLink: one(courtesyLinks, {
     fields: [orders.courtesyLinkId],
     references: [courtesyLinks.id]
+  }),
+  courtesyAttendee: one(courtesyAttendees, {
+    fields: [orders.courtesyAttendeeId],
+    references: [courtesyAttendees.id]
   })
 }));
 var courtesyLinksRelations = relations(courtesyLinks, ({ one, many }) => ({
@@ -191,6 +210,11 @@ var insertCourtesyLinkSchema = createInsertSchema(courtesyLinks).omit({
   createdAt: true,
   updatedAt: true,
   usedCount: true
+});
+var insertCourtesyAttendeeSchema = createInsertSchema(courtesyAttendees).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true
 });
 var loginSchema = z.object({
   email: z.string().email("Email inv\xE1lido"),
@@ -329,6 +353,10 @@ var DatabaseStorage = class {
       updatedAt: /* @__PURE__ */ new Date()
     }).returning();
     return order;
+  }
+  async createCourtesyAttendee(attendee) {
+    const [newAttendee] = await db.insert(courtesyAttendees).values(attendee).returning();
+    return newAttendee;
   }
   async updateOrder(id, updates) {
     const [order] = await db.update(orders).set({ ...updates, updatedAt: /* @__PURE__ */ new Date() }).where(eq(orders.id, id)).returning();

@@ -65,6 +65,7 @@ export const orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
   eventId: varchar("event_id").notNull().references(() => events.id),
+  courtesyAttendeeId: varchar("courtesy_attendee_id").references(() => courtesyAttendees.id),
   cpf: varchar("cpf", { length: 14 }).notNull(),
   status: varchar("status", { length: 50 }).notNull().default("pending"), // pending, paid, cancelled, courtesy
   paymentMethod: varchar("payment_method", { length: 50 }).notNull(),
@@ -93,6 +94,20 @@ export const emailQueue = pgTable("email_queue", {
   processedAt: timestamp("processed_at"),
 });
 
+// Courtesy Attendees table
+export const courtesyAttendees = pgTable("courtesy_attendees", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 255 }).notNull(),
+  cpf: varchar("cpf", { length: 14 }).notNull(),
+  phone: varchar("phone", { length: 20 }).notNull(),
+  birthDate: timestamp("birth_date").notNull(),
+  address: text("address").notNull(),
+  partnerCompany: varchar("partner_company", { length: 255 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   orders: many(orders),
@@ -116,6 +131,10 @@ export const ordersRelations = relations(orders, ({ one }) => ({
   courtesyLink: one(courtesyLinks, {
     fields: [orders.courtesyLinkId],
     references: [courtesyLinks.id],
+  }),
+  courtesyAttendee: one(courtesyAttendees, {
+    fields: [orders.courtesyAttendeeId],
+    references: [courtesyAttendees.id],
   }),
 }));
 
@@ -179,6 +198,12 @@ export const insertCourtesyLinkSchema = createInsertSchema(courtesyLinks).omit({
   usedCount: true,
 });
 
+export const insertCourtesyAttendeeSchema = createInsertSchema(courtesyAttendees).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -190,6 +215,8 @@ export type EmailQueue = typeof emailQueue.$inferSelect;
 export type InsertEmailQueue = z.infer<typeof insertEmailQueueSchema>;
 export type CourtesyLink = typeof courtesyLinks.$inferSelect;
 export type InsertCourtesyLink = z.infer<typeof insertCourtesyLinkSchema>;
+export type CourtesyAttendee = typeof courtesyAttendees.$inferSelect;
+export type InsertCourtesyAttendee = z.infer<typeof insertCourtesyAttendeeSchema>;
 
 // Login schema
 export const loginSchema = z.object({
