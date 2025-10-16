@@ -46481,6 +46481,7 @@ var courtesyAttendees = pgTable("courtesy_attendees", {
   birthDate: timestamp("birth_date").notNull(),
   address: text("address").notNull(),
   partnerCompany: varchar("partner_company", { length: 255 }),
+  eventTitle: varchar("event_title", { length: 255 }).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow()
 });
@@ -47989,7 +47990,8 @@ async function registerRoutes(app2) {
       res.json({
         success: true,
         message: "Ingresso verificado com sucesso",
-        userName: ticketUser?.name || "Participante",
+        userName: "Participante Confirmado",
+        // alter this when the Pouso Alegre event ends
         eventTitle: event?.title || "Evento"
       });
     } catch (error) {
@@ -48277,7 +48279,8 @@ async function registerRoutes(app2) {
         phone: userData.phone,
         birthDate: birthDateObj,
         address: userData.address,
-        partnerCompany: userData.partnerCompany
+        partnerCompany: userData.partnerCompany,
+        eventTitle: event.title
       });
       const order = await storage.createOrder({
         userId,

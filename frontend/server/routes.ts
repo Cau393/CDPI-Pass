@@ -683,7 +683,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ 
         success: true, 
         message: "Ingresso verificado com sucesso",
-        userName: ticketUser?.name || "Participante",
+        userName: "Participante Confirmado", // alter this when the Pouso Alegre event ends
         eventTitle: event?.title || "Evento"
       });
     } catch (error) {
@@ -1076,6 +1076,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       birthDate: birthDateObj,
       address: userData.address,
       partnerCompany: userData.partnerCompany,
+      eventTitle: event.title,
     });
 
       // Create courtesy order

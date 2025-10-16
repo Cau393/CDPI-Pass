@@ -104,6 +104,7 @@ export const courtesyAttendees = pgTable("courtesy_attendees", {
   birthDate: timestamp("birth_date").notNull(),
   address: text("address").notNull(),
   partnerCompany: varchar("partner_company", { length: 255 }),
+  eventTitle: varchar("event_title", { length: 255 }).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
