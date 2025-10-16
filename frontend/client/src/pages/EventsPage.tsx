@@ -25,6 +25,10 @@ export default function EventsPage() {
         event.location.toLowerCase().includes(search)
       );
     })
+    .filter(
+    (event) =>
+      event.title !== 'Workshop 360º na indústria farmacêutica - Montes Claros'
+    )
     ?.sort((a, b) => +new Date(a.date) - +new Date(b.date)); // Sort by date ascending
 
   return (
