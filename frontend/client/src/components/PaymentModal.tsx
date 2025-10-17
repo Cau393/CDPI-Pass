@@ -104,16 +104,22 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
                 <div className="border-t pt-2 mt-2">
                   <div className="flex justify-between">
                     <span className="text-gray-600">Valor do Ingresso:</span>
-                    <span>{formatCurrency(parseFloat(event?.price) || 0)}</span>
+                    <span>{formatCurrency(displayPrice)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">Taxa de Conveniência:</span>
                     <span>{formatCurrency(5)}</span>
                   </div>
+                  {promoCode && (
+                    <div className="flex justify-between text-sm text-gray-500">
+                      <span>Preço Original:</span>
+                      <span className="line-through">{formatCurrency(parseFloat(event?.price) || 0)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between font-bold text-lg mt-2">
                     <span>Total:</span>
                     <span className="text-primary">
-                      {formatCurrency((parseFloat(event?.price) || 0) + 5)}
+                      {formatCurrency(displayPrice + 5)}
                     </span>
                   </div>
                 </div>

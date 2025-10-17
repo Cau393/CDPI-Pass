@@ -256,8 +256,8 @@ export default function EventDetailsPage() {
       {modalData && (
         <PaymentModal
           event={modalData.event}
-          promoCode={modalData.promoCode}                 // ✅ Added
-          displayPrice={modalData.price}           // ✅ Added
+          promoCode={modalData.promoCode}
+          displayPrice={modalData.price}           
           isOpen={isPaymentModalOpen}
           onClose={() => setIsPaymentModalOpen(false)}
           onSuccess={() => {
