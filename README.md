@@ -66,8 +66,6 @@ The backend follows a RESTful API design using Express.js with TypeScript, provi
 
 ## Development and Build Tools
 
-**Replit Infrastructure**: The application is configured for Replit hosting with specific plugins for error handling and development tools.
-
 **Vite Build System**: Modern build tool providing fast development server, hot module replacement, and optimized production builds with code splitting.
 
 **TypeScript Ecosystem**: Comprehensive TypeScript setup with strict type checking, path mapping, and shared types between client and server.
