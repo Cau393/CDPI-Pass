@@ -44,9 +44,9 @@ class User(AbstractUser):
     """
     The date and time of the user's last login.
     """
-    is_active = models.BooleanField(default=False)
+    is_email_verified = models.BooleanField(default=False)
     """
-    Whether the user account is active.
+    Whether the user's email is verified.
     """
     
     # Email verification (6 digits code)

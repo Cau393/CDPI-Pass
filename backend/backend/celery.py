@@ -1,6 +1,10 @@
 from __future__ import absolute_import, unicode_literals
 import os
-from celery import Celery
+from celery import Celery, shared_task
+import subprocess
+
+import logging
+logger = logging.getLogger(__name__)
 
 # Set the default Django settings module
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
@@ -19,3 +23,8 @@ app.autodiscover_tasks(['users', 'tasks'])
 def debug_task(self):
     """Debug task to test Celery is working"""
     print(f'Request: {self.request!r}')
+
+@shared_task
+def check_pending_payments_task():
+    logger.info("Running check_pending_payments management command")
+    subprocess.run(["python", "manage.py", "check_pending_payments"], check=False)
