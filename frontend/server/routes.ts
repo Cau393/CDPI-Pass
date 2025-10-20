@@ -17,8 +17,20 @@ import { emailService } from "./services/emailService";
 import { asaasService } from "./services/asaasService";
 import { qrCodeService } from "./services/qrCodeService";
 import { requireEmailVerification } from "./middleware/auth"; 
+import multer from 'multer';
+import csv from 'csv-parser';
+import { parse } from 'csv-parse/sync';
+import { Readable } from 'stream';
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+
+interface CSVRow {
+  name: string;
+  email: string;
+  amount_of_courtesies: string;
+  event_id: string;
+  [key: string]: string;
+}
 
 // Auth middleware
 const authenticateToken = async (req: any, res: any, next: any) => {
@@ -330,7 +342,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Orders routes
   app.post("/api/orders", authenticateToken, async (req: any, res) => {
     try {
-      const { eventId, paymentMethod } = req.body;
+      const { eventId, paymentMethod, promoCode } = req.body;
       const userId = req.user.id;
 
       const event = await storage.getEvent(eventId);
@@ -344,17 +356,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Calculate total amount (event price + convenience fee)
-      const eventPrice = parseFloat(event.price);
+      let finalPrice = parseFloat(event.price);
+      let promoLinkId: string | null = null;
+      
+      if (promoCode) {
+        const link = await storage.getCourtesyLinkByCode(promoCode);
+        const remainingUses = link ? link.ticketCount - (link.usedCount || 0) : 0;
+
+        // It correctly checks for an overridePrice to apply the discount
+        if (link && link.isActive && remainingUses > 0 && link.overridePrice) {
+          finalPrice = parseFloat(link.overridePrice);
+          promoLinkId = link.id;
+        } else {
+          return res.status(400).json({ message: "Código promocional inválido ou esgotado." });
+        }
+      }
+      
       const convenienceFee = 5.00;
-      const totalAmount = eventPrice + convenienceFee;
+      const totalAmount = finalPrice + convenienceFee;
 
       // Create order
       const order = await storage.createOrder({
         userId,
         eventId,
+        cpf: req.user.cpf,
         paymentMethod,
         amount: totalAmount.toString(),
         status: "pending",
+        courtesyLinkId: promoLinkId,
       });
 
       // Create payment with Asaas
@@ -428,8 +457,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/orders", authenticateToken, requireEmailVerification, async (req: any, res) => {
     try {
       const userId = req.user.id;
-      const orders = await storage.getOrdersByUser(userId);
-      res.json(orders);
+      const page = parseInt(req.query.page as string) || 1;
+      // console.log("🔍 GET /api/orders - Page:", page, "UserId:", userId);
+      const limit = 10;
+
+      const { orders, total } = await storage.getOrdersByUser(userId, page, limit);
+
+      res.json({
+        orders,
+        totalPages: Math.ceil(total / limit),
+        currentPage: page,
+      });
+    
     } catch (error) {
       console.error("Get orders error:", error);
       res.status(500).json({ message: "Erro interno do servidor" });
@@ -660,7 +699,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ 
         success: true, 
         message: "Ingresso verificado com sucesso",
-        userName: ticketUser?.name || "Participante",
+        userName: "Participante Confirmado", // alter this when the Pouso Alegre event ends
         eventTitle: event?.title || "Evento"
       });
     } catch (error) {
@@ -698,6 +737,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Get event and user details
           const event = await storage.getEvent(order.eventId);
           const user = await storage.getUser(order.userId);
+
+          if (order.courtesyLinkId) {
+          await storage.incrementCourtesyLinkUsage(order.courtesyLinkId);
+          }
           
           if (event && user) {
             // Increment event attendees
@@ -889,12 +932,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Courtesy Links Routes
   app.post("/api/courtesy-links", authenticateToken, async (req: any, res) => {
     try {
-      // Check if user is caueroriz@gmail.com
-      if (req.user.email !== "caueroriz@gmail.com") {
+      // Check if user is admin
+      if (!req.user.isAdmin) {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores podem criar links de cortesia." });
       }
 
-      const { eventId, ticketCount } = req.body;
+      const { eventId, ticketCount, overridePrice } = req.body;
 
       if (!eventId || !ticketCount || ticketCount < 1) {
         return res.status(400).json({ message: "Dados inválidos. Forneça eventId e ticketCount." });
@@ -916,11 +959,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ticketCount: parseInt(ticketCount),
         createdBy: req.user.id,
         isActive: true,
+        overridePrice: overridePrice || null,
       });
+
+      let finalUrl = "";
+      if (link.overridePrice) {
+        // If it has a price, it's a PROMO link. Point to the event page.
+        finalUrl = `${req.protocol}://${req.get('host')}/event/${link.eventId}?promo=${link.code}`;
+      } else {
+        // Otherwise, it's a FREE courtesy link. Point to the redemption page.
+        finalUrl = `${req.protocol}://${req.get('host')}/cortesia?code=${link.code}`;
+      }
 
       res.status(201).json({
         ...link,
-        redeemUrl: `${req.protocol}://${req.get('host')}/cortesia?code=${link.code}`
+        redeemUrl: finalUrl
       });
     } catch (error) {
       console.error("Create courtesy link error:", error);
@@ -929,31 +982,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/courtesy-links", authenticateToken, async (req: any, res) => {
-    try {
-      // Check if user is caueroriz@gmail.com
-      if (req.user.email !== "caueroriz@gmail.com") {
-        return res.status(403).json({ message: "Acesso negado" });
-      }
+  try {
+    // console.log("🔍 GET /api/courtesy-links - UserId:", req.user.id, "Page:", req.query.page); // Add this
+    
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ message: "Acesso negado" });
+    }
+    const userId = req.user.id;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = 10;
+    const { links, total } = await storage.getCourtesyLinksByCreator(userId, page, limit);
 
-      const links = await storage.getCourtesyLinksByCreator(req.user.id);
-      
-      // Add event details to each link
+    // Add event details to each link
       const linksWithDetails = await Promise.all(links.map(async (link) => {
         const event = await storage.getEvent(link.eventId);
+        
+        let finalUrl = "";
+        if (link.overridePrice) {
+          finalUrl = `${req.protocol}://${req.get('host')}/event/${link.eventId}?promo=${link.code}`;
+        } else {
+          finalUrl = `${req.protocol}://${req.get('host')}/cortesia?code=${link.code}`;
+        }
+        
         return {
           ...link,
           event,
-          redeemUrl: `${req.protocol}://${req.get('host')}/cortesia?code=${link.code}`,
+          redeemUrl: finalUrl,
           remainingTickets: link.ticketCount - (link.usedCount || 0)
         };
       }));
-
-      res.json(linksWithDetails);
-    } catch (error) {
-      console.error("Get courtesy links error:", error);
-      res.status(500).json({ message: "Erro ao buscar links de cortesia" });
-    }
-  });
+    
+    // console.log("📦 Found links:", linksWithDetails.length, "Total:", total); 
+    
+    res.json({
+      links: linksWithDetails,
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+    });
+  } catch (error) {
+    console.error("Get courtesy links error:", error);
+    res.status(500).json({ message: "Erro ao buscar links de cortesia" });
+  }
+});
 
   app.get("/api/courtesy-links/:code", async (req, res) => {
     try {
@@ -1006,6 +1076,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Link de cortesia não encontrado" });
       }
 
+      if (link.overridePrice) {
+      return res.status(400).json({ message: "Este é um código de desconto e deve ser usado na página do evento, não no resgate de cortesia." });
+      }
+
       if (!link.isActive) {
         return res.status(400).json({ message: "Link de cortesia inativo" });
       }
@@ -1022,6 +1096,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Evento não encontrado" });
       }
 
+      // Check if CPF is already registered for this event
+      const isCpfRegistered = await storage.isCpfAlreadyRegisteredForEvent(userData.cpf, link.eventId);
+      if (isCpfRegistered) {
+        return res.status(400).json({ message: "CPF já cadastrado para este evento" });
+      }
+
       // Check if event is full
       if (event.maxAttendees && (event.currentAttendees || 0) >= event.maxAttendees) {
         return res.status(400).json({ message: "Evento lotado" });
@@ -1029,23 +1109,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Update user information with courtesy data
       const birthDateObj = new Date(userData.birthDate);
-      await storage.updateUser(userId, {
-        name: userData.name,
-        cpf: userData.cpf,
-        phone: userData.phone,
-        birthDate: birthDateObj,
-        address: userData.address,
-        partnerCompany: userData.partnerCompany,
-      });
+
+      const newAttendee = await storage.createCourtesyAttendee({
+      name: userData.name,
+      email: userData.email,
+      cpf: userData.cpf,
+      phone: userData.phone,
+      birthDate: birthDateObj,
+      address: userData.address,
+      partnerCompany: userData.partnerCompany,
+      eventTitle: event.title,
+    });
 
       // Create courtesy order
       const order = await storage.createOrder({
-        userId,
+        userId, // The user who performed the redemption
         eventId: link.eventId,
+        cpf: newAttendee.cpf,
         paymentMethod: "courtesy",
         amount: "0.00",
-        status: "paid", // Courtesy tickets are automatically confirmed
+        status: "paid",
         courtesyLinkId: link.id,
+        courtesyAttendeeId: newAttendee.id, // Link to the new attendee record
       });
 
       // Generate QR code for the ticket
@@ -1068,15 +1153,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
         currentAttendees: (event.currentAttendees || 0) + 1
       });
 
+      // Wait for S3 URL to be available with retry logic
+      let finalOrderDetails = null;
+      let retries = 0;
+      const maxRetries = 100;
+      
+      while (retries < maxRetries) {
+        finalOrderDetails = await storage.getOrder(order.id);
+        
+        if (finalOrderDetails?.qr_code_s3_url) {
+          break; // S3 URL is available
+        }
+        
+        // Wait before retrying (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, 200 * Math.pow(1.5, retries)));
+        retries++;
+      }
+
+      // Check if the order was fetched successfully before proceeding
+      if (!finalOrderDetails) {
+        console.error("Could not retrieve final order details for courtesy redemption:", order.id);
+        // It's better to still send the response to the user even if the email fails.
+        // The main redemption logic was successful.
+        return res.status(201).json({
+          message: "Cortesia resgatada com sucesso! Ocorreu um erro ao enviar o email do ingresso.",
+          order: order, // Send back the initial order object
+          qrCode: qrCodeData
+        });
+      }
+
       // Send confirmation email with ticket
       await emailService.sendTicketEmail(userData.email, {
-        userName: userData.name,
+        userName: newAttendee.name,
         eventTitle: event.title,
         eventDate: event.date,
         eventLocation: event.location,
         qrCodeData: qrCodeData,
         orderId: order.id,
-        qrCodeS3Url: order.qr_code_s3_url || '',
+        qrCodeS3Url: finalOrderDetails.qr_code_s3_url || '',
       });
 
       res.status(201).json({
@@ -1087,6 +1201,120 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Redeem courtesy error:", error);
       res.status(500).json({ message: "Erro ao resgatar cortesia" });
+    }
+  });
+
+  const upload = multer({ storage: multer.memoryStorage() });
+
+  function detectDelimiter(csvBuffer: Buffer): string {
+  const sample = csvBuffer.toString('utf-8').split('\n')[0]; // Get first line
+  
+  const commaCount = (sample.match(/,/g) || []).length;
+  const semicolonCount = (sample.match(/;/g) || []).length;
+  const tabCount = (sample.match(/\t/g) || []).length;
+  
+  // Return the delimiter with the highest count
+  if (semicolonCount > commaCount && semicolonCount > tabCount) {
+    return ';';
+  } else if (tabCount > commaCount && tabCount > semicolonCount) {
+    return '\t';
+  }
+  
+  return ','; // Default to comma
+}
+
+  app.post('/api/courtesy/mass-send', authenticateToken, upload.fields([
+    { name: 'csvFile', maxCount: 1 },
+    { name: 'attachment', maxCount: 1 }
+  ]), async (req: any, res) => {
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ message: 'Acesso negado.' });
+    }
+
+    if (!req.files?.csvFile) {
+      return res.status(400).json({ message: 'Nenhum arquivo CSV enviado.' });
+    }
+
+    try {
+      const csvBuffer = req.files.csvFile[0].buffer;
+      
+      // Detect the delimiter
+      const delimiter = detectDelimiter(csvBuffer);
+      console.log(`Detected delimiter: ${delimiter === ',' ? 'comma' : delimiter === ';' ? 'semicolon' : 'tab'}`);
+
+      // Parse CSV with detected delimiter - type the results properly
+      const results: CSVRow[] = parse(csvBuffer, {
+        columns: true,
+        skip_empty_lines: true,
+        delimiter: delimiter,
+        trim: true,
+        relax_column_count: true,
+      });
+
+      // Prepare attachment if provided
+      let attachment: Array<{ filename: string; content: string; type: string }> | undefined;
+      if (req.files?.attachment) {
+        const attachmentFile = req.files.attachment[0];
+        attachment = [{
+          filename: attachmentFile.originalname,
+          content: attachmentFile.buffer.toString('base64'),
+          type: attachmentFile.mimetype
+        }];
+      }
+
+      console.log('CSV processing started. Rows found:', results.length);
+
+      // Process each row
+      for (let i = 0; i < results.length; i++) {
+        const row = results[i];
+        
+        // Normalize field names by trimming them
+        const normalizedRow: CSVRow = Object.keys(row).reduce((acc, key) => {
+          acc[key.trim()] = row[key];
+          return acc;
+        }, {} as CSVRow);
+
+        const { name, email, amount_of_courtesies, event_id } = normalizedRow;
+        
+        console.log(`Processing Row ${i + 1}:`, normalizedRow);
+
+        if (!event_id) {
+          console.warn(`Skipping row ${i + 1} due to missing event_id:`, normalizedRow);
+          continue;
+        }
+
+        const event = await storage.getEvent(event_id);
+        if (event) {
+          console.log(`Event found for ID ${event_id}: ${event.title}`);
+          const code = `CDPI${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+          const link = await storage.createCourtesyLink({
+            code,
+            eventId: event.id,
+            ticketCount: parseInt(amount_of_courtesies, 10),
+            createdBy: req.user.id,
+            isActive: true,
+          });
+          console.log(`Courtesy link created for ${email}: ${link.code}`);
+          
+          // Pass attachment to sendCourtesyMassEmail
+          emailService.sendCourtesyMassEmail(
+            email,
+            name,
+            event.title,
+            link.code,
+            event.date,
+            attachment
+          );
+        } else {
+          console.warn(`Event not found for ID in row ${i + 1}: ${event_id}`);
+        }
+      }
+
+      console.log('CSV processing finished.');
+      res.status(200).json({ message: 'E-mails de cortesia enfileirados para envio.' });
+    } catch (error) {
+      console.error('Error processing CSV:', error);
+      res.status(500).json({ message: 'Erro ao processar o arquivo CSV.' });
     }
   });
 

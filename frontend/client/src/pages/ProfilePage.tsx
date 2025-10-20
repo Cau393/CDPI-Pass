@@ -23,8 +23,14 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Download, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, Shield, AlertTriangle, RefreshCw, Mail } from "lucide-react";
-import type { User, Order } from "@shared/schema";
+import { Download, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, Shield, AlertTriangle, RefreshCw, Mail, ChevronLeft, ChevronRight } from "lucide-react";
+import type { User, Order, CourtesyLink } from "@shared/schema";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+} from "@/components/ui/pagination";
+
 
 export default function ProfilePage() {
   const [, setLocation] = useLocation();
@@ -36,6 +42,7 @@ export default function ProfilePage() {
   const [profilePassword, setProfilePassword] = useState("");
   const [hasChangedSensitiveFields, setHasChangedSensitiveFields] = useState(false);
   const [cooldownTime, setCooldownTime] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -54,11 +61,19 @@ export default function ProfilePage() {
     }
   }, [cooldownTime]);
 
-  const { data: orders, isLoading: ordersLoading, refetch: refetchOrders } = useQuery<Order[]>({
-    queryKey: ["/api/orders"],
-    enabled: isAuthenticated,
-    refetchInterval: 5000, // Poll every 5 seconds for payment updates
-  });
+  const { data: ordersData, isLoading: ordersLoading, refetch: refetchOrders } = useQuery({
+  queryKey: ["/api/orders", currentPage],
+  queryFn: async () => {
+    const response = await apiRequest("GET", `/api/orders?page=${currentPage}`);
+    return response.json();
+  },
+  enabled: isAuthenticated,
+  staleTime: 0,
+  gcTime: 0,
+});
+
+  const orders = ordersData?.orders;
+  const totalPages = ordersData?.totalPages;
 
   // Update form when user data changes
   const profileForm = useForm({
@@ -392,128 +407,162 @@ const handleCancelOrder = (orderId: string) => {
                       </p>
                     </div>
                   ) : (
-                    <div className="space-y-4">
-                      {orders?.map((order: any) => (
-                        <div
-                          key={order.id}
-                          className="border border-gray-200 rounded-lg p-4 hover:border-primary transition-colors"
-                          data-testid={`order-${order.id}`}
-                        >
-                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-                            <div className="flex-1">
-                              <h4 className="font-semibold text-gray-900 mb-2" data-testid={`text-event-title-${order.id}`}>
-                                {order.event?.title || "Evento"}
-                              </h4>
-                              <div className="flex items-center text-sm text-gray-600 mb-2">
-                                <Calendar className="h-4 w-4 mr-2" />
-                                <span data-testid={`text-event-date-${order.id}`}>
-                                  {order.event?.date ? formatDate(order.event.date) : "Data não disponível"}
-                                </span>
-                                <MapPin className="h-4 w-4 ml-4 mr-2" />
-                                <span data-testid={`text-event-location-${order.id}`}>
-                                  {order.event?.location || "Local não disponível"}
-                                </span>
-                              </div>
-                              <div className="flex items-center mb-2">
-                                <span className="text-sm text-gray-500 mr-2">Status:</span>
-                                {getStatusBadge(order.status)}
-                              </div>
-                            </div>
-                            <div className="flex items-center space-x-4 mt-4 sm:mt-0">
-                              <div className="text-right">
-                                <div className="text-lg font-semibold text-primary" data-testid={`text-order-price-${order.id}`}>
-                                  {formatCurrency(order.amount)}
+                    <>
+                      <div className="space-y-4">
+                        {orders?.map((order: any) => (
+                          <div
+                            key={order.id}
+                            className="border border-gray-200 rounded-lg p-4 hover:border-primary transition-colors"
+                            data-testid={`order-${order.id}`}
+                          >
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+                              <div className="flex-1">
+                                <h4 className="font-semibold text-gray-900 mb-2" data-testid={`text-event-title-${order.id}`}>
+                                  {order.event?.title || "Evento"}
+                                </h4>
+                                <div className="flex items-center text-sm text-gray-600 mb-2">
+                                  <Calendar className="h-4 w-4 mr-2" />
+                                  <span data-testid={`text-event-date-${order.id}`}>
+                                    {order.event?.date ? formatDate(order.event.date) : "Data não disponível"}
+                                  </span>
+                                  <MapPin className="h-4 w-4 ml-4 mr-2" />
+                                  <span data-testid={`text-event-location-${order.id}`}>
+                                    {order.event?.location || "Local não disponível"}
+                                  </span>
                                 </div>
-                                <div className="text-xs text-gray-500" data-testid={`text-order-date-${order.id}`}>
-                                  Comprado em {new Date(order.createdAt).toLocaleDateString("pt-BR")}
+                                <div className="flex items-center mb-2">
+                                  <span className="text-sm text-gray-500 mr-2">Status:</span>
+                                  {getStatusBadge(order.status)}
                                 </div>
                               </div>
-                              {order.status === "paid" && order.qrCodeData ? (
-                                <div className="flex gap-2">
-                                  <Button
-                                    className="bg-primary hover:bg-secondary"
-                                    size="sm"
-                                    onClick={() => {
-                                      // Create download link for QR code
-                                      const link = document.createElement('a');
-                                      link.href = order.qrCodeData;
-                                      link.download = `ingresso-${order.id}.png`;
-                                      link.click();
-                                    }}
-                                    data-testid={`button-download-${order.id}`}
-                                  >
-                                    <Download className="h-4 w-4 mr-2" />
-                                    Baixar QR Code
-                                  </Button>
-                                  {order.qrCodeUsed && currentUser?.isAdmin && (
+                              <div className="flex items-center space-x-4 mt-4 sm:mt-0">
+                                <div className="text-right">
+                                  <div className="text-lg font-semibold text-primary" data-testid={`text-order-price-${order.id}`}>
+                                    {formatCurrency(order.amount)}
+                                  </div>
+                                  <div className="text-xs text-gray-500" data-testid={`text-order-date-${order.id}`}>
+                                    Comprado em {new Date(order.createdAt).toLocaleDateString("pt-BR")}
+                                  </div>
+                                </div>
+                                {order.status === "paid" && order.qrCodeData ? (
+                                  <div className="flex gap-2">
+                                    <Button
+                                      className="bg-primary hover:bg-secondary"
+                                      size="sm"
+                                      onClick={() => {
+                                        // Create download link for QR code
+                                        const link = document.createElement('a');
+                                        link.href = order.qrCodeData;
+                                        link.download = `ingresso-${order.id}.png`;
+                                        link.click();
+                                      }}
+                                      data-testid={`button-download-${order.id}`}
+                                    >
+                                      <Download className="h-4 w-4 mr-2" />
+                                      Baixar QR Code
+                                    </Button>
+                                    {order.qrCodeUsed && currentUser?.isAdmin && (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={async () => {
+                                          try {
+                                            await apiRequest("POST", `/api/reset-ticket/${order.id}`);
+                                            toast({
+                                              title: "Ticket resetado",
+                                              description: "Ingresso pode ser verificado novamente",
+                                            });
+                                            refetchOrders();
+                                          } catch (error) {
+                                            toast({
+                                              title: "Erro",
+                                              description: "Erro ao resetar ticket",
+                                              variant: "destructive",
+                                            });
+                                          }
+                                        }}
+                                        data-testid={`button-reset-${order.id}`}
+                                      >
+                                        Resetar Ingresso
+                                      </Button>
+                                    )}
+                                  </div>
+                                ) : order.status === "pending" && order.asaasPaymentId ? (
+                                  <div className="flex gap-2">
+                                    {order.status === 'pending' && (
+                                      <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        onClick={() => handleCancelOrder(order.id)} // You will create this handler
+                                        disabled={cancelOrderMutation.isPending}
+                                      >
+                                        Cancelar Pedido
+                                      </Button>
+                                    )}
                                     <Button
                                       variant="outline"
                                       size="sm"
                                       onClick={async () => {
                                         try {
-                                          await apiRequest("POST", `/api/reset-ticket/${order.id}`);
+                                          const response = await apiRequest("POST", `/api/orders/${order.id}/check-status`);
+                                          const data = await response.json();
                                           toast({
-                                            title: "Ticket resetado",
-                                            description: "Ingresso pode ser verificado novamente",
+                                            title: "Status verificado",
+                                            description: data.message,
                                           });
                                           refetchOrders();
                                         } catch (error) {
                                           toast({
                                             title: "Erro",
-                                            description: "Erro ao resetar ticket",
+                                            description: "Erro ao verificar status do pagamento",
                                             variant: "destructive",
                                           });
                                         }
                                       }}
-                                      data-testid={`button-reset-${order.id}`}
+                                      data-testid={`button-check-status-${order.id}`}
                                     >
-                                      Resetar Ingresso
+                                      <RefreshCw className="h-4 w-4" />
                                     </Button>
-                                  )}
-                                </div>
-                              ) : order.status === "pending" && order.asaasPaymentId ? (
-                                <div className="flex gap-2">
-                                  {order.status === 'pending' && (
-                                    <Button
-                                      variant="destructive"
-                                      size="sm"
-                                      onClick={() => handleCancelOrder(order.id)} // You will create this handler
-                                      disabled={cancelOrderMutation.isPending}
-                                    >
-                                      Cancelar Pedido
-                                    </Button>
-                                  )}
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={async () => {
-                                      try {
-                                        const response = await apiRequest("POST", `/api/orders/${order.id}/check-status`);
-                                        const data = await response.json();
-                                        toast({
-                                          title: "Status verificado",
-                                          description: data.message,
-                                        });
-                                        refetchOrders();
-                                      } catch (error) {
-                                        toast({
-                                          title: "Erro",
-                                          description: "Erro ao verificar status do pagamento",
-                                          variant: "destructive",
-                                        });
-                                      }
-                                    }}
-                                    data-testid={`button-check-status-${order.id}`}
-                                  >
-                                    <RefreshCw className="h-4 w-4" />
-                                  </Button>
-                                </div>
-                              ) : null}
+                                  </div>
+                                ) : null}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                      {/* Pagination Controls */}
+                      {totalPages > 1 && (
+                        <Pagination className="mt-6">
+                          <PaginationContent>
+                            <PaginationItem>
+                              <Button
+                                variant="outline"
+                                onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                                disabled={currentPage === 1}
+                              >
+                                <ChevronLeft className="h-4 w-4 mr-2" />
+                                Anterior
+                              </Button>
+                            </PaginationItem>
+                            <PaginationItem>
+                              <span className="text-sm font-medium px-4">
+                                Page {currentPage} of {totalPages}
+                              </span>
+                            </PaginationItem>
+                            <PaginationItem>
+                              <Button
+                                variant="outline"
+                                onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                                disabled={currentPage === totalPages}
+                              >
+                                Próxima
+                                <ChevronRight className="h-4 w-4 ml-2" />
+                              </Button>
+                            </PaginationItem>
+                          </PaginationContent>
+                        </Pagination>
+                      )}
+                    </>
                   )}
                 </CardContent>
               </Card>

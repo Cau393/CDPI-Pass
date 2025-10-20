@@ -1,3 +1,4 @@
 node_modules
 IMAGE_DIMENSIONS.md
 .env
+backend/db.sqlite3

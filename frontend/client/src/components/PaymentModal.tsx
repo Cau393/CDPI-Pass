@@ -7,15 +7,27 @@ import { CreditCard, QrCode, FileText, Copy, CheckCircle, Clock } from "lucide-r
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import type { Event } from "@shared/schema";
+
+interface EventForModal {
+  id: string;
+  title: string;
+  date: string;
+  location: string;
+  price: string;
+  promoCode?: string | null; // <-- Add promoCode here
+}
 
 interface PaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
-  event: any;
+  event: Event; // Use the real Event type
+  promoCode: string | null; // The promo code to be sent to the backend
+  displayPrice: number; // The final price to display and use
   onSuccess: () => void;
 }
 
-export default function PaymentModal({ isOpen, onClose, event, onSuccess }: PaymentModalProps) {
+export default function PaymentModal({ isOpen, onClose, event, promoCode, displayPrice, onSuccess }: PaymentModalProps) {
   const { toast } = useToast();
   const [selectedMethod, setSelectedMethod] = useState<"pix" | "credit_card" | "boleto">("pix");
   const [paymentData, setPaymentData] = useState<any>(null);
@@ -25,6 +37,7 @@ export default function PaymentModal({ isOpen, onClose, event, onSuccess }: Paym
       const response = await apiRequest("POST", "/api/orders", {
         eventId: event.id,
         paymentMethod,
+        promoCode: promoCode, // <-- This is the crucial addition
       });
       return response.json();
     },
@@ -91,16 +104,22 @@ export default function PaymentModal({ isOpen, onClose, event, onSuccess }: Paym
                 <div className="border-t pt-2 mt-2">
                   <div className="flex justify-between">
                     <span className="text-gray-600">Valor do Ingresso:</span>
-                    <span>{formatCurrency(parseFloat(event?.price) || 0)}</span>
+                    <span>{formatCurrency(displayPrice)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">Taxa de Conveniência:</span>
                     <span>{formatCurrency(5)}</span>
                   </div>
+                  {promoCode && (
+                    <div className="flex justify-between text-sm text-gray-500">
+                      <span>Preço Original:</span>
+                      <span className="line-through">{formatCurrency(parseFloat(event?.price) || 0)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between font-bold text-lg mt-2">
                     <span>Total:</span>
                     <span className="text-primary">
-                      {formatCurrency((parseFloat(event?.price) || 0) + 5)}
+                      {formatCurrency(displayPrice + 5)}
                     </span>
                   </div>
                 </div>

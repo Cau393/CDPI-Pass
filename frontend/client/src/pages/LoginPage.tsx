@@ -3,7 +3,6 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { useGoogleReCaptcha } from 'react-google-recaptcha-v3';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +16,6 @@ export default function LoginPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [rememberMe, setRememberMe] = useState(false);
-  const { executeRecaptcha } = useGoogleReCaptcha();
 
   const form = useForm<LoginRequest>({
     resolver: zodResolver(loginSchema),
@@ -28,7 +26,7 @@ export default function LoginPage() {
   });
 
   const loginMutation = useMutation({
-    mutationFn: async (data: LoginRequest & { recaptchaToken: string }) => {
+    mutationFn: async (data: LoginRequest) => {
       const response = await apiRequest("POST", "/api/auth/login", data);
       return response.json();
     },
@@ -54,16 +52,9 @@ export default function LoginPage() {
   });
 
   // This is the new submission handler
-  const handleLogin = useCallback(async (data: LoginRequest) => {
-    if (!executeRecaptcha) {
-      toast({ title: "reCAPTCHA not ready", variant: "destructive" });
-      return;
-    }
-    // Get the token first
-    const token = await executeRecaptcha('login');
-    // Then mutate with form data + token
-    loginMutation.mutate({ ...data, recaptchaToken: token });
-  }, [executeRecaptcha, loginMutation, toast]);
+  const handleLogin = (data: LoginRequest) => {
+    loginMutation.mutate(data);
+    };
 
   // The old onSubmit function is no longer needed.
 

@@ -326,9 +326,11 @@ export default function CourtesyRedeemPage() {
             {linkData && (
               <div className="mt-4 p-4 bg-primary/10 rounded-lg">
                 <p className="text-center font-semibold text-lg">{linkData.event?.title}</p>
-                <p className="text-center text-sm text-gray-600">
-                  {linkData.remainingTickets} ingresso(s) disponível(is)
-                </p>
+                  {user.isAdmin && (
+                  <p className="text-center text-sm text-gray-600">
+                    {linkData.remainingTickets} ingresso(s) disponível(is)
+                  </p>
+                )}
               </div>
             )}
           </CardHeader>
@@ -476,7 +478,7 @@ export default function CourtesyRedeemPage() {
         </Card>
 
         <div className="mt-6 text-center text-sm text-gray-600">
-          <p>Dúvidas? Entre em contato pelo telefone: <strong>0800 000 0000</strong></p>
+          <p>Dúvidas? Entre em contato pelo telefone: <strong>+55 (62) 99860-6833</strong></p>
         </div>
       </div>
     </div>

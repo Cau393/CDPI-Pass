@@ -20,9 +20,15 @@ export async function apiRequest(
 ): Promise<Response> {
   const token = localStorage.getItem("token");
   const headers: HeadersInit = {};
+  let body: BodyInit | undefined = undefined;
   
-  if (data) {
+  // Check if data is not an instance of FormData before setting the Content-Type header
+  if (data && !(data instanceof FormData)) {
     headers["Content-Type"] = "application/json";
+    body = JSON.stringify(data);
+  } else {
+    // If it is FormData, let the browser set the Content-Type
+    body = data as FormData;
   }
   
   if (token) {
@@ -32,7 +38,7 @@ export async function apiRequest(
   const res = await fetch(url, {
     method,
     headers,
-    body: data ? JSON.stringify(data) : undefined,
+    body,
     credentials: "include",
   });
 

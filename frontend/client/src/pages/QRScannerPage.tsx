@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
+import { useLocation } from "wouter";
 import { Html5Qrcode } from "html5-qrcode";
 import { Check, AlertCircle } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
 
 export default function QRScannerPage() {
   const [status, setStatus] = useState<"scanning" | "success" | "error">("scanning");
@@ -11,19 +11,42 @@ export default function QRScannerPage() {
   const lastScannedRef = useRef<string>("");
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [cameraStarted, setCameraStarted] = useState(false);
+  const [pathname] = useLocation();
 
   useEffect(() => {
-    startScanner();
+    // Only start if on /verificar path
+    if (pathname === "/verificar") {
+      startScanner();
+    } else {
+      // Stop scanner when navigating away
+      stopScanner();
+    }
 
+    // Cleanup function - runs when component unmounts
     return () => {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
       stopScanner();
     };
-  }, []);
+  }, [pathname]); // Re-run when pathname changes
 
   const startScanner = async () => {
+    // Check if scanner exists and is already scanning
+    if (scannerRef.current) {
+      try {
+        const state = scannerRef.current.getState();
+        // Html5QrcodeState.SCANNING = 2
+        if (state === 2) {
+          console.log("Scanner already running");
+          return;
+        }
+      } catch (e) {
+        // If getState fails, try to clean up and restart
+        console.log("Cleaning up previous scanner instance");
+      }
+    }
+
     try {
       const scanner = new Html5Qrcode("qr-reader");
       scannerRef.current = scanner;
@@ -41,21 +64,40 @@ export default function QRScannerPage() {
       );
       
       setCameraStarted(true);
+      console.log("Scanner started successfully");
     } catch (err) {
       console.error("Error starting scanner:", err);
       setStatus("error");
       setMessage("Erro ao acessar câmera");
+      setCameraStarted(false);
     }
   };
 
   const stopScanner = async () => {
-    if (scannerRef.current) {
-      try {
-        await scannerRef.current.stop();
-        scannerRef.current.clear();
-      } catch (err) {
-        console.error("Error stopping scanner:", err);
+    if (!scannerRef.current) {
+      return;
+    }
+
+    try {
+      const scanner = scannerRef.current;
+      const state = scanner.getState();
+      
+      // Html5QrcodeState.SCANNING = 2
+      if (state === 2) {
+        console.log("Stopping scanner...");
+        await scanner.stop();
+        console.log("Scanner stopped");
       }
+      
+      // Clear the scanner UI
+      await scanner.clear();
+      console.log("Scanner cleared");
+    } catch (err) {
+      console.warn("Error during scanner cleanup:", err);
+    } finally {
+      // Always reset state and ref
+      scannerRef.current = null;
+      setCameraStarted(false);
     }
   };
 
@@ -111,6 +153,11 @@ export default function QRScannerPage() {
   const onScanError = (error: any) => {
     // Ignore scan errors silently
   };
+
+  // Don't render if not on the correct path
+  if (pathname !== "/verificar") {
+    return null;
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
