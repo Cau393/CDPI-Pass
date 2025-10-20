@@ -268,7 +268,7 @@ class EmailService {
     });
 
     const redeemByDate = new Date(eventDate);
-    redeemByDate.setDate(redeemByDate.getDate() - 6);
+    redeemByDate.setDate(redeemByDate.getDate() - 2);
     const formattedRedeemByDate = redeemByDate.toLocaleDateString('pt-BR', {
       day: '2-digit',
       month: '2-digit',
