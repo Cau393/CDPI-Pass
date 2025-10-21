@@ -1118,6 +1118,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       birthDate: birthDateObj,
       address: userData.address,
       partnerCompany: userData.partnerCompany,
+      occupation: userData.occupation,
       eventTitle: event.title,
     });
 
@@ -1293,6 +1294,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             ticketCount: parseInt(amount_of_courtesies, 10),
             createdBy: req.user.id,
             isActive: true,
+            recipientEmail: email,
+            recipientName: name,
           });
           console.log(`Courtesy link created for ${email}: ${link.code}`);
           

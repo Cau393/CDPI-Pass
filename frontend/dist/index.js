@@ -46433,6 +46433,8 @@ var courtesyLinks = pgTable("courtesy_links", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   code: varchar("code", { length: 100 }).notNull().unique(),
   eventId: varchar("event_id").notNull().references(() => events.id),
+  recipientEmail: varchar("recipient_email", { length: 255 }),
+  recipientName: varchar("recipient_name", { length: 255 }),
   ticketCount: integer("ticket_count").notNull().default(1),
   usedCount: integer("used_count").default(0),
   createdBy: varchar("created_by").notNull().references(() => users.id),
@@ -46482,6 +46484,7 @@ var courtesyAttendees = pgTable("courtesy_attendees", {
   birthDate: timestamp("birth_date").notNull(),
   address: text("address").notNull(),
   partnerCompany: varchar("partner_company", { length: 255 }),
+  occupation: varchar("occupation", { length: 255 }),
   eventTitle: varchar("event_title", { length: 255 }).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow()
@@ -46559,13 +46562,18 @@ var insertEmailQueueSchema = createInsertSchema(emailQueue).omit({
   status: true,
   attempts: true
 });
-var insertCourtesyLinkSchema = createInsertSchema(courtesyLinks).omit({
+var insertCourtesyLinkSchema = createInsertSchema(courtesyLinks, {
+  recipientEmail: z.string().email().optional(),
+  recipientName: z.string().optional()
+}).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
   usedCount: true
 });
-var insertCourtesyAttendeeSchema = createInsertSchema(courtesyAttendees).omit({
+var insertCourtesyAttendeeSchema = createInsertSchema(courtesyAttendees, {
+  occupation: z.string().optional()
+}).omit({
   id: true,
   createdAt: true,
   updatedAt: true
@@ -46580,6 +46588,7 @@ var courtesyRedemptionSchema = z.object({
   emailConfirm: z.string().email("Email inv\xE1lido"),
   cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
   partnerCompany: z.string().min(2, "Empresa parceira \xE9 obrigat\xF3ria"),
+  occupation: z.string().min(2, "Cargo \xE9 obrigat\xF3rio"),
   birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
   address: z.string().min(10, "Endere\xE7o deve ter pelo menos 10 caracteres"),
   phone: z.string().regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, "Telefone deve estar no formato (00) 00000-0000")
@@ -47049,7 +47058,7 @@ var EmailService = class {
       day: "numeric"
     });
     const redeemByDate = new Date(eventDate);
-    redeemByDate.setDate(redeemByDate.getDate() - 6);
+    redeemByDate.setDate(redeemByDate.getDate() - 2);
     const formattedRedeemByDate = redeemByDate.toLocaleDateString("pt-BR", {
       day: "2-digit",
       month: "2-digit",
@@ -48312,6 +48321,7 @@ async function registerRoutes(app2) {
         birthDate: birthDateObj,
         address: userData.address,
         partnerCompany: userData.partnerCompany,
+        occupation: userData.occupation,
         eventTitle: event.title
       });
       const order = await storage.createOrder({
@@ -48442,7 +48452,9 @@ async function registerRoutes(app2) {
             eventId: event.id,
             ticketCount: parseInt(amount_of_courtesies, 10),
             createdBy: req.user.id,
-            isActive: true
+            isActive: true,
+            recipientEmail: email,
+            recipientName: name
           });
           console.log(`Courtesy link created for ${email}: ${link.code}`);
           emailService.sendCourtesyMassEmail(

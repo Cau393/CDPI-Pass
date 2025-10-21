@@ -27,6 +27,7 @@ const redemptionSchema = z.object({
   emailConfirm: z.string().email("Email inválido"),
   cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
   partnerCompany: z.string().min(2, "Empresa parceira é obrigatória"),
+  occupation: z.string().min(2, "Cargo é obrigatório"),
   birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
   address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),
   phone: z.string().regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, "Telefone deve estar no formato (00) 00000-0000"),
@@ -54,6 +55,7 @@ export default function CourtesyRedeemPage() {
       emailConfirm: "",
       cpf: "",
       partnerCompany: "",
+      occupation: "",
       birthDate: "",
       address: "",
       phone: "",
@@ -441,6 +443,20 @@ export default function CourtesyRedeemPage() {
                         <FormLabel>Empresa Parceira *</FormLabel>
                         <FormControl>
                           <Input {...field} data-testid="input-partner-company" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="occupation"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Cargo que Ocupa *</FormLabel>
+                        <FormControl>
+                          <Input {...field} data-testid="input-occupation" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>

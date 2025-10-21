@@ -52,6 +52,8 @@ export const courtesyLinks = pgTable("courtesy_links", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   code: varchar("code", { length: 100 }).notNull().unique(),
   eventId: varchar("event_id").notNull().references(() => events.id),
+  recipientEmail: varchar("recipient_email", { length: 255 }), 
+  recipientName: varchar("recipient_name", { length: 255 }),
   ticketCount: integer("ticket_count").notNull().default(1),
   usedCount: integer("used_count").default(0),
   createdBy: varchar("created_by").notNull().references(() => users.id),
@@ -105,6 +107,7 @@ export const courtesyAttendees = pgTable("courtesy_attendees", {
   birthDate: timestamp("birth_date").notNull(),
   address: text("address").notNull(),
   partnerCompany: varchar("partner_company", { length: 255 }),
+  occupation: varchar("occupation", { length: 255 }),
   eventTitle: varchar("event_title", { length: 255 }).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -193,14 +196,19 @@ export const insertEmailQueueSchema = createInsertSchema(emailQueue).omit({
   attempts: true,
 });
 
-export const insertCourtesyLinkSchema = createInsertSchema(courtesyLinks).omit({
+export const insertCourtesyLinkSchema = createInsertSchema(courtesyLinks, {
+  recipientEmail: z.string().email().optional(),
+  recipientName: z.string().optional(), 
+  }).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
   usedCount: true,
 });
 
-export const insertCourtesyAttendeeSchema = createInsertSchema(courtesyAttendees).omit({
+export const insertCourtesyAttendeeSchema = createInsertSchema(courtesyAttendees, {
+  occupation: z.string().optional(),
+}).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
@@ -235,6 +243,7 @@ export const courtesyRedemptionSchema = z.object({
   emailConfirm: z.string().email("Email inválido"),
   cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
   partnerCompany: z.string().min(2, "Empresa parceira é obrigatória"),
+  occupation: z.string().min(2, "Cargo é obrigatório"),
   birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
   address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),
   phone: z.string().regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, "Telefone deve estar no formato (00) 00000-0000"),
