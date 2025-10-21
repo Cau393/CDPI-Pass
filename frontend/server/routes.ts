@@ -1120,7 +1120,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       partnerCompany: userData.partnerCompany,
       occupation: userData.occupation,
       eventTitle: event.title,
-    });
+      });
+
+      if (process.env.COURTESY_WEBHOOK_URL) {
+        try {
+          console.log("Sending courtesy attendee to automation webhook...");
+          // Send the POST request, but don't wait for it to finish
+          // This is "fire-and-forget"
+          fetch(process.env.COURTESY_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newAttendee),
+          });
+          // Note: We don't use 'await' on fetch here.
+          // This lets the redemption process continue immediately.
+          
+        } catch (webhookError) {
+          // Log the error, but DO NOT stop the redemption.
+          console.error("Failed to send data to courtesy webhook:", webhookError);
+        }
+      }
 
       // Create courtesy order
       const order = await storage.createOrder({

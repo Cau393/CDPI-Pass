@@ -48324,6 +48324,18 @@ async function registerRoutes(app2) {
         occupation: userData.occupation,
         eventTitle: event.title
       });
+      if (process.env.COURTESY_WEBHOOK_URL) {
+        try {
+          console.log("Sending courtesy attendee to automation webhook...");
+          fetch(process.env.COURTESY_WEBHOOK_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(newAttendee)
+          });
+        } catch (automationError) {
+          console.error("Failed to send data to automation webhook:", automationError);
+        }
+      }
       const order = await storage.createOrder({
         userId,
         // The user who performed the redemption
