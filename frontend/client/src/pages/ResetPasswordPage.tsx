@@ -16,7 +16,7 @@ export default function ResetPasswordPage() {
   const { register, handleSubmit, watch } = useForm();
 
   const mutation = useMutation({
-      mutationFn: (data: any) => apiRequest("POST", "/api/auth/reset-password", { ...data, token }),
+      mutationFn: (data: any) => apiRequest("POST", "/api/users/auth/reset-password", { ...data, token }),
       onSuccess: () => {
           toast({ title: "Senha redefinida com sucesso!" });
           setLocation("/login");

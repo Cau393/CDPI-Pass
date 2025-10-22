@@ -56,7 +56,7 @@ export default function RegisterPage() {
       const { emailConfirm, passwordConfirm, acceptTerms, ...registerData } = data;
       
       // Send birthDate as string in dd/mm/yyyy format - server will convert it
-      const response = await apiRequest("POST", "/api/auth/register", registerData);
+      const response = await apiRequest("POST", "/api/users/auth/register", registerData);
       return response.json();
     },
     onSuccess: (data) => {

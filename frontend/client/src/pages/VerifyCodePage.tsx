@@ -23,10 +23,10 @@ export default function VerifyCodePage() {
     }, [cooldown]);
 
     const verifyMutation = useMutation({
-        mutationFn: () => apiRequest("POST", "/api/auth/verify-code", { email, code }),
+        mutationFn: () => apiRequest("POST", "/api/users/auth/verify-code", { email, code }),
         onSuccess: (data: any) => {
             localStorage.setItem("token", data.token);
-            queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/users/auth/me"] });
             toast({ title: "E-mail verificado com sucesso!" });
             setLocation("/");
         },
@@ -34,7 +34,7 @@ export default function VerifyCodePage() {
     });
 
     const resendMutation = useMutation({
-        mutationFn: () => apiRequest("POST", "/api/auth/resend-code", { email }),
+        mutationFn: () => apiRequest("POST", "/api/users/auth/resend-code", { email }),
         onSuccess: () => {
             toast({ title: "Um novo código foi enviado." });
             setCooldown(30);

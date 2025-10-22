@@ -104,10 +104,10 @@ export default function CourtesyRedeemPage() {
 
   // Fetch courtesy link details
   const { data: linkData, isLoading: linkLoading, error: linkError } = useQuery({
-    queryKey: ["/api/courtesy-links", code],
+    queryKey: ["/api/orders/courtesy/links", code],
     queryFn: async () => {
       if (!code) return null;
-      const response = await fetch(`/api/courtesy-links/${code}`);
+      const response = await fetch(`/api/orders/courtesy/links/${code}`);
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.message || "Link inválido");
@@ -120,7 +120,7 @@ export default function CourtesyRedeemPage() {
   // Redeem courtesy mutation
   const redeemMutation = useMutation({
     mutationFn: async (data: RedemptionFormData & { code: string }) => {
-      return await apiRequest("POST", "/api/courtesy/redeem", data);
+      return await apiRequest("POST", "/api/orders/courtesy/redeem", data);
     },
     onSuccess: () => {
       setIsSuccess(true);

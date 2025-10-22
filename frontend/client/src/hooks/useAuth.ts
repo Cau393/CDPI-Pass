@@ -6,7 +6,7 @@ export function useAuth() {
   const [, setLocation] = useLocation();
 
   const { data: user, isLoading, error } = useQuery<User>({
-    queryKey: ["/api/auth/me"],
+    queryKey: ["/api/users/auth/me"],
     retry: (failureCount, error: any) => {
       // Check for both 401 and 403 status codes in the error message
       if (error.message.includes("401") || error.message.includes("403")) {

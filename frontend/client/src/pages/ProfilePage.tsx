@@ -104,7 +104,7 @@ export default function ProfilePage() {
       const payload = hasChangedSensitiveFields 
         ? { ...data, currentPassword: profilePassword }
         : data;
-      const response = await apiRequest("PUT", "/api/profile", payload);
+      const response = await apiRequest("PUT", "/api/users/profile", payload);
       return response.json();
     },
     onSuccess: () => {
@@ -112,7 +112,7 @@ export default function ProfilePage() {
         title: "Perfil atualizado",
         description: "Suas informações foram salvas com sucesso.",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/users/auth/me"] });
       setProfilePassword("");
       setHasChangedSensitiveFields(false);
     },
@@ -128,7 +128,7 @@ export default function ProfilePage() {
 
   const changePasswordMutation = useMutation({
     mutationFn: async (data: { currentPassword: string; newPassword: string }) => {
-      const response = await apiRequest("PUT", "/api/profile/password", data);
+      const response = await apiRequest("PUT", "/api/users/profile/password", data);
       return response.json();
     },
     onSuccess: () => {
@@ -149,7 +149,7 @@ export default function ProfilePage() {
 
   const resendVerificationMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/auth/resend-verification");
+      await apiRequest("POST", "/api/users/auth/resend-code");
     },
     onSuccess: () => {
       toast({
@@ -157,7 +157,7 @@ export default function ProfilePage() {
         description: "Verifique sua caixa de entrada para confirmar seu email.",
       });
       setCooldownTime(30); // Set 30 seconds cooldown
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/users/auth/me"] });
     },
     onError: (error: Error) => {
       toast({
@@ -170,7 +170,7 @@ export default function ProfilePage() {
 
   const deleteAccountMutation = useMutation({
     mutationFn: async (password: string) => {
-      const response = await apiRequest("DELETE", "/api/profile", { password });
+      const response = await apiRequest("DELETE", "/api/users/profile", { password });
       return response.json();
     },
     onSuccess: () => {

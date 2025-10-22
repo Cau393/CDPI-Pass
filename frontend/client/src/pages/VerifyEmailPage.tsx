@@ -25,14 +25,14 @@ export default function VerifyEmailPage() {
       }
 
       try {
-        const response = await apiRequest("GET", `/api/auth/verify-email?token=${token}`);
+        const response = await apiRequest("GET", `/api/users/auth/verify-code?token=${token}`);
         const data = await response.json();
         
         setStatus("success");
         setMessage(data.message || "Email verificado com sucesso!");
         
         // Clear any cached user data to force fresh fetch after verification
-        queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/users/auth/me"] });
         
         toast({
           title: "Email verificado!",

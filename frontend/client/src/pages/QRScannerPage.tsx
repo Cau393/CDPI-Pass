@@ -113,7 +113,7 @@ export default function QRScannerPage() {
     try {
       // Verify the QR code (requires authentication)
       const token = localStorage.getItem("token");
-      const response = await fetch("/api/verify-ticket", {
+      const response = await fetch("/api/tickets/verify-ticket", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -50,7 +50,7 @@ export default function CourtesyAdminPage() {
   const { data: links, isLoading: linksLoading } = useQuery({
   queryKey: ["/api/courtesy-links", currentPage],
   queryFn: async () => {
-    const response = await apiRequest("GET", `/api/courtesy-links?page=${currentPage}`);
+    const response = await apiRequest("GET", `/api/courtesy/links?page=${currentPage}`);
     return response.json();
   },
   enabled: isAuthenticated,
@@ -61,10 +61,10 @@ export default function CourtesyAdminPage() {
   // Create courtesy link mutation
   const createLinkMutation = useMutation({
     mutationFn: async (data: { eventId: string; ticketCount: number; overridePrice: number | null }) => {
-      return await apiRequest("POST", "/api/courtesy-links", data);
+      return await apiRequest("POST", "/api/courtesy/links", data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/courtesy-links"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/courtesy/links"] });
       setCurrentPage(1);
       toast({
         title: "Link criado com sucesso!",
