@@ -330,6 +330,23 @@ class ProfileDetailView(APIView):
 
             # Return a generic error message to the user
             return Response({'Erro interno do servidor': 'Ocorreu um erro ao atualizar as informações do perfil. Por favor, tente novamente.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def delete(self, request, format=None):
+        try:
+            user = request.user
+            password = request.data.get('password')
+            if not password:
+                return Response({'Erro': 'Senha é necessária.'}, status=status.HTTP_400_BAD_REQUEST)
+            if not user.check_password(password):
+                return Response({'Erro': 'Senha incorreta.'}, status=status.HTTP_400_BAD_REQUEST)
+            user.delete()
+            return Response({'message': 'Conta excluída com sucesso.'}, status=status.HTTP_204_NO_CONTENT)
+        except Exception as e:
+            # Log the error for debugging purposes
+            logger.exception("Profile delete error")
+
+            # Return a generic error message to the user
+            return Response({'Erro interno do servidor': 'Ocorreu um erro ao excluir a conta. Por favor, tente novamente.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class ProfilePasswordView(APIView):
     permission_classes = [IsAuthenticated]

@@ -97,6 +97,12 @@ class WebHookView(APIView):
                 order.save()
                 
                 send_ticket_email.delay(order.id)
+
+            elif payment_status in ["OVERDUE", "DELETED"]:
+                if order.status != "canceled":
+                    order.status = "canceled"
+                    order.event.current_attendees -= 1
+                    order.save()
             
             return Response({"status": "Webhook processed successfully"}, status=status.HTTP_200_OK)
         except Exception as e:

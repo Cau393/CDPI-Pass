@@ -6,6 +6,7 @@ class Event(models.Model):
     description = models.TextField()
     date = models.DateTimeField()
     location = models.CharField(max_length=255)
+    batch = models.CharField(max_length=20, choices=[('first batch', 'First Batch'), ('second batch', 'Second Batch'), ('third batch', 'Third Batch')])
     price = models.DecimalField(max_digits=10, decimal_places=2)
     image_url = models.CharField(max_length=500, blank=True)
     max_attendees = models.IntegerField(null=True, blank=True)

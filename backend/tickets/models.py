@@ -12,6 +12,7 @@ class Ticket(models.Model):
     )
     order = models.ForeignKey(Order, related_name='tickets', on_delete=models.CASCADE, db_column='order_id')
     event = models.ForeignKey(Event, on_delete=models.CASCADE, db_column='event_id')
+    type = models.CharField(max_length=20, choices=[('first batch', 'First Batch'), ('second batch', 'Second Batch'), ('third batch', 'Third Batch'), ('coupon', 'Coupon'), ('courtesy', 'Courtesy')])
     qr_code_data = models.TextField()
     qr_code_s3_url = models.CharField(max_length=500, blank=True)
     is_used = models.BooleanField(default=False)
@@ -24,6 +25,7 @@ class Ticket(models.Model):
     def __str__(self):
         return f"Ticket {self.id} - {self.event.title}"
 
+# Preference for not having this table later in the database
 class CourtesyAttendee(models.Model):
     """
     Represents an attendee registered as a courtesy guest for an event.
