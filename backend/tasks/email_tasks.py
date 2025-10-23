@@ -5,6 +5,7 @@ from utils import generate_reset_token
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, From
 from tickets.models import Ticket
+from orders.models import Order
 
 
 from os import getenv
@@ -53,7 +54,7 @@ def send_password_reset_email(email: str):
     return response
 
 @shared_task
-def send_ticket_email(email: str, ticket: Ticket):
+def send_ticket_email(email: str, order: Order):
     """
-    Send a ticket email to the user.
+    Gets the tickets from the order and sends them to the user.
     """

@@ -32,7 +32,7 @@ class User(AbstractUser):
     phone = models.CharField(max_length=20)
     birth_date = models.DateField()
     address = models.TextField()
-    partner_company = models.CharField(max_length=255, blank=True)
+    partner_company = models.CharField(max_length=255, blank=True, null=True) # Needs to be Override if a user redeem for himself the courtesy if user.cpf == request.data.get('cpf') in the courtesy redeem
     """
     The company name if the user is a partner.
     """

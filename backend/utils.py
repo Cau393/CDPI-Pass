@@ -2,9 +2,8 @@ from random import randint
 from datetime import datetime, timedelta
 from jwt import ExpiredSignatureError, InvalidTokenError, encode, decode
 from django.conf import settings
-from os import getenv
-from dotenv import load_dotenv
-load_dotenv()
+import string
+import random
 
 def generate_verification_code():
         """
@@ -42,3 +41,8 @@ def verify_reset_token(token: str):
         raise ValueError("Token has expired.")
     except InvalidTokenError:
         raise ValueError("Invalid token.")
+
+def generate_courtesy_code():
+    """Generate an 8-character code starting with CDPI"""
+    random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+    return f"CDPI{random_part}"

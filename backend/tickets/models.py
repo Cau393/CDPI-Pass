@@ -1,7 +1,8 @@
 from uuid import uuid4
 from django.db import models
-from orders.models import Order
+from orders.models import Order, CourtesyLink
 from events.models import Event
+from users.models import User
 from django.utils import timezone
 
 class Ticket(models.Model):
@@ -10,14 +11,23 @@ class Ticket(models.Model):
         default=uuid4,
         editable=False
     )
-    order = models.ForeignKey(Order, related_name='tickets', on_delete=models.CASCADE, db_column='order_id')
+    name = models.CharField(max_length=255)
+    cpf = models.CharField(max_length=14)
+    order = models.ForeignKey(Order, related_name='tickets', on_delete=models.CASCADE, db_column='order_id') # Order already related to a user
     event = models.ForeignKey(Event, on_delete=models.CASCADE, db_column='event_id')
-    type = models.CharField(max_length=20, choices=[('first batch', 'First Batch'), ('second batch', 'Second Batch'), ('third batch', 'Third Batch'), ('coupon', 'Coupon'), ('courtesy', 'Courtesy')])
+    type_of_ticket = models.CharField(max_length=20, choices=[('first batch', 'First Batch'), ('second batch', 'Second Batch'), ('third batch', 'Third Batch'), ('coupon', 'Coupon'), ('courtesy', 'Courtesy')])
     qr_code_data = models.TextField()
     qr_code_s3_url = models.CharField(max_length=500, blank=True)
     is_used = models.BooleanField(default=False)
     used_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    courtesy_link_id = models.ForeignKey( # If null, it belongs to the user
+        CourtesyLink, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        db_column='courtesy_link_id'
+    )
     
     class Meta:
         db_table = 'tickets'
@@ -44,7 +54,10 @@ class CourtesyAttendee(models.Model):
     birth_date = models.DateTimeField()
     address = models.TextField()
     partner_company = models.CharField(max_length=255, blank=True, null=True)
+    occupation = models.CharField(max_length=255, blank=True, null=True)
     event_title = models.CharField(max_length=255, blank=True, null=True)
+    order = models.ForeignKey(Order, related_name='courtesy_attendees', on_delete=models.CASCADE, db_column='order_id')
+    courtesy_link_id = models.ForeignKey(CourtesyLink, on_delete=models.CASCADE, db_column='courtesy_link_id')
 
     created_at = models.DateTimeField(default=timezone.now, editable=False)
     updated_at = models.DateTimeField(default=timezone.now)
