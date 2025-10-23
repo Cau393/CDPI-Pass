@@ -1,3 +1,4 @@
+import axios from "axios";
 import rateLimit from 'express-rate-limit';
 import type { Express } from "express";
 import { createServer, type Server } from "http";
@@ -747,6 +748,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
             await storage.updateEvent(event.id, {
               currentAttendees: (event.currentAttendees || 0) + 1,
             });
+
+            // === 🔄 Forward structured data to Make.com ===
+          const makeWebhookUrl = "https://hook.us2.make.com/wrlqnqumlmgvfjicglpdrc3gv8lkbqce"; // replace this
+          (async () => {
+            try {
+              await axios.post(makeWebhookUrl, {
+                user: {
+                  name: user.name,
+                  email: user.email,
+                },
+                event: {
+                  title: event.title,
+                  date: event.date,
+                  location: event.location,
+                },
+                order: {
+                  id: order.id,
+                  amount: order.amount || payment?.value || null,
+                  status: "paid",
+                  paymentMethod: payment?.billingType || "unknown",
+                },
+              });
+              console.log("✅ Forwarded structured data to Make.com successfully");
+            } catch (err) {
+              console.error("❌ Failed to forward data to Make.com:", err);
+            }
+          })();
+          // ==================================================
 
             // Send confirmation email with QR code ticket
             await emailService.sendTicketEmail(user!.email, {
