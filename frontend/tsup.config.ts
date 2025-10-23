@@ -14,6 +14,7 @@ export default defineConfig({
     'vite',           // ✅ Add this
     'rollup',         // ✅ Add this
     'dotenv',         // ✅ Add this for safety
+    'axios',
     '@vitejs/plugin-react',
     '@vitejs/plugin-react-swc',
     'express',
