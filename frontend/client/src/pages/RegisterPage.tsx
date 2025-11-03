@@ -53,10 +53,39 @@ export default function RegisterPage() {
 
   const registerMutation = useMutation({
     mutationFn: async (data: RegisterFormData) => {
-      const { emailConfirm, passwordConfirm, acceptTerms, ...registerData } = data;
-      
+    const {
+      emailConfirm,
+      passwordConfirm,
+      acceptTerms,
+      birthDate,
+      ...rest
+    } = data;
+
+    const [day, month, year] = birthDate.split("/");
+    const formattedBirthDate = `${day}/${month}/${year}`;
+
+    const normalizeCpf = (value: string) => {
+      return value
+        .normalize("NFKC") // normalize Unicode composition
+        .replace(/\s+/g, "") // remove spaces (including non-breaking)
+        .replace(/[–—]/g, "-") // replace weird dashes
+        .replace(/[^\d.-]/g, "") // remove anything that isn't digit, dot, or hyphen
+        .replace(/(\d{3})(\d)/, "$1.$2")
+        .replace(/(\d{3})(\d)/, "$1.$2")
+        .replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+    };
+
+    // Create a new object with snake_case keys
+    const registerData = {
+      ...rest,
+      cpf: normalizeCpf(rest.cpf),
+      birth_date: formattedBirthDate,
+      password_confirm: passwordConfirm,
+    };
+    console.log("DEBUG formatted registerData:", JSON.stringify(registerData, null, 2));
+
       // Send birthDate as string in dd/mm/yyyy format - server will convert it
-      const response = await apiRequest("POST", "/api/users/auth/register", registerData);
+      const response = await apiRequest("POST", "/api/users/auth/register/", registerData);
       return response.json();
     },
     onSuccess: (data) => {

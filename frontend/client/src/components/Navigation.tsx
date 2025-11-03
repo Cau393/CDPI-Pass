@@ -47,7 +47,7 @@ export default function Navigation() {
             className="h-10 w-auto mr-3" 
               />
               <span className="text-xl font-bold text-white">
-                {user?.isAdmin && <span className="text-xs ml-2 bg-white/20 text-white px-2 py-1 rounded">ADMIN</span>}
+                {(user?.is_staff || user?.is_superuser) && <span className="text-xs ml-2 bg-white/20 text-white px-2 py-1 rounded">ADMIN</span>}
               </span>
             </button>
           </div>
@@ -77,7 +77,7 @@ export default function Navigation() {
                   >
                     Área de acesso
                   </button>
-                  {user?.isAdmin && (
+                  {(user?.is_staff || user?.is_superuser) && (
                     <>
                       <button
                         onClick={() => setLocation("/verificar")}
@@ -140,7 +140,7 @@ export default function Navigation() {
                       <User className="h-4 w-4 mr-2" />
                       Meu Perfil
                     </DropdownMenuItem>
-                    {user?.isAdmin && (
+                    {(user?.is_staff || user?.is_superuser) && (
                       <>
                         <DropdownMenuItem
                           onClick={() => setLocation("/verificar")}
@@ -193,7 +193,7 @@ export default function Navigation() {
                     <User className="h-4 w-4 mr-2" />
                     Meu Perfil
                   </DropdownMenuItem>
-                  {user?.isAdmin && (
+                  {(user?.is_staff || user?.is_superuser)&& (
                     <>
                       <DropdownMenuItem
                         onClick={() => setLocation("/verificar")}

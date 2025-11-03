@@ -7,20 +7,31 @@ class UserSerializer(serializers.ModelSerializer):
     """
     Serializer for the User model.
     """
+    name = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = [
-        'id', 'first_name', 'last_name', 'email', 'cpf', 'phone', 'birth_date', 'address', 'partner_company'
+        'id', 'first_name', 'last_name', 'name', 'email', 'cpf', 'phone', 'birth_date', 'address', 'partner_company', 'is_email_verified',
+        'is_staff', 'is_superuser',
         ]
+    
+    def get_name(self, obj):
+        """Return full name or empty string if missing."""
+        full_name = f"{obj.first_name or ''} {obj.last_name or ''}".strip()
+        return full_name or obj.email
 
 class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     name = serializers.CharField() 
     password = serializers.CharField(write_only=True, min_length=6)
     password_confirm = serializers.CharField(write_only=True, min_length=6)
-    cpf = serializers.RegexField(regex=r'^\d{3}\.\d{3}\.\d{3}-\d{2}$')
+    cpf = serializers.RegexField(
+    regex=r'^\s*\d{3}\.?\d{3}\.?\d{3}[-–]?\d{2}\s*$',
+    error_messages={"invalid": "CPF inválido. Use o formato 000.000.000-00 ou 00000000000."}
+)
     phone = serializers.RegexField(regex=r'^\(\d{2}\)\s\d{4,5}-\d{4}$')
-    birth_date = serializers.DateField()
+    birth_date = serializers.CharField()
     address = serializers.CharField(min_length=10)
     partner_company = serializers.CharField(required=False, allow_blank=True)
 
@@ -35,6 +46,7 @@ class RegisterSerializer(serializers.Serializer):
         """
         Object-level validation for confirming that both passwords match.
         """
+        print("DEBUG incoming attrs:", attrs)
         password = attrs.get('password')
         password_confirm = attrs.get('password_confirm')
         if password != password_confirm:
@@ -82,15 +94,34 @@ class RegisterSerializer(serializers.Serializer):
 
     def validate_cpf(self, value):
         """
-        Validate that the CPF is not already registered.
+        Validate that the CPF is unique and normalize formatting.
         """
-        if User.objects.filter(cpf=value).exists():
+        import re
+        # Clean the CPF (remove non-digit characters)
+        digits_only = re.sub(r'\D', '', value)
+
+        if User.objects.filter(cpf__regex=r'^\D*' + digits_only + r'\D*$').exists():
             raise serializers.ValidationError("Este CPF já está cadastrado.")
-        return value
+        
+        # Return normalized version
+        return f"{digits_only[:3]}.{digits_only[3:6]}.{digits_only[6:9]}-{digits_only[9:]}"
+    
+    def validate_birth_date(self, value):
+        from datetime import datetime
+        try:
+            # Try dd/mm/yyyy format first
+            return datetime.strptime(value, "%d/%m/%Y").date()
+        except ValueError:
+            # Fallback to ISO yyyy-mm-dd
+            try:
+                return datetime.strptime(value, "%Y-%m-%d").date()
+            except ValueError:
+                raise serializers.ValidationError("Data de nascimento inválida. Use o formato dd/mm/aaaa.")
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
     password = serializers.CharField(required=True, write_only=True, min_length=6, max_length=128, style={'input_type': 'password'})
+    is_email_verified = serializers.BooleanField(required=False, default=False)
 
 class VerifyCodeSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)

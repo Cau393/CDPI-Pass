@@ -43,6 +43,7 @@ export default function ProfilePage() {
   const [hasChangedSensitiveFields, setHasChangedSensitiveFields] = useState(false);
   const [cooldownTime, setCooldownTime] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 15;
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -61,10 +62,10 @@ export default function ProfilePage() {
     }
   }, [cooldownTime]);
 
-  const { data: ordersData, isLoading: ordersLoading, refetch: refetchOrders } = useQuery({
-  queryKey: ["/api/orders", currentPage],
+  const { data: ticketsData, isLoading: ordersLoading, refetch: refetchOrders } = useQuery({ 
+  queryKey: ["/api/orders/tickets/", currentPage], 
   queryFn: async () => {
-    const response = await apiRequest("GET", `/api/orders?page=${currentPage}`);
+    const response = await apiRequest("GET", `/api/orders/tickets/?page=${currentPage}`); 
     return response.json();
   },
   enabled: isAuthenticated,
@@ -72,8 +73,8 @@ export default function ProfilePage() {
   gcTime: 0,
 });
 
-  const orders = ordersData?.orders;
-  const totalPages = ordersData?.totalPages;
+  const tickets = ticketsData?.results;
+  const totalPages = ticketsData?.count ? Math.ceil(ticketsData.count / PAGE_SIZE) : 1;
 
   // Update form when user data changes
   const profileForm = useForm({
@@ -104,7 +105,7 @@ export default function ProfilePage() {
       const payload = hasChangedSensitiveFields 
         ? { ...data, currentPassword: profilePassword }
         : data;
-      const response = await apiRequest("PUT", "/api/users/profile", payload);
+      const response = await apiRequest("PUT", "/api/users/profile/", payload);
       return response.json();
     },
     onSuccess: () => {
@@ -112,7 +113,7 @@ export default function ProfilePage() {
         title: "Perfil atualizado",
         description: "Suas informações foram salvas com sucesso.",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/users/auth/me"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/users/auth/me/"] });
       setProfilePassword("");
       setHasChangedSensitiveFields(false);
     },
@@ -128,7 +129,7 @@ export default function ProfilePage() {
 
   const changePasswordMutation = useMutation({
     mutationFn: async (data: { currentPassword: string; newPassword: string }) => {
-      const response = await apiRequest("PUT", "/api/users/profile/password", data);
+      const response = await apiRequest("PUT", "/api/users/profile/password/", data);
       return response.json();
     },
     onSuccess: () => {
@@ -149,7 +150,7 @@ export default function ProfilePage() {
 
   const resendVerificationMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/users/auth/resend-code");
+      await apiRequest("POST", "/api/users/auth/resend-code/");
     },
     onSuccess: () => {
       toast({
@@ -157,7 +158,7 @@ export default function ProfilePage() {
         description: "Verifique sua caixa de entrada para confirmar seu email.",
       });
       setCooldownTime(30); // Set 30 seconds cooldown
-      queryClient.invalidateQueries({ queryKey: ["/api/users/auth/me"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/users/auth/me/"] });
     },
     onError: (error: Error) => {
       toast({
@@ -170,7 +171,7 @@ export default function ProfilePage() {
 
   const deleteAccountMutation = useMutation({
     mutationFn: async (password: string) => {
-      const response = await apiRequest("DELETE", "/api/users/profile", { password });
+      const response = await apiRequest("DELETE", "/api/users/profile/", { password });
       return response.json();
     },
     onSuccess: () => {
@@ -295,14 +296,14 @@ export default function ProfilePage() {
 
   const cancelOrderMutation = useMutation({
   mutationFn: (orderId: string) => {
-    return apiRequest("DELETE", `/api/orders/${orderId}/cancel`);
+    return apiRequest("DELETE", `/api/orders/${orderId}/cancel/`);
   },
   onSuccess: () => {
     toast({
       title: "Pedido cancelado",
       description: "Seu pedido foi cancelado com sucesso.",
     });
-    queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/orders/"] });
   },
   onError: (error: Error) => {
     toast({
@@ -338,7 +339,7 @@ const handleCancelOrder = (orderId: string) => {
               <p className="text-gray-600 mb-4" data-testid="text-user-email">
                 {currentUser.email}
               </p>
-              {!currentUser.emailVerified && (
+              {!currentUser.is_email_verified && (
                 <div className="space-y-3">
                   <Badge variant="outline" className="text-orange-600 border-orange-600">
                     Email não verificado
@@ -399,9 +400,9 @@ const handleCancelOrder = (orderId: string) => {
                         </div>
                       ))}
                     </div>
-                  ) : orders?.length === 0 ? (
+                  ) : tickets?.length === 0 ? ( // <-- Use 'tickets'
                     <div className="text-center py-8">
-                      <Ticket className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                      {/* ... */}
                       <p className="text-gray-600" data-testid="text-no-orders">
                         Você ainda não possui ingressos.
                       </p>
@@ -409,65 +410,79 @@ const handleCancelOrder = (orderId: string) => {
                   ) : (
                     <>
                       <div className="space-y-4">
-                        {orders?.map((order: any) => (
+                        {tickets?.map((ticket: any) => ( // <-- Use 'tickets' and map 'ticket'
                           <div
-                            key={order.id}
+                            key={ticket.id} // <-- Use 'ticket.id'
                             className="border border-gray-200 rounded-lg p-4 hover:border-primary transition-colors"
-                            data-testid={`order-${order.id}`}
+                            data-testid={`ticket-${ticket.id}`} // <-- Use 'ticket.id'
                           >
                             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
                               <div className="flex-1">
-                                <h4 className="font-semibold text-gray-900 mb-2" data-testid={`text-event-title-${order.id}`}>
-                                  {order.event?.title || "Evento"}
+                                <h4 className="font-semibold text-gray-900 mb-2" data-testid={`text-event-title-${ticket.id}`}>
+                                  {ticket.event?.title || "Evento"}
                                 </h4>
                                 <div className="flex items-center text-sm text-gray-600 mb-2">
                                   <Calendar className="h-4 w-4 mr-2" />
-                                  <span data-testid={`text-event-date-${order.id}`}>
-                                    {order.event?.date ? formatDate(order.event.date) : "Data não disponível"}
+                                  <span data-testid={`text-event-date-${ticket.id}`}>
+                                    {ticket.event?.date ? formatDate(ticket.event.date) : "Data não disponível"}
                                   </span>
                                   <MapPin className="h-4 w-4 ml-4 mr-2" />
-                                  <span data-testid={`text-event-location-${order.id}`}>
-                                    {order.event?.location || "Local não disponível"}
+                                  <span data-testid={`text-event-location-${ticket.id}`}>
+                                    {ticket.event?.location || "Local não disponível"}
                                   </span>
                                 </div>
                                 <div className="flex items-center mb-2">
                                   <span className="text-sm text-gray-500 mr-2">Status:</span>
-                                  {getStatusBadge(order.status)}
+                                  {getStatusBadge(ticket.order.status)}
                                 </div>
                               </div>
                               <div className="flex items-center space-x-4 mt-4 sm:mt-0">
                                 <div className="text-right">
-                                  <div className="text-lg font-semibold text-primary" data-testid={`text-order-price-${order.id}`}>
-                                    {formatCurrency(order.amount)}
+                                  <div className="text-lg font-semibold text-primary" data-testid={`text-order-price-${ticket.id}`}>
+                                    {formatCurrency(ticket.event.price)}
                                   </div>
-                                  <div className="text-xs text-gray-500" data-testid={`text-order-date-${order.id}`}>
-                                    Comprado em {new Date(order.createdAt).toLocaleDateString("pt-BR")}
+                                  <div className="text-xs text-gray-500" data-testid={`text-order-date-${ticket.id}`}>
+                                    Comprado em {new Date(ticket.created_at).toLocaleDateString("pt-BR")}
                                   </div>
                                 </div>
-                                {order.status === "paid" && order.qrCodeData ? (
+                                {ticket.order.status === "paid" && ticket.qr_code_data ? (
                                   <div className="flex gap-2">
                                     <Button
                                       className="bg-primary hover:bg-secondary"
                                       size="sm"
                                       onClick={() => {
-                                        // Create download link for QR code
-                                        const link = document.createElement('a');
-                                        link.href = order.qrCodeData;
-                                        link.download = `ingresso-${order.id}.png`;
-                                        link.click();
+                                        // Use the correct S3 URL field
+                                        if (ticket.qr_code_s3_url) { 
+                                          const link = document.createElement('a');
+                                          link.href = ticket.qr_code_s3_url; // <-- Correct: Use the S3 URL
+                                          
+                                          // Add 'download' attribute to suggest a filename to the browser
+                                          link.download = `ingresso-${ticket.id}.png`; 
+                                          
+                                          // Append link to body, click it, then remove it
+                                          document.body.appendChild(link);
+                                          link.click();
+                                          document.body.removeChild(link);
+                                        } else {
+                                          toast({
+                                            title: "Erro",
+                                            description: "URL do QR Code não encontrada.",
+                                            variant: "destructive",
+                                          });
+                                        }
                                       }}
-                                      data-testid={`button-download-${order.id}`}
+                                      data-testid={`button-download-${ticket.id}`}
                                     >
                                       <Download className="h-4 w-4 mr-2" />
                                       Baixar QR Code
                                     </Button>
-                                    {order.qrCodeUsed && currentUser?.isAdmin && (
+                                    {ticket.is_used && currentUser?.is_staff && (
                                       <Button
                                         variant="outline"
                                         size="sm"
                                         onClick={async () => {
                                           try {
-                                            await apiRequest("POST", `/api/reset-ticket/${order.id}`);
+                                            await apiRequest("POST", `/api/reset-ticket/${ticket.id}/`);
                                             toast({
                                               title: "Ticket resetado",
                                               description: "Ingresso pode ser verificado novamente",
@@ -481,19 +496,19 @@ const handleCancelOrder = (orderId: string) => {
                                             });
                                           }
                                         }}
-                                        data-testid={`button-reset-${order.id}`}
+                                        data-testid={`button-reset-${ticket.id}`}
                                       >
                                         Resetar Ingresso
                                       </Button>
                                     )}
                                   </div>
-                                ) : order.status === "pending" && order.asaasPaymentId ? (
+                                ) : ticket.order.status === "pending" && ticket.order.asaas_payment_id ? (
                                   <div className="flex gap-2">
-                                    {order.status === 'pending' && (
+                                    {ticket.order.status === 'pending' && (
                                       <Button
                                         variant="destructive"
                                         size="sm"
-                                        onClick={() => handleCancelOrder(order.id)} // You will create this handler
+                                        onClick={() => handleCancelOrder(ticket.order.id)} // You will create this handler
                                         disabled={cancelOrderMutation.isPending}
                                       >
                                         Cancelar Pedido
@@ -504,7 +519,7 @@ const handleCancelOrder = (orderId: string) => {
                                       size="sm"
                                       onClick={async () => {
                                         try {
-                                          const response = await apiRequest("POST", `/api/orders/${order.id}/check-status`);
+                                          const response = await apiRequest("POST", `/api/orders/${ticket.order.id}/check-status/`);
                                           const data = await response.json();
                                           toast({
                                             title: "Status verificado",
@@ -519,7 +534,7 @@ const handleCancelOrder = (orderId: string) => {
                                           });
                                         }
                                       }}
-                                      data-testid={`button-check-status-${order.id}`}
+                                      data-testid={`button-check-status-${ticket.order.id}`}
                                     >
                                       <RefreshCw className="h-4 w-4" />
                                     </Button>

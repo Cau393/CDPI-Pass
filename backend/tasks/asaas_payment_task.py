@@ -3,6 +3,7 @@ import httpx
 from os import getenv
 from dotenv import load_dotenv
 from datetime import date
+from tickets.models import Ticket
 
 load_dotenv()
 
@@ -86,6 +87,8 @@ class AsaasPaymentTask:
 
             customer = self.create_or_get_customer(customer_data)
 
+            event_title = Ticket.objects.filter(order=order).first().event.title
+
             # Asaas requires dueDate in YYYY-MM-DD
             due_date = (order.created_at or date.today()).strftime("%Y-%m-%d")
 
@@ -94,7 +97,7 @@ class AsaasPaymentTask:
                 "billingType": order.payment_method.upper(),  # e.g. "PIX", "BOLETO", "CREDIT_CARD"
                 "value": float(order.amount),
                 "dueDate": due_date,
-                "description": f"Order {order.id} for {order.event.title}",
+                "description": f"Order {order.id} for {event_title}",
                 "externalReference": str(order.id),
             }
 

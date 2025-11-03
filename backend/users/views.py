@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from .models import User
 from .serializers import RegisterSerializer, LoginSerializer, VerifyCodeSerializer, UserSerializer, ProfileUpdateSerializer
-from utils import generate_verification_code, get_code_expiration, verify_reset_token
+from helper_functions import generate_verification_code, get_code_expiration, verify_reset_token
 from tasks.email_tasks import send_verification_email, send_password_reset_email
 
 import logging
@@ -25,7 +25,7 @@ class RegisterView(APIView):
     def post(self, request, format=None):
         try:
             serializer = RegisterSerializer(data=request.data)
-            if serializer.is_valid():
+            if serializer.is_valid(raise_exception=True):
                 
                 # Create user and send verification email
                 with transaction.atomic():
@@ -36,7 +36,11 @@ class RegisterView(APIView):
                     user.email_verification_code_expires_at = get_code_expiration()
                     user.save()
 
+                    print("✅ Created user:", user.email)
+                    print("✅ Verification code:", verification_code)
+
                 transaction.on_commit(lambda: send_verification_email(user.email, verification_code))
+                print("✅ on_commit registered for:", user.email)
 
                 return Response(
                     {
@@ -49,7 +53,9 @@ class RegisterView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         except Exception as e:
+            import traceback
             # Log the error for debugging purposes
+            traceback.print_exc()
             logging.error(f"Registration error: {str(e)}")
 
             # Return a generic error message to the user
@@ -87,6 +93,9 @@ class VerifyCodeView(APIView):
 
                 if user.email_verification_code_expires_at < timezone.now():
                     return Response({'Erro': 'Código de verificação expirado. Por favor, solicite um novo.'}, status=status.HTTP_400_BAD_REQUEST)
+                
+                if user.is_email_verified:
+                    return Response({'Erro': 'Email já verificado.'}, status=status.HTTP_400_BAD_REQUEST)
 
                 # Mark the user as email verified and clear the verification code fields
                 user.is_email_verified = True
@@ -187,6 +196,9 @@ class LoginView(APIView):
                 
                 refresh = RefreshToken.for_user(user)
                 access_token = str(refresh.access_token)
+
+                print(f"Login Success - User Verified: {user.is_email_verified}")
+                print(f"Serialized User Data: {UserSerializer(user).data}")
     
                 return Response(
                     {
@@ -270,15 +282,10 @@ class ResetPasswordView(APIView):
             
             user.set_password(password)
             user.save()
-
-            refresh = RefreshToken.for_user(user)
-            access_token = str(refresh.access_token)
             
             return Response(
                 {
-                    'token': access_token,
-                    'refresh': str(refresh),
-                    'user': UserSerializer(user).data,
+                    'message': 'Senha redefinida com sucesso.'
                 }
                 , status=status.HTTP_200_OK
                 )

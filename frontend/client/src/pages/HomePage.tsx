@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { MapPin, Calendar, ChevronDown, ChevronUp, Facebook, Instagram, Twitter, Linkedin, Youtube } from "lucide-react";
@@ -17,9 +18,18 @@ export default function HomePage() {
   const { isAuthenticated } = useAuth();
   const { toast } = useToast();
 
-  const { data: events, isLoading } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
+  const { data: paginatedEventsData, isLoading, isError } = useQuery({ // Rename data for clarity
+  queryKey: ["events"],
+  queryFn: () => apiRequest("GET", "/api/events/").then(res => res.json()),
   });
+
+  const eventList = paginatedEventsData?.results ?? [];
+
+  const mainEvent = eventList?.[0];
+
+  const upcomingEvents = eventList.filter(
+  (event) => new Date(event.date) > new Date()
+  );
 
   const handleBuyTicket = (event: Event) => {
     if (!isAuthenticated) {
@@ -34,17 +44,6 @@ export default function HomePage() {
     setSelectedEvent(event);
     setIsPaymentModalOpen(true);
   };
-
-  const sortedEvents = events
-  ?.filter(event => new Date(event.date) > new Date())
-  .filter(
-    (event) =>
-      event.title !== 'Workshop 360º na indústria farmacêutica - Montes Claros'
-  )
-  ?.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-  const mainEvent = sortedEvents?.[0];
-  const upcomingEvents = sortedEvents?.slice(1, 2) || [];
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -162,7 +161,7 @@ export default function HomePage() {
               <div className="bg-white rounded-b-lg shadow-lg">
                 {upcomingEvents.length > 0 ? (
                   <div className="divide-y">
-                    {upcomingEvents.map((event) => (
+                    {upcomingEvents.slice(1).map((event) => (
                       <div 
                         key={event.id} 
                         className="p-4 hover:bg-gray-50 transition-colors cursor-pointer"

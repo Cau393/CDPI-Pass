@@ -21,15 +21,17 @@ interface CourtesyLink {
   id: string;
   code: string;
   eventId: string;
-  ticketCount: number;
-  usedCount: number;
+  ticket_count: number; // FIX: Changed to snake_case
+  used_count: number;
   isActive: boolean;
-  createdAt: string;
+  created_at: string;
   redeemUrl: string;
   event?: Event;
-  overridePrice?: number;
+  override_price?: number; // FIX: Changed to snake_case
   remainingTickets?: number;
 }
+
+const PAGE_SIZE = 15;
 
 export default function CourtesyAdminPage() {
   const [selectedEventId, setSelectedEventId] = useState("");
@@ -41,30 +43,49 @@ export default function CourtesyAdminPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [overridePrice, setOverridePrice] = useState("");
 
+  interface PaginatedEventsResponse {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: Event[]; 
+  }
+
+  interface PaginatedLinksResponse {
+      count: number;
+      next: string | null;
+      previous: string | null;
+      results: CourtesyLink[]; 
+  }
   // Fetch events
-  const { data: events } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
+  const { data: paginatedEventsData } = useQuery<PaginatedEventsResponse>({ // <-- Use the new type
+  queryKey: ["/api/events/"],
   });
 
   // Fetch courtesy links
-  const { data: links, isLoading: linksLoading } = useQuery({
-  queryKey: ["/api/courtesy-links", currentPage],
+  const { data: paginatedLinksData, isLoading: linksLoading } = useQuery<PaginatedLinksResponse>({ // Use correct type
+  queryKey: ["/api/orders/courtesy/links/", currentPage], // Match backend URL
   queryFn: async () => {
-    const response = await apiRequest("GET", `/api/courtesy/links?page=${currentPage}`);
-    return response.json();
-  },
-  enabled: isAuthenticated,
-  staleTime: 0,
-  gcTime: 0, 
+    const response = await apiRequest("GET", `/api/orders/courtesy/links/?page=${currentPage}`);
+    const data: PaginatedLinksResponse = await response.json();
+    console.log(data);
+    return data;
+    },
+    enabled: isAuthenticated,
+    staleTime: 0,
+    gcTime: 0, 
   });
+
+  const totalPages = paginatedLinksData?.count ? Math.ceil(paginatedLinksData.count / PAGE_SIZE) : 1;
 
   // Create courtesy link mutation
   const createLinkMutation = useMutation({
-    mutationFn: async (data: { eventId: string; ticketCount: number; overridePrice: number | null }) => {
-      return await apiRequest("POST", "/api/courtesy/links", data);
+    // FIX: Update the mutation function signature to use snake_case
+    mutationFn: async (data: { eventId: string; ticket_count: number; override_price: number | null }) => {
+      console.log(data);
+      return await apiRequest("POST", "/api/orders/courtesy/links/", data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/courtesy/links"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders/courtesy/links/"] });
       setCurrentPage(1);
       toast({
         title: "Link criado com sucesso!",
@@ -72,6 +93,7 @@ export default function CourtesyAdminPage() {
       });
       setSelectedEventId("");
       setTicketCount("1");
+      setOverridePrice(""); // Clear the price input
     },
     onError: (error) => {
       toast({
@@ -94,8 +116,9 @@ export default function CourtesyAdminPage() {
 
     createLinkMutation.mutate({
       eventId: selectedEventId,
-      ticketCount: parseInt(ticketCount),
-      overridePrice: overridePrice ? parseFloat(overridePrice) : null,
+      // FIX: Send snake_case keys to the backend
+      ticket_count: parseInt(ticketCount),
+      override_price: overridePrice ? parseFloat(overridePrice) : null,
     });
   };
 
@@ -138,11 +161,11 @@ export default function CourtesyAdminPage() {
                   <SelectValue placeholder="Selecione um evento" />
                 </SelectTrigger>
                 <SelectContent>
-                  {events?.map((event) => (
-                    <SelectItem key={event.id} value={event.id}>
-                      {event.title}
-                    </SelectItem>
-                  ))}
+                  {paginatedEventsData?.results?.map((event) => ( 
+                  <SelectItem key={event.id} value={event.id.toString()}>
+                    {event.title}
+                  </SelectItem>
+                ))}
                 </SelectContent>
               </Select>
             </div>
@@ -196,14 +219,16 @@ export default function CourtesyAdminPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
+          {console.log("Links Loading:", linksLoading)}
+          {console.log("Paginated Links Data:", paginatedLinksData)}
           {linksLoading ? (
             <div className="text-center py-8">
               <p className="text-gray-500">Carregando links...</p>
             </div>
-          ) : links?.links && links.links.length > 0 ? (
+          ) : paginatedLinksData?.results && paginatedLinksData.results.length > 0 ? (
             <>
               <div className="space-y-4">
-                {links?.links?.map((link) => (
+                {paginatedLinksData.results.map((link) => (
                   <div
                     key={link.id}
                     className="border rounded-lg p-4 hover:bg-gray-50 transition-colors"
@@ -214,9 +239,10 @@ export default function CourtesyAdminPage() {
                           {link.event?.title || "Evento"}
                         </h3>
                         <div className="mb-2">
-                          {link.overridePrice ? (
+                          {/* FIX: Read from override_price (snake_case) */}
+                          {link.override_price ? (
                             <span className="text-sm font-bold text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
-                              Promocional: R$ {parseFloat(link.overridePrice).toFixed(2)}
+                              Promocional: R$ {parseFloat(link.override_price).toFixed(2)}
                             </span>
                           ) : (
                             <span className="text-sm font-bold text-green-600 bg-green-100 px-2 py-1 rounded-full">
@@ -230,10 +256,11 @@ export default function CourtesyAdminPage() {
                         <div className="flex gap-4 text-sm">
                           <span className={`flex items-center gap-1 ${link.remainingTickets === 0 ? 'text-red-600' : 'text-green-600'}`}>
                             <Ticket className="h-4 w-4" />
-                            {link.remainingTickets || 0} de {link.ticketCount} disponíveis
+                            {/* FIX: Read from ticket_count (snake_case) */}
+                            {link.remainingTickets || 0} de {link.ticket_count} disponíveis
                           </span>
                           <span className="text-gray-500">
-                            Criado em: {new Date(link.createdAt).toLocaleDateString('pt-BR')}
+                            Criado em: {new Date(link.created_at).toLocaleDateString('pt-BR')}
                           </span>
                         </div>
                         <div className="mt-2 flex items-center gap-2">
@@ -264,22 +291,24 @@ export default function CourtesyAdminPage() {
               </div>
 
               {/* Pagination Controls */}
-              {links?.totalPages > 1 && (
+              {totalPages > 1 && ( // Check calculated totalPages
                 <div className="flex justify-center items-center gap-2 mt-6">
                   <Button
                     variant="outline"
                     onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-                    disabled={currentPage === 1}
+                    // Disable based on API response's 'previous' link
+                    disabled={!paginatedLinksData?.previous}
                   >
                     Anterior
                   </Button>
                   <span className="text-sm font-medium px-4">
-                    Página {currentPage} de {links.totalPages}
+                    {/* Display current page and calculated totalPages */}
+                    Página {currentPage} de {totalPages}
                   </span>
                   <Button
                     variant="outline"
-                    onClick={() => setCurrentPage((prev) => Math.min(prev + 1, links.totalPages))}
-                    disabled={currentPage === links.totalPages}
+                    onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                    disabled={!paginatedLinksData?.next}
                   >
                     Próxima
                   </Button>
@@ -287,9 +316,12 @@ export default function CourtesyAdminPage() {
               )}
             </>
           ) : (
+            <>
+            {console.log("Rendering No Links Message...")}
             <div className="text-center py-8">
               <p className="text-gray-500">Nenhum link de cortesia criado ainda</p>
             </div>
+            </>
           )}
         </CardContent>
       </Card>

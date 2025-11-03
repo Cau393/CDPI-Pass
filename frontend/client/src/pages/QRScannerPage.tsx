@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { Html5Qrcode } from "html5-qrcode";
 import { Check, AlertCircle } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient"; // FIX: Import apiRequest
 
 export default function QRScannerPage() {
   const [status, setStatus] = useState<"scanning" | "success" | "error">("scanning");
@@ -111,16 +112,12 @@ export default function QRScannerPage() {
     lastScannedRef.current = decodedText;
 
     try {
-      // Verify the QR code (requires authentication)
-      const token = localStorage.getItem("token");
-      const response = await fetch("/api/tickets/verify-ticket", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token && { Authorization: `Bearer ${token}` }),
-        },
-        body: JSON.stringify({ qrCodeData: decodedText }),
-      });
+      // FIX: Use apiRequest instead of native fetch
+      const response = await apiRequest(
+        "POST",
+        "/api/tickets/verify-ticket/",
+        { qr_code_data: decodedText } // Already correctly using snake_case
+      );
       
       const result = await response.json();
       
@@ -133,7 +130,8 @@ export default function QRScannerPage() {
       }
     } catch (error) {
       setStatus("error");
-      setMessage("QR Code inválido");
+      // apiRequest throws an Error object, so we can use error.message
+      setMessage(error instanceof Error ? error.message : "QR Code inválido");
     }
 
     // Reset quickly - only 800ms for success, 1.5s for error

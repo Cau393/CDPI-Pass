@@ -7,12 +7,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 class EventListView(ListAPIView):
-    queryset = Event.objects.filter(is_active=True)
+    queryset = Event.objects.filter(is_active=True).order_by('date', 'id')
     serializer_class = EventSerializer
     permission_classes = [AllowAny]
 
 class EventDetailView(RetrieveAPIView):
-    queryset = Event.objects.filter(is_active=True)
+    queryset = Event.objects.filter(is_active=True).order_by('-date', '-id')
     serializer_class = EventSerializer
     permission_classes = [AllowAny]
 

@@ -2,7 +2,7 @@ from django.core.management.base import BaseCommand
 from .models import Order
 from .asaas_payment_task import AsaasPaymentTask
 from django.db import transaction
-from tasks.email_tasks import send_ticket_email
+from utils_apps import fulfill_order
 
 import logging
 logger = logging.getLogger(__name__)
@@ -24,16 +24,7 @@ class Command(BaseCommand):
 
                 if payment_status in ["CONFIRMED", "RECEIVED"]:
                     with transaction.atomic():
-                        order.status = "paid"
-                        order.event.current_attendees += 1
-                        order.save(update_fields=["status"])
-                        logger.info(f"✅ Payment confirmed for order {order.id}")
-
-                        event = order.event
-                        event.current_attendees = getattr(event, "current_attendees", 0) + 1
-                        event.save(update_fields=["current_attendees"])
-
-                        send_ticket_email.delay(order.id)
+                        fulfill_order(order)
 
                 elif payment_status in ["CANCELLED", "OVERDUE"]:
                     order.status = "cancelled"

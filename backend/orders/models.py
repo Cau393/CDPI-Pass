@@ -2,8 +2,7 @@ from django.db import models
 from users.models import User
 from events.models import Event
 from uuid import uuid4
-from utils import generate_courtesy_code
-
+from helper_functions import generate_courtesy_code
 
 class CourtesyLink(models.Model):
     id = models.CharField(max_length=255, primary_key=True, default=uuid4)

@@ -34,23 +34,32 @@ export default function EventDetailsPage() {
 
   // ✅ Fetch main event details
   const { data: event, isLoading, error } = useQuery<Event>({
-    queryKey: [`/api/events/${id}`],
+    queryKey: [`/api/events/${id}/`],
     enabled: !!id,
   });
 
   // ✅ Fetch promo link details only if a promo code exists
   const { data: promoLink } = useQuery({
-    queryKey: ["/api/courtesy-links", promoCode],
+    queryKey: ["/api/orders/courtesy/links/", promoCode],
     queryFn: async () => {
-      const res = await apiRequest("GET", `/api/courtesy-links/${promoCode}`);
+      const res = await apiRequest("GET", `/api/orders/courtesy/links/${promoCode}/`);
       return res.json();
     },
     enabled: !!promoCode,
   });
 
-  const displayPrice = promoLink?.overridePrice 
-    ? parseFloat(promoLink.overridePrice) 
-    : (event ? parseFloat(event.price) : 0);
+  // ---
+  // 💡 FIX: This logic is updated to be safer and correct.
+  //
+  // 1. It looks for `promoLink.override_price` (snake_case) from your Django API.
+  // 2. It uses `|| 0` inside parseFloat to prevent `null` or `undefined` from becoming `NaN`.
+  // ---
+  const priceFromPromo = promoLink?.override_price ? parseFloat(promoLink.override_price) : null;
+  const priceFromEvent = event?.price ? parseFloat(event.price) : 0;
+  
+  // Use the promo price if it exists (even if it's 0), otherwise use the event price.
+  const displayPrice = (priceFromPromo !== null) ? priceFromPromo : priceFromEvent;
+  // --- END FIX ---
 
   const [modalData, setModalData] = useState<{
     event: Event;

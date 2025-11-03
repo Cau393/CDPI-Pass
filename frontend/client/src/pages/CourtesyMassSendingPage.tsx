@@ -14,7 +14,7 @@ export default function CourtesyMassSendingPage() {
 
   const mutation = useMutation({
     mutationFn: (formData: FormData) => {
-      return apiRequest('POST', '/api/courtesy/mass-send', formData);
+      return apiRequest('POST', '/api/orders/courtesy/mass-send/', formData);
     },
     onSuccess: async () => {
       toast({

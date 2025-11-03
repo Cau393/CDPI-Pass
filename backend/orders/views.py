@@ -1,19 +1,24 @@
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from rest_framework import status
+from rest_framework import status, permissions, parsers
 from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
 from django.db import transaction
+
+import io
+import csv
+from uuid import uuid4
 from decimal import Decimal
 from datetime import datetime
 
-from uuid import uuid4
 from .models import Order, CourtesyLink
-from tickets.models import Ticket
+from tickets.models import Ticket, CourtesyAttendee
 from events.models import Event
-from users.models import User
-from .serializers import OrderSerializer
+from helper_functions import detect_delimiter, generate_courtesy_code, fulfill_order
+from .serializers import OrderSerializer, CourtesyLinkSerializer
+from tickets.serializers import TicketSerializer
 from tasks.asaas_payment_task import AsaasPaymentTask
-from tasks.email_tasks import send_ticket_email
+from tasks.email_tasks import send_mass_email
 
 import logging
 logger = logging.getLogger(__name__)
@@ -26,7 +31,7 @@ class OrderView(APIView):
         data = request.data
         event_id = data.get("eventId")
         payment_method = data.get("paymentMethod")
-        promo_code = data.get("promoCode")
+        promo_code = data.get("code")
         quantity = int(data.get("quantity", 1))
 
         # 🧩 Validate basic input
@@ -46,7 +51,9 @@ class OrderView(APIView):
 
         # 💰 Base ticket price
         final_price = Decimal(event.price)
-        courtesy_link = None
+        
+        # FIX: Initialize courtesy_link as None here
+        courtesy_link = None 
 
         # 🎟️ Handle promoCode / Courtesy logic
         if promo_code:
@@ -70,6 +77,9 @@ class OrderView(APIView):
         convenience_fee = Decimal("5.00")
         total_amount = (final_price * quantity) + convenience_fee
 
+        # FIX: This line was the bug. It has been removed.
+        # courtesy_link = None 
+
         # 💾 Create order and tickets atomically
         try:
             with transaction.atomic():
@@ -81,22 +91,32 @@ class OrderView(APIView):
                     quantity=quantity,
                     payment_method=payment_method,
                     amount=total_amount,
-                    courtesy_link_id=courtesy_link,
                 )
 
                 # 🎫 Create tickets
                 tickets = []
                 for i in range(quantity):
                     ticket_name = f"{user.get_full_name() or user.username} - Ticket {i+1}"
+                    
                     ticket = Ticket.objects.create(
                         id=uuid4(),
                         name=ticket_name,
                         order=order,
                         event=event,
-                        type_of_ticket="courtesy" if courtesy_link else "first batch",
+                        cpf=user.cpf,
+                        type_of_ticket=event.batch,
                         qr_code_data=f"QR-{uuid4()}",
-                        courtesy_link_id=courtesy_link,
                     )
+                    
+                    # Add courtesy link if applicable
+                    if courtesy_link:
+                        ticket.courtesy_link_id = courtesy_link
+                        ticket.type_of_ticket = "sale"
+                        ticket.save(update_fields=["courtesy_link_id", "type_of_ticket"])
+
+                        order.courtesy_link_id = courtesy_link
+                        order.save(update_fields=["courtesy_link_id"])
+
                     tickets.append(ticket)
 
                 # 💳 Create payment (Asaas)
@@ -122,12 +142,38 @@ class OrderView(APIView):
 
     def get(self, request, format=None):
         user = request.user
-        orders = Order.objects.filter(user=user)
-        serializer = OrderSerializer(orders, many=True)
-        return Response(serializer.data)
+        orders = Order.objects.filter(user=user).order_by("-created_at")
+
+        paginator = PageNumberPagination()
+        paginator.page_size_query_param = 'page_size'
+        paginated_orders = paginator.paginate_queryset(orders, request, view=self)
+
+        serializer = OrderSerializer(paginated_orders, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+class TicketListView(APIView):
+    permission_classes = [IsAuthenticated]
+    pagination_class = PageNumberPagination
+
+    def get(self, request, format=None):
+        user = request.user
+        
+        # Use select_related to efficiently fetch related order and event
+        # in a single query
+        tickets = Ticket.objects.filter(order__user=user) \
+                                .select_related('order', 'event') \
+                                .order_by("-created_at")
+
+        # The rest of the logic works perfectly with the new paginator class
+        paginator = self.pagination_class()
+        paginated_tickets = paginator.paginate_queryset(tickets, request, view=self)
+        
+        # Use the new TicketSerializer with nested data
+        serializer = TicketSerializer(paginated_tickets, many=True)
+        return paginator.get_paginated_response(serializer.data)
 
 class CancelOrderView(APIView):
-    def post(self, request, pk, format=None):
+    def delete(self, request, pk, format=None):
         """
         Cancel an order.
         """
@@ -156,7 +202,7 @@ class CancelOrderView(APIView):
 class CheckOrderStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, pk, format=None):
+    def post(self, request, pk, format=None):
         """
         Check the status of an order.
         """
@@ -210,24 +256,45 @@ class CourtesyLinksView(APIView):
         user = request.user
         if not user.is_staff:
             return Response({"message": "Acesso negado"}, status=status.HTTP_403_FORBIDDEN)
-        links = CourtesyLink.objects.filter(created_by=user)
-        serializer = CourtesyLinkSerializer(links, many=True)
-        return Response(serializer.data)
 
-class CourtesyLinksDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+        links_qs = CourtesyLink.objects.filter(created_by=user).order_by('-created_at')
+        paginator = PageNumberPagination()
+        paginator.page_size_query_param = 'page_size'
+        paginated_links = paginator.paginate_queryset(links_qs, request, view=self)
 
-    def get(self, request, pk, format=None):
+        serializer = CourtesyLinkSerializer(paginated_links, many=True)
+
+        return paginator.get_paginated_response(serializer.data)
+    
+    def post(self, request, format=None):
         """
-        Get details of a specific courtesy link.
+        Create a new courtesy link.
         """
         user = request.user
         if not user.is_staff:
             return Response({"message": "Acesso negado"}, status=status.HTTP_403_FORBIDDEN)
+        serializer = CourtesyLinkSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(created_by=user)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class CourtesyLinksDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, code, format=None):
+        """
+        Get details of a specific courtesy link.
+        """
         try:
-            link = CourtesyLink.objects.get(id=pk, created_by=user)
+            link = CourtesyLink.objects.get(code=code)
         except CourtesyLink.DoesNotExist:
             return Response({"message": "Link de cortesia não encontrado"}, status=status.HTTP_404_NOT_FOUND)
+        if not link.is_active:
+            return Response({"message": "Link de cortesia inativo"}, status=status.HTTP_400_BAD_REQUEST)
+        if link.used_count >= link.ticket_count:
+            return Response({"message": "Todos os ingressos deste link já foram resgatados"}, status=status.HTTP_400_BAD_REQUEST)
+
         serializer = CourtesyLinkSerializer(link)
         return Response(serializer.data)
 
@@ -298,7 +365,11 @@ class CourtesyRedeemView(APIView):
                 except Exception:
                     pass
 
+                # --- Create Courtesy Order (status = paid)
+                order_id = str(uuid4())
+
                 attendee = CourtesyAttendee.objects.create(
+                    order_id=order_id,
                     name=data["name"],
                     email=data["email"],
                     cpf=data["cpf"],
@@ -307,12 +378,10 @@ class CourtesyRedeemView(APIView):
                     address=data.get("address"),
                     occupation=data.get("occupation"),
                     partner_company=data.get("partnerCompany"),
-                    event=event,
-                    courtesy_link=link,
+                    event_title=event.title,
+                    courtesy_link_id=link,
                 )
 
-                # --- Create Courtesy Order (status = paid)
-                order_id = str(uuid4())
                 order = Order.objects.create(
                     id=order_id,
                     user=user,
@@ -321,7 +390,6 @@ class CourtesyRedeemView(APIView):
                     payment_method="courtesy",
                     amount=Decimal("0.00"),
                     courtesy_link_id=link,
-                    courtesy_attendee=attendee,
                 )
 
                 # --- Create Courtesy Ticket
@@ -345,7 +413,7 @@ class CourtesyRedeemView(APIView):
                     event.current_attendees = (event.current_attendees or 0) + 1
                     event.save(update_fields=["current_attendees"])
 
-                send_ticket_email.delay(data["email"], order)
+                fulfill_order(order)
 
                 return Response(
                     {
@@ -359,6 +427,89 @@ class CourtesyRedeemView(APIView):
         except Exception as e:
             logger.error(f"Erro ao resgatar cortesia: {e}", exc_info=True)
             return Response({"message": "Erro interno ao resgatar cortesia"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class CourtesyMassSendView(APIView):
+    """
+    POST /api/courtesy/mass-send/
+    Admin-only endpoint to process a CSV and send courtesy emails.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser]
+
+    def post(self, request, *args, **kwargs):
+        if not request.user.is_staff:
+            return Response({"message": "Acesso negado. Somente administradores podem usar este endpoint."}, status=status.HTTP_403_FORBIDDEN)
+        csv_file = request.FILES.get("csvFile")
+        attachment_file = request.FILES.get("attachment")
+
+        if not csv_file:
+            return Response({"message": "Nenhum arquivo CSV enviado."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            delimiter = detect_delimiter(csv_file)
+            decoded_csv = csv_file.read().decode("utf-8")
+            reader = csv.DictReader(io.StringIO(decoded_csv), delimiter=delimiter)
+            rows = list(reader)
+
+            print(f"🧩 Detected delimiter: {repr(delimiter)} — {len(rows)} rows found")
+
+            # Prepare optional attachment
+            attachment_data = None
+            if attachment_file:
+                attachment_data = [{
+                    "filename": attachment_file.name,
+                    "content": attachment_file.read().decode("latin1"),  # base64 handled in task if needed
+                    "type": attachment_file.content_type
+                }]
+
+            for i, row in enumerate(rows, start=1):
+                normalized = {k.strip(): (v or "").strip() for k, v in row.items()}
+                name = normalized.get("name")
+                email = normalized.get("email")
+                amount = normalized.get("amount_of_courtesies", "1")
+                event_id = normalized.get("event_id")
+
+                if not event_id:
+                    print(f"⚠️ Row {i} skipped (missing event_id): {normalized}")
+                    continue
+
+                try:
+                    event = Event.objects.get(id=event_id)
+                except Event.DoesNotExist:
+                    print(f"❌ Event not found (row {i}, id={event_id})")
+                    continue
+
+                # ✅ Use your existing courtesy code generator
+                code = generate_courtesy_code()
+
+                link = CourtesyLink.objects.create(
+                    code=code,
+                    event=event,
+                    ticket_count=int(amount),
+                    created_by=request.user,
+                    is_active=True,
+                )
+
+                print(f"✅ Courtesy link created for {email}: {link.code}")
+
+                # ✅ Use your Celery task to send email asynchronously
+                send_mass_email.delay(
+                    email=email,
+                    name=name,
+                    event_name=event.title,
+                    courtesy_code=link.code,
+                    event_date=event.date.isoformat(),
+                    attachments=attachment_data
+                )
+
+            return Response({"message": "E-mails de cortesia enfileirados para envio."}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print("🚨 Error processing CSV:", e)
+            return Response({"message": "Erro ao processar o arquivo CSV."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+
+
 
 class WebHookView(APIView):
     permission_classes = [AllowAny]
@@ -386,11 +537,7 @@ class WebHookView(APIView):
             
             payment_status = payment_data.get("status")
             if payment_status in ["CONFIRMED", "RECEIVED"]:
-                order.status = "paid"
-                order.event.current_attendees += 1
-                order.save()
-                
-                send_ticket_email.delay(order.id)
+                fulfill_order(order)
 
             elif payment_status in ["OVERDUE", "DELETED"]:
                 if order.status != "canceled":

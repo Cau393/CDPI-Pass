@@ -3,7 +3,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from .models import Ticket
-from .serializers import TicketSerializer
 from django.utils import timezone
 from django.db import transaction
 import logging

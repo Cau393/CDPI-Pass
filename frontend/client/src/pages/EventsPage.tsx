@@ -7,16 +7,23 @@ import { Button } from "@/components/ui/button";
 import { Calendar, MapPin, Search } from "lucide-react";
 import type { Event } from "@shared/schema";
 
+interface PaginatedEventsResponse {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: Event[]; // The array is here
+}
+
 export default function EventsPage() {
   const [, setLocation] = useLocation();
   const [searchTerm, setSearchTerm] = useState("");
 
-  const { data: events, isLoading } = useQuery<Event[]>({
-    queryKey: ["/api/events"],
+  const { data: paginatedData, isLoading } = useQuery<PaginatedEventsResponse>({
+    queryKey: ["/api/events/"],
   });
 
   // Sort and filter events
-  const sortedAndFilteredEvents = events
+  const sortedAndFilteredEvents = paginatedData?.results
     ?.filter((event) => {
       const search = searchTerm.toLowerCase();
       return (

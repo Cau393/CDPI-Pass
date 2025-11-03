@@ -34,7 +34,7 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
 
   const createOrderMutation = useMutation({
     mutationFn: async (paymentMethod: string) => {
-      const response = await apiRequest("POST", "/api/orders", {
+      const response = await apiRequest("POST", "/api/orders/", {
         eventId: event.id,
         paymentMethod,
         promoCode: promoCode,
@@ -213,7 +213,9 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
           ) : (
             /* Payment Instructions */
             <div className="space-y-4">
-              {selectedMethod === "pix" && paymentData.payment.pixQrCode && (
+              {/* // FIX: Check for the nested pixTransaction object
+              */}
+              {selectedMethod === "pix" && paymentData.payment.pixTransaction?.qrCode && (
                 <Card>
                   <CardContent className="pt-6">
                     <div className="space-y-4">
@@ -228,7 +230,8 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
                       {/* QR Code Image */}
                       <div className="flex justify-center">
                         <img 
-                          src={`data:image/png;base64,${paymentData.payment.pixQrCode}`}
+                          // FIX: Use the correct path to the base64 image
+                          src={`data:image/png;base64,${paymentData.payment.pixTransaction.qrCode.encodedImage}`}
                           alt="QR Code PIX"
                           className="w-64 h-64"
                         />
@@ -240,12 +243,14 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
                         <div className="flex items-center gap-2">
                           <input
                             type="text"
-                            value={paymentData.payment.pixPayload || ''}
+                            // FIX: Use the correct path to the payload
+                            value={paymentData.payment.pixTransaction.qrCode.payload || ''}
                             readOnly
                             className="flex-1 p-2 border rounded text-xs"
                           />
                           <Button
-                            onClick={() => copyToClipboard(paymentData.payment.pixPayload)}
+                            // FIX: Use the correct path for the copy function
+                            onClick={() => copyToClipboard(paymentData.payment.pixTransaction.qrCode.payload)}
                             size="sm"
                             variant="outline"
                           >
@@ -256,7 +261,8 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
                       
                       <div className="flex items-center justify-center text-sm text-yellow-600">
                         <Clock className="h-4 w-4 mr-2" />
-                        Código expira em 30 minutos
+                        {/* FIX: Use the correct path for expiration */}
+                        Código expira em {paymentData.payment.pixTransaction.expirationDate ? new Date(paymentData.payment.pixTransaction.expirationDate).toLocaleTimeString('pt-BR') : '30 minutos'}
                       </div>
                     </div>
                   </CardContent>
@@ -277,7 +283,9 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
                 </Card>
               )}
 
-              {selectedMethod === "boleto" && (
+              {/* // FIX: Check for 'bankSlipUrl' instead of 'boletoUrl'
+              */}
+              {selectedMethod === "boleto" && paymentData.payment.bankSlipUrl && (
                 <Card>
                   <CardContent className="pt-6">
                     <div className="text-center space-y-4">
@@ -287,7 +295,8 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
                         Clique no botão abaixo para visualizar e imprimir o boleto
                       </p>
                       <Button
-                        onClick={() => window.open(paymentData.payment.boletoUrl, '_blank')}
+                        // FIX: Use the correct key 'bankSlipUrl'
+                        onClick={() => window.open(paymentData.payment.bankSlipUrl, '_blank')}
                         className="w-full bg-primary hover:bg-secondary"
                       >
                         Abrir Boleto
@@ -306,7 +315,7 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
                 </p>
                 <Button
                   onClick={() => {
-                    queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/orders/"] });
                     onSuccess();
                     onClose();
                   }}

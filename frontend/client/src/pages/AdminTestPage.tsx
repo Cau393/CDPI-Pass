@@ -53,7 +53,7 @@ export default function AdminTestPage() {
               {user?.id}
             </code>
             <p className="text-xs text-gray-600 mt-2">
-              Status: {user?.isAdmin ? "✅ Administrador" : "❌ Usuário normal"}
+              Status: {user?.is_staff ? "✅ Administrador" : "❌ Usuário normal"}
             </p>
           </div>
 

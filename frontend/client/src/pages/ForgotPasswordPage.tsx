@@ -12,7 +12,7 @@ export default function ForgotPasswordPage() {
   const { register, handleSubmit } = useForm<{ email: string }>();
 
   const mutation = useMutation({
-    mutationFn: (data: { email: string }) => apiRequest("POST", "/api/auth/forgot-password", data),
+    mutationFn: (data: { email: string }) => apiRequest("POST", "/api/auth/forgot-password/", data),
     onSuccess: () => {
       toast({
         title: "Verifique seu e-mail",

@@ -58,6 +58,8 @@ var users = pgTable("users", {
   address: text("address").notNull(),
   partnerCompany: varchar("partner_company", { length: 255 }),
   isAdmin: boolean("is_admin").default(false).notNull(),
+  isStaff: boolean("is_staff").default(false).notNull(),
+  isSuperuser: boolean("is_superuser").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
   emailVerificationCode: varchar("email_verification_code", { length: 6 }),

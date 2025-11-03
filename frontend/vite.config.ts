@@ -29,9 +29,15 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    fs: {
-      strict: true,
-      deny: ["**/.*"],
-    },
+    proxy: {
+      // String shorthand for simple cases: http://localhost:5173/api -> http://localhost:8000/api
+      '/api': {
+        target: 'http://127.0.0.1:8000', // <-- YOUR DJANGO SERVER ADDRESS
+        changeOrigin: true, // Needed for virtual hosted sites
+        secure: false,      // Set to false if Django is running on HTTP, true for HTTPS
+        // Optional: Rewrite path if needed, but usually not necessary if Django URLs start with /api/
+        // rewrite: (path) => path.replace(/^\/api/, '/api')
+      }
+    }
   },
 });

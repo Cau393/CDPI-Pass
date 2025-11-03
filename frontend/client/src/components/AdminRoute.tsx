@@ -21,7 +21,7 @@ export default function AdminRoute({ children }: AdminRouteProps) {
           variant: "destructive",
         });
         setLocation("/login");
-      } else if (!user?.isAdmin) {
+      } else if (!(user.is_staff || user.is_superuser)) {
         toast({
           title: "Acesso negado",
           description: "Apenas administradores podem acessar esta página",
@@ -40,7 +40,7 @@ export default function AdminRoute({ children }: AdminRouteProps) {
     );
   }
 
-  if (!isAuthenticated || !user?.isAdmin) {
+  if (!isAuthenticated || !user?.is_staff) {
     return null;
   }
 

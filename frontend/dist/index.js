@@ -46255,9 +46255,18 @@ var init_vite_config = __esm({
         emptyOutDir: true
       },
       server: {
-        fs: {
-          strict: true,
-          deny: ["**/.*"]
+        proxy: {
+          // String shorthand for simple cases: http://localhost:5173/api -> http://localhost:8000/api
+          "/api": {
+            target: "http://127.0.0.1:8000",
+            // <-- YOUR DJANGO SERVER ADDRESS
+            changeOrigin: true,
+            // Needed for virtual hosted sites
+            secure: false
+            // Set to false if Django is running on HTTP, true for HTTPS
+            // Optional: Rewrite path if needed, but usually not necessary if Django URLs start with /api/
+            // rewrite: (path) => path.replace(/^\/api/, '/api')
+          }
         }
       }
     });
@@ -46410,6 +46419,8 @@ var users = pgTable("users", {
   address: text("address").notNull(),
   partnerCompany: varchar("partner_company", { length: 255 }),
   isAdmin: boolean("is_admin").default(false).notNull(),
+  isStaff: boolean("is_staff").default(false).notNull(),
+  isSuperuser: boolean("is_superuser").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
   emailVerificationCode: varchar("email_verification_code", { length: 6 }),

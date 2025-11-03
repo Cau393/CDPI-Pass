@@ -27,14 +27,17 @@ export default function LoginPage() {
 
   const loginMutation = useMutation({
     mutationFn: async (data: LoginRequest) => {
-      const response = await apiRequest("POST", "/api/users/auth/login", data);
+      const response = await apiRequest("POST", "/api/users/auth/login/", data);
       return response.json();
     },
     onSuccess: (data) => {
       localStorage.setItem("token", data.token);
-      queryClient.invalidateQueries({ queryKey: ["/api/users/auth/me"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/users/auth/me/"] });
 
-      if (data.user.emailVerified) {
+      console.log("Login Success Data:", JSON.stringify(data, null, 2));
+
+      if (data.user.is_email_verified) {
+        console.log("Login Success Data:", data);
         toast({ title: "Login realizado com sucesso!" });
         setLocation("/");
       } else {
