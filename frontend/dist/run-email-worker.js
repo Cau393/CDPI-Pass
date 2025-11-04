@@ -720,7 +720,7 @@ var EmailService = class {
             <p>Ou se preferir, voc\xEA pode resgatar a cortesia por meio do nosso site com o c\xF3digo:    <strong>${courtesyCode}</strong></p>
               <h4>\u26A0\uFE0F Instru\xE7\xF5es Importantes:</h4>
               <p>
-                \xC9 importante fazer o resgate da sua cortesia imediatamente ou <strong>at\xE9 dia ${formattedRedeemByDate}</strong> para garantir sua vaga e participar do evento.
+                \xC9 imprescind\xEDvel fazer o resgate da sua cortesia at\xE9 o prazo de <strong>48 horas</strong> ap\xF3s o recebimento dessa confirma\xE7\xE3o de inscri\xE7\xE3o para garantir a sua vaga e participar do evento.
               </p>
             </div>
           </div>
@@ -743,7 +743,7 @@ var EmailService = class {
       Para resgatar seu ingresso, acesse o seguinte link:
       ${redeemUrl}
 
-      \u26A0\uFE0F Importante fazer o resgate da sua cortesia imediatamente ou at\xE9 dia ${formattedRedeemByDate} para garantir sua vaga e participar do evento.
+      \u26A0\uFE0F \xC9 imprescind\xEDvel fazer o resgate da sua cortesia at\xE9 o prazo de <strong>48 horas</strong> ap\xF3s o recebimento dessa confirma\xE7\xE3o de inscri\xE7\xE3o para garantir a sua vaga e participar do evento.
 
       Atenciosamente,
       Equipe CDPI Pass

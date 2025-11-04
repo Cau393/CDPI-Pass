@@ -329,7 +329,7 @@ class EmailService {
             <p>Ou se preferir, você pode resgatar a cortesia por meio do nosso site com o código:    <strong>${courtesyCode}</strong></p>
               <h4>⚠️ Instruções Importantes:</h4>
               <p>
-                É importante fazer o resgate da sua cortesia imediatamente ou <strong>até dia ${formattedRedeemByDate}</strong> para garantir sua vaga e participar do evento.
+                É imprescindível fazer o resgate da sua cortesia até o prazo de <strong>48 horas</strong> após o recebimento dessa confirmação de inscrição para garantir a sua vaga e participar do evento.
               </p>
             </div>
           </div>
@@ -353,7 +353,7 @@ class EmailService {
       Para resgatar seu ingresso, acesse o seguinte link:
       ${redeemUrl}
 
-      ⚠️ Importante fazer o resgate da sua cortesia imediatamente ou até dia ${formattedRedeemByDate} para garantir sua vaga e participar do evento.
+      ⚠️ É imprescindível fazer o resgate da sua cortesia até o prazo de <strong>48 horas</strong> após o recebimento dessa confirmação de inscrição para garantir a sua vaga e participar do evento.
 
       Atenciosamente,
       Equipe CDPI Pass
