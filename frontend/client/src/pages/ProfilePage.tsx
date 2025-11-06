@@ -105,7 +105,7 @@ export default function ProfilePage() {
       const payload = hasChangedSensitiveFields 
         ? { ...data, currentPassword: profilePassword }
         : data;
-      const response = await apiRequest("PUT", "/api/users/profile/", payload);
+      const response = await apiRequest("PATCH", "/api/users/profile/", payload);
       return response.json();
     },
     onSuccess: () => {
@@ -129,7 +129,7 @@ export default function ProfilePage() {
 
   const changePasswordMutation = useMutation({
     mutationFn: async (data: { currentPassword: string; newPassword: string }) => {
-      const response = await apiRequest("PUT", "/api/users/profile/password/", data);
+      const response = await apiRequest("PATCH", "/api/users/profile/password/", data);
       return response.json();
     },
     onSuccess: () => {
@@ -150,7 +150,7 @@ export default function ProfilePage() {
 
   const resendVerificationMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/users/auth/resend-code/");
+      await apiRequest("POST", "/api/users/auth/resend-code/", { email: currentUser.email });
     },
     onSuccess: () => {
       toast({
@@ -232,8 +232,9 @@ export default function ProfilePage() {
     }
 
     changePasswordMutation.mutate({
-      currentPassword: data.currentPassword,
-      newPassword: data.newPassword,
+      old_password: data.currentPassword,
+      new_password: data.newPassword,
+      new_password_confirm: data.confirmPassword,
     });
   };
 

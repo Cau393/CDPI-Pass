@@ -42,7 +42,7 @@ def send_password_reset_email(email: str):
     reset_token = generate_reset_token(email)
 
     sg = SendGridAPIClient(getenv('SENDGRID_API_KEY'))
-    reset_link = f"{getenv('BASE_URL')}/api/users/auth/reset-password?token={reset_token}"
+    reset_link = f"{getenv('BASE_URL')}/reset-password?token={reset_token}"
     from_email = From(getenv('DEFAULT_FROM_EMAIL'), 'CDPI Pass')
     subject = 'Redefinição de Senha - CDPI Pass'
     plain_text_content = f'Clique no link abaixo para redefinir sua senha: {reset_link}'
@@ -55,7 +55,7 @@ def send_password_reset_email(email: str):
     to_email = To(email)
     mail = Mail(from_email, to_email, subject, plain_text_content, html_content)
     response = sg.send(mail)
-    return response
+    return response.status_code
 
 @shared_task
 def send_ticket_email(recipient_email, order_id):

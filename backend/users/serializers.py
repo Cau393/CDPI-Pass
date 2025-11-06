@@ -138,10 +138,11 @@ class VerifyCodeSerializer(serializers.Serializer):
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['first_name', 'last_name', 'phone', 'birth_date', 'address', 'partner_company']
+        fields = ['first_name', 'last_name', 'name', 'phone', 'birth_date', 'address', 'partner_company']
         extra_kwargs = {
             'first_name': {'required': False},
             'last_name': {'required': False},
+            'name': {'required': False},
             'phone': {'required': False},
             'birth_date': {'required': False},
             'address': {'required': False},

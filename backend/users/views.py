@@ -8,7 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .models import User
-from .serializers import RegisterSerializer, LoginSerializer, VerifyCodeSerializer, UserSerializer, ProfileUpdateSerializer
+from .serializers import RegisterSerializer, LoginSerializer, VerifyCodeSerializer, UserSerializer, ProfileUpdateSerializer, PasswordChangeSerializer
 from helper_functions import generate_verification_code, get_code_expiration, verify_reset_token
 from tasks.email_tasks import send_verification_email, send_password_reset_email
 
@@ -276,7 +276,7 @@ class ResetPasswordView(APIView):
             except User.MultipleObjectsReturned:
                 return Response({'Erro': 'Mais de um usuário com este email foi encontrado. Por favor, entre em contato com o suporte.'}, status=status.HTTP_400_BAD_REQUEST)
             
-            password = request.data.get('password')
+            password = request.data.get('newPassword')
             if not password:
                 return Response({'Erro': 'Nova senha é necessária.'}, status=status.HTTP_400_BAD_REQUEST)
             

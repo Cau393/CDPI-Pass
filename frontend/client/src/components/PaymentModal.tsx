@@ -37,7 +37,7 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
       const response = await apiRequest("POST", "/api/orders/", {
         eventId: event.id,
         paymentMethod,
-        promoCode: promoCode,
+        code: promoCode,
       });
       return response.json();
     },
