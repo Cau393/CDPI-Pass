@@ -750,6 +750,29 @@ var EmailService = class {
     `;
     return this.sendEmail(email, subject, html, text2, attachments);
   }
+  async _sendEmailFromQueue(to, subject, html, text2, attachments) {
+    if (!process.env.SENDGRID_API_KEY) {
+      console.warn("SendGrid not configured, email worker cannot send email:", { to, subject });
+      return false;
+    }
+    try {
+      const emailPayload = {
+        to,
+        from: { email: FROM_EMAIL, name: "CDPI Pass" },
+        subject,
+        html,
+        text: text2
+      };
+      if (attachments && attachments.length > 0) {
+        emailPayload.attachments = attachments;
+      }
+      await mailService.send(emailPayload);
+      return true;
+    } catch (error) {
+      console.error("SendGrid email error (from queue):", error);
+      throw error;
+    }
+  }
 };
 var emailService = new EmailService();
 
@@ -803,17 +826,20 @@ var EmailWorker = class {
   async processEmailJob(email) {
     try {
       console.log(`Processing email job ${email.id} to ${email.to}`);
-      const success = await emailService.sendEmail(
+      const attachments = email.attachments ? JSON.parse(email.attachments) : void 0;
+      const success = await emailService._sendEmailFromQueue(
         email.to,
         email.subject,
         email.html || "",
-        email.text || ""
+        email.text || "",
+        attachments
       );
       if (success) {
         await storage.updateEmailStatus(email.id, "sent");
         console.log(`Email sent successfully to ${email.to}`);
       } else {
-        await this.handleEmailFailure(email);
+        await storage.updateEmailStatus(email.id, "failed");
+        console.error(`Email job ${email.id} failed: SendGrid is not configured.`);
       }
     } catch (error) {
       console.error(`Error processing email job ${email.id}:`, error);

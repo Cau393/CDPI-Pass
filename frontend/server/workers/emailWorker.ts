@@ -73,20 +73,28 @@ class EmailWorker {
     try {
       console.log(`Processing email job ${email.id} to ${email.to}`);
       
-      const success = await emailService.sendEmail(
+      // Fix: Parse attachments from the database
+      const attachments = email.attachments ? JSON.parse(email.attachments) : undefined;
+      
+      // Use the new service method that doesn't re-queue
+      const success = await emailService._sendEmailFromQueue(
         email.to,
         email.subject,
         email.html || '',
-        email.text || ''
+        email.text || '',
+        attachments
       );
 
       if (success) {
         await storage.updateEmailStatus(email.id, 'sent');
         console.log(`Email sent successfully to ${email.to}`);
       } else {
-        await this.handleEmailFailure(email);
+        // This will be hit if SendGrid is not configured
+        await storage.updateEmailStatus(email.id, 'failed');
+        console.error(`Email job ${email.id} failed: SendGrid is not configured.`);
       }
     } catch (error) {
+      // This will be hit if _sendEmailFromQueue throws an error
       console.error(`Error processing email job ${email.id}:`, error);
       await this.handleEmailFailure(email);
     }

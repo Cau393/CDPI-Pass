@@ -361,6 +361,41 @@ class EmailService {
 
     return this.sendEmail(email, subject, html, text, attachments);
   }
+
+  async _sendEmailFromQueue(
+    to: string,
+    subject: string,
+    html: string,
+    text?: string,
+    attachments?: Array<{ filename: string; content: string; type: string }>
+  ): Promise<boolean> {
+    if (!process.env.SENDGRID_API_KEY) {
+      console.warn("SendGrid not configured, email worker cannot send email:", { to, subject });
+      // Return false to indicate failure, so worker can mark it as 'failed'
+      return false;
+    }
+
+    try {
+      const emailPayload: any = {
+        to,
+        from: { email: FROM_EMAIL, name: "CDPI Pass" },
+        subject,
+        html,
+        text,
+      };
+
+      if (attachments && attachments.length > 0) {
+        emailPayload.attachments = attachments;
+      }
+
+      await mailService.send(emailPayload);
+      return true; // Success
+    } catch (error) {
+      console.error('SendGrid email error (from queue):', error);
+      // Re-throw the error so the worker's catch block can handle it
+      throw error;
+    }
+  }
 }
 
 
