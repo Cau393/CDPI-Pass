@@ -13,7 +13,7 @@ interface EmailJob {
 class EmailWorker {
   private isRunning = false;
   private processInterval: NodeJS.Timeout | null = null;
-  private readonly PROCESS_INTERVAL = 2000; // 2 seconds
+  private readonly PROCESS_INTERVAL = 20000; 
   private readonly MAX_CONCURRENT_JOBS = 5;
   private isCycleRunning = false;
 
