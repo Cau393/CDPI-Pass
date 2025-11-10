@@ -229,20 +229,29 @@ def send_mass_email(email, name, event_name, courtesy_code, event_date, attachme
           <meta charset="utf-8">
           <title>{subject}</title>
           <style>
-            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-            .container {{ max-width: 600px; margin: auto; padding: 20px; }}
+            body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
+            .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
             .header {{ background: #0F4C75; color: white; padding: 20px; text-align: center; }}
-            .content {{ background: #f9f9f9; padding: 20px; text-align: center; }}
+            .content {{ padding: 20px; background: #f9f9f9; text-align: center; }}
+            .message-box {{ text-align: left; margin: 20px 0; }}
             .cta-button {{
               background-color: #3282B8;
               color: white;
               padding: 15px 25px;
               text-decoration: none;
               border-radius: 5px;
+              font-size: 16px;
               display: inline-block;
-              margin-top: 20px;
+              margin: 20px 0;
             }}
-            .important {{ background: #BBE1FA; padding: 15px; border-radius: 5px; text-align: left; }}
+            .important-notice {{
+              background: #BBE1FA;
+              padding: 15px;
+              border-radius: 5px;
+              margin: 20px 0;
+              text-align: left;
+            }}
+            .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 20px; }}
           </style>
         </head>
         <body>
@@ -252,23 +261,33 @@ def send_mass_email(email, name, event_name, courtesy_code, event_date, attachme
               <h2>CDPI Pass</h2>
             </div>
             <div class="content">
-              <p>Olá <strong>{name}</strong>!</p>
-              <p>Você recebeu uma cortesia para o <strong>{event_name}</strong> na data <strong>{formatted_event_date}</strong>!</p>
-              <p style="font-style: italic;">Um evento que amplia horizontes e conecta quem faz a diferença na indústria.</p>
+              <div class="message-box">
+                <p style="font-size: 18px;">Olá, <strong>{name}</strong>!</p>
+                <p>Você recebeu uma cortesia para o <strong>{event_name}</strong> na data <strong>{formatted_event_date}</strong>!</p>
+                <p style="font-style: italic; color: #333;">
+                  Um evento que amplia horizontes e conecta quem faz a diferença na indústria. Oportunidade ímpar para você dominar o Ciclo de Vida do Medicamento e acelerar a sua trajetória profissional!
+                </p>
+                <p>Para resgatar seu ingresso, clique no botão abaixo:</p>
+              </div>
+              
               <a href="{redeem_url}" class="cta-button">Resgatar Ingresso Agora</a>
-              <div class="important">
-                <p>Ou utilize o código: <strong>{courtesy_code}</strong></p>
-                <p>Resgate até <strong>{formatted_redeem_by_date}</strong> para garantir sua vaga.</p>
+              
+              <div class="important-notice">
+              <p>Ou se preferir, você pode resgatar a cortesia por meio do nosso site com o código:    <strong>{courtesy_code}</strong></p>
+                <h4>⚠️ Instruções Importantes:</h4>
+                <p>
+                  É imprescindível fazer o resgate da sua cortesia até o prazo de <strong>48 horas</strong> após o recebimento dessa confirmação de inscrição para garantir a sua vaga e participar do evento.
+                </p>
               </div>
             </div>
-            <footer style="text-align:center;font-size:12px;color:#666;">
-              <p>Equipe CDPI Pass</p>
+            <div class="footer">
+              <p>Atenciosamente,<br>Equipe CDPI Pass</p>
               <p>relacionamento@cdpipharma.com.br | +55 (62) 99860-6833</p>
-            </footer>
+            </div>
           </div>
         </body>
         </html>
-        """
+          """
 
         text_content = f"""
         Olá {name}!
@@ -278,6 +297,8 @@ def send_mass_email(email, name, event_name, courtesy_code, event_date, attachme
         Para resgatar seu ingresso, acesse: {redeem_url}
 
         ⚠️ Resgate até {formatted_redeem_by_date} para garantir sua vaga.
+
+        ⚠️ É imprescindível fazer o resgate da sua cortesia até o prazo de <strong>48 horas</strong> após o recebimento dessa confirmação de inscrição para garantir a sua vaga e participar do evento.
 
         Atenciosamente,
         Equipe CDPI Pass

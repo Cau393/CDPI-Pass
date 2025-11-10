@@ -29,7 +29,7 @@ class RegisterSerializer(serializers.Serializer):
     cpf = serializers.RegexField(
     regex=r'^\s*\d{3}\.?\d{3}\.?\d{3}[-–]?\d{2}\s*$',
     error_messages={"invalid": "CPF inválido. Use o formato 000.000.000-00 ou 00000000000."}
-)
+    )
     phone = serializers.RegexField(regex=r'^\(\d{2}\)\s\d{4,5}-\d{4}$')
     birth_date = serializers.CharField()
     address = serializers.CharField(min_length=10)
@@ -136,6 +136,15 @@ class VerifyCodeSerializer(serializers.Serializer):
         return value
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
+    name = serializers.CharField()
+
+    def validate_name(self, value):
+        """Split full name into first and last name"""
+        parts = value.split(' ', 1)  # Split on first space
+        if len(parts) < 2:
+            raise serializers.ValidationError("Please provide both first and last name")
+        return value
+        
     class Meta:
         model = User
         fields = ['first_name', 'last_name', 'name', 'phone', 'birth_date', 'address', 'partner_company']

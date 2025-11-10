@@ -215,7 +215,7 @@ class CheckOrderStatusView(APIView):
             return Response({"message": "Pedido não possui um ID de pagamento"}, status=status.HTTP_400_BAD_REQUEST)
 
         payment_task = AsaasPaymentTask()
-        payment_status = payment_task.check_payment(order.asaas_payment_id)
+        payment_status = payment_task.get_payment(order.asaas_payment_id)
 
         # --- Map Asaas status to internal status
         status_map = {
@@ -232,10 +232,17 @@ class CheckOrderStatusView(APIView):
             "AWAITING_CHARGEBACK_REVERSAL": "cancelled",
         }
 
-        internal_status = status_map.get(payment_status.upper(), "pending")
+        # Extract status string, handling both dict and string cases
+        status_value = payment_status.get("status") if isinstance(payment_status, dict) else payment_status
 
-        order.status = internal_status
-        order.save(update_fields=["status"])
+        # Convert to uppercase safely
+        status_value = str(status_value).upper() if status_value else ""
+
+        # Map to internal status
+        internal_status = status_map.get(status_value, "pending")
+
+        if internal_status == 'paid':
+            fulfill_order(order)
 
         return Response(
             {
@@ -447,8 +454,9 @@ class CourtesyMassSendView(APIView):
 
         try:
             delimiter = detect_delimiter(csv_file)
-            decoded_csv = csv_file.read().decode("utf-8")
-            reader = csv.DictReader(io.StringIO(decoded_csv), delimiter=delimiter)
+            csv_file.seek(0)
+            decoded_file = io.TextIOWrapper(csv_file, encoding='utf-8')
+            reader = csv.DictReader(decoded_file, delimiter=delimiter)
             rows = list(reader)
 
             print(f"🧩 Detected delimiter: {repr(delimiter)} — {len(rows)} rows found")
@@ -462,46 +470,48 @@ class CourtesyMassSendView(APIView):
                     "type": attachment_file.content_type
                 }]
 
-            for i, row in enumerate(rows, start=1):
-                normalized = {k.strip(): (v or "").strip() for k, v in row.items()}
-                name = normalized.get("name")
-                email = normalized.get("email")
-                amount = normalized.get("amount_of_courtesies", "1")
-                event_id = normalized.get("event_id")
+            rows_processed = 0
+            with transaction.atomic():
+                for i, row in enumerate(rows, start=1):
+                    normalized = {k.strip(): (v or "").strip() for k, v in row.items()}
+                    name = normalized.get("name")
+                    email = normalized.get("email")
+                    amount = normalized.get("amount_of_courtesies", "1")
+                    event_id = normalized.get("event_id")
 
-                if not event_id:
-                    print(f"⚠️ Row {i} skipped (missing event_id): {normalized}")
-                    continue
+                    if not event_id or not email:
+                        print(f"⚠️ Row {i} skipped (missing event_id or email): {normalized}")
+                        continue
 
-                try:
-                    event = Event.objects.get(id=event_id)
-                except Event.DoesNotExist:
-                    print(f"❌ Event not found (row {i}, id={event_id})")
-                    continue
+                    try:
+                        event = Event.objects.get(id=event_id)
+                    except Event.DoesNotExist:
+                        print(f"❌ Event not found (row {i}, id={event_id})")
+                        # Stop everything if one event is wrong
+                        raise Exception(f"Evento com ID {event_id} na linha {i} não foi encontrado.")
 
-                # ✅ Use your existing courtesy code generator
-                code = generate_courtesy_code()
+                    code = generate_courtesy_code()
 
-                link = CourtesyLink.objects.create(
-                    code=code,
-                    event=event,
-                    ticket_count=int(amount),
-                    created_by=request.user,
-                    is_active=True,
-                )
+                    link = CourtesyLink.objects.create(
+                        code=code,
+                        event=event,
+                        ticket_count=int(amount),
+                        created_by=request.user,
+                        is_active=True,
+                    )
 
-                print(f"✅ Courtesy link created for {email}: {link.code}")
+                    # Send to Celery
+                    send_mass_email.delay(
+                        email=email,
+                        name=name,
+                        event_name=event.title,
+                        courtesy_code=link.code,
+                        event_date=event.date.isoformat(),
+                        attachments=attachment_data
+                    )
+                    rows_processed += 1
 
-                # ✅ Use your Celery task to send email asynchronously
-                send_mass_email.delay(
-                    email=email,
-                    name=name,
-                    event_name=event.title,
-                    courtesy_code=link.code,
-                    event_date=event.date.isoformat(),
-                    attachments=attachment_data
-                )
-
+            print(f"✅ Processed {rows_processed} rows.")
             return Response({"message": "E-mails de cortesia enfileirados para envio."}, status=status.HTTP_200_OK)
 
         except Exception as e:

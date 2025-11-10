@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,18 @@ export default function HomePage() {
   const [, setLocation] = useLocation();
   const { isAuthenticated } = useAuth();
   const { toast } = useToast();
+  const [modalData, setModalData] = useState<{
+    event: Event;
+    promoCode: string | null;
+    price: number;
+    } | null>(null);
+  const [promoCode, setPromoCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("promo");
+    setPromoCode(code);
+  }, []);
 
   const { data: paginatedEventsData, isLoading, isError } = useQuery({ // Rename data for clarity
   queryKey: ["events"],
@@ -27,11 +39,24 @@ export default function HomePage() {
 
   const mainEvent = eventList?.[0];
 
+  const { data: promoLink } = useQuery({
+    queryKey: ["/api/orders/courtesy/links/", promoCode],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/orders/courtesy/links/${promoCode}/`);
+      return res.json();
+    },
+    enabled: !!promoCode, // Only run if promoCode exists
+  });
+
   const upcomingEvents = eventList.filter(
   (event) => new Date(event.date) > new Date()
   );
 
-  const handleBuyTicket = (event: Event) => {
+  const priceFromPromo = promoLink?.override_price ? parseFloat(promoLink.override_price) : null;
+  const priceFromEvent = mainEvent?.price ? parseFloat(mainEvent.price) : 0;
+  const displayPrice = (priceFromPromo !== null) ? priceFromPromo : priceFromEvent;
+
+  const handleBuyTicket = (selected: Event, code: string | null) => {
     if (!isAuthenticated) {
       toast({
         title: "Login necessário",
@@ -41,7 +66,17 @@ export default function HomePage() {
       setLocation("/login");
       return;
     }
-    setSelectedEvent(event);
+
+    if (!selected) return;
+
+    setModalData({
+      event: selected,
+      promoCode: code,
+      price: displayPrice,
+    });
+
+    // Store the event and promo in state
+    setSelectedEvent({ ...selected});
     setIsPaymentModalOpen(true);
   };
 
@@ -128,14 +163,14 @@ export default function HomePage() {
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-3xl font-bold text-primary">
-                            R$ {parseFloat(mainEvent.price).toFixed(2)}
+                            R$ {displayPrice.toFixed(2)}
                           </p>
                           <p className="text-xs text-gray-500">+ taxa de conveniência</p>
                         </div>
                         <Button
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleBuyTicket(mainEvent);
+                            handleBuyTicket(mainEvent, promoCode);
                           }}
                           className="bg-green-500 hover:bg-green-600 text-white px-6 py-3"
                           data-testid="button-buy-main"
@@ -396,12 +431,15 @@ export default function HomePage() {
       </footer>
 
       {/* Payment Modal */}
-      {selectedEvent && (
+      {modalData && (
         <PaymentModal
-          event={selectedEvent}
+          event={modalData.event}
+          promoCode={modalData.promoCode}
+          displayPrice={modalData.price} 
           isOpen={isPaymentModalOpen}
           onClose={() => {
             setIsPaymentModalOpen(false);
+            setModalData(null); // Clear the modal data
             setSelectedEvent(null);
           }}
           onSuccess={() => {
@@ -410,6 +448,7 @@ export default function HomePage() {
               description: "Acompanhe o status do seu pedido na página de perfil.",
             });
             setIsPaymentModalOpen(false);
+            setModalData(null); // Clear the modal data
             setSelectedEvent(null);
           }}
         />
