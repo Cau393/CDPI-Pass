@@ -1,5 +1,6 @@
 import { emailService } from '../services/emailService';
 import { storage } from '../storage';
+import { parse } from 'csv-parse/sync';
 
 interface EmailJob {
   id: string;
@@ -14,6 +15,7 @@ class EmailWorker {
   private processInterval: NodeJS.Timeout | null = null;
   private readonly PROCESS_INTERVAL = 2000; // 2 seconds
   private readonly MAX_CONCURRENT_JOBS = 5;
+  private isCycleRunning = false;
 
   start(): void {
     if (this.isRunning) {
@@ -25,7 +27,7 @@ class EmailWorker {
     console.log('Starting email worker...');
     
     this.processInterval = setInterval(() => {
-      this.processEmailQueue();
+      this.runWorkerCycle();
     }, this.PROCESS_INTERVAL);
   }
 
@@ -44,8 +46,30 @@ class EmailWorker {
     }
   }
 
+  async runWorkerCycle(): Promise<void> {
+    if (this.isCycleRunning) {
+      // Don't start a new cycle if one is already running
+      return;
+    }
+    
+    this.isCycleRunning = true;
+    
+    try {
+      // Run both job processors at the same time
+      // This way, a big email queue doesn't block CSV processing,
+      // and a big CSV job doesn't block emails.
+      await Promise.allSettled([
+        this.processEmailQueue(),
+        this.processMassSendQueue(), // <-- This is our new function
+      ]);
+    } catch (error) {
+      console.error('Error during worker cycle:', error);
+    } finally {
+      this.isCycleRunning = false;
+    }
+  }
+
   async processEmailQueue(): Promise<void> {
-    if (!this.isRunning) return;
 
     try {
       const pendingEmails = await storage.getPendingEmails();
@@ -109,6 +133,89 @@ class EmailWorker {
     } else {
       // Keep as pending for retry
       console.log(`Email job ${email.id} failed, will retry (attempt ${email.attempts + 1}/${maxAttempts})`);
+    }
+  }
+
+  private async processMassSendQueue(): Promise<void> {
+    // 1. Get *one* pending CSV job. (We process one at a time)
+    const pendingJobs = await storage.getPendingMassSendJobs(1);
+    if (pendingJobs.length === 0) {
+      return; // No jobs to process
+    }
+
+    const job = pendingJobs[0];
+
+    try {
+      console.log(`Processing mass-send job ${job.id}.`);
+      await storage.updateMassSendJobStatus(job.id, 'processing');
+
+      // 2. Parse the CSV data from the job
+      // Note: You may need to add delimiter detection here
+      const results: any[] = parse(job.csvData, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+        delimiter: [',', ';'], // Detects comma or semicolon
+        relax_column_count: true,
+      });
+
+      // 3. Parse attachment data
+      const attachments = job.attachmentData
+        ? [JSON.parse(job.attachmentData)]
+        : undefined;
+
+      console.log(`Job ${job.id}: Found ${results.length} rows to process.`);
+
+      // 4. Loop through rows and queue emails
+      for (const row of results) {
+        // Normalize field names by trimming them
+        const normalizedRow: any = Object.keys(row).reduce((acc: { [key: string]: any }, key) => {
+          acc[key.trim()] = row[key];
+          return acc;
+        }, {});
+
+        const { name, email, amount_of_courtesies, event_id } = normalizedRow;
+
+        if (!name || !email || !event_id || !amount_of_courtesies) {
+          console.warn(`Job ${job.id}: Skipping row due to missing data:`, normalizedRow);
+          continue;
+        }
+
+        const event = await storage.getEvent(event_id);
+        if (event) {
+          const code = `CDPI${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+          const link = await storage.createCourtesyLink({
+            code,
+            eventId: event.id,
+            ticketCount: parseInt(amount_of_courtesies, 10),
+            createdBy: job.createdBy,
+            isActive: true,
+            recipientEmail: email,
+            recipientName: name,
+          });
+
+          // This will queue the email, which our *other* function
+          // (processEmailQueue) will pick up on a future cycle.
+          await emailService.sendCourtesyMassEmail(
+            email,
+            name,
+            event.title,
+            link.code,
+            event.date,
+            attachments
+          );
+        } else {
+          console.warn(`Job ${job.id}: Event not found for ID ${event_id}`);
+        }
+      }
+
+      // 5. Mark job as completed
+      await storage.updateMassSendJobStatus(job.id, 'completed');
+      console.log(`Mass-send job ${job.id} completed successfully.`);
+
+    } catch (error) {
+      console.error(`Error processing mass-send job ${job.id}:`, error);
+      await storage.updateMassSendJobStatus(job.id, 'failed');
     }
   }
 

@@ -113,6 +113,17 @@ export const courtesyAttendees = pgTable("courtesy_attendees", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Mass send jobs table
+export const massSendJobs = pgTable('mass_send_jobs', {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  status: text('status', { enum: ['pending', 'processing', 'completed', 'failed'] }).default('pending').notNull(),
+  csvData: text('csv_data').notNull(),
+  attachmentData: text('attachment_data'), // Storing as JSON string
+  createdBy: text('created_by').notNull().references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   orders: many(orders),

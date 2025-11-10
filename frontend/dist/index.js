@@ -5538,14 +5538,14 @@ var require_lib = __commonJS({
         super.checkParams(node, false, true);
         this.scope.exit();
       }
-      forwardNoArrowParamsConversionAt(node, parse4) {
+      forwardNoArrowParamsConversionAt(node, parse3) {
         let result;
         if (this.state.noArrowParamsConversionAt.includes(this.offsetToSourcePos(node.start))) {
           this.state.noArrowParamsConversionAt.push(this.state.start);
-          result = parse4();
+          result = parse3();
           this.state.noArrowParamsConversionAt.pop();
         } else {
-          result = parse4();
+          result = parse3();
         }
         return result;
       }
@@ -14345,7 +14345,7 @@ var require_lib = __commonJS({
         return file;
       }
     };
-    function parse3(input, options) {
+    function parse2(input, options) {
       var _options;
       if (((_options = options) == null ? void 0 : _options.sourceType) === "unambiguous") {
         options = Object.assign({}, options);
@@ -14432,7 +14432,7 @@ var require_lib = __commonJS({
       }
       return cls;
     }
-    exports.parse = parse3;
+    exports.parse = parse2;
     exports.parseExpression = parseExpression;
     exports.tokTypes = tokTypes;
   }
@@ -15562,7 +15562,7 @@ var require_ms = __commonJS({
       options = options || {};
       var type = typeof val;
       if (type === "string" && val.length > 0) {
-        return parse3(val);
+        return parse2(val);
       } else if (type === "number" && isFinite(val)) {
         return options.long ? fmtLong(val) : fmtShort(val);
       }
@@ -15570,7 +15570,7 @@ var require_ms = __commonJS({
         "val is not a non-empty string or a valid number. val=" + JSON.stringify(val)
       );
     };
-    function parse3(str) {
+    function parse2(str) {
       str = String(str);
       if (str.length > 100) {
         return;
@@ -46380,6 +46380,7 @@ __export(schema_exports, {
   insertOrderSchema: () => insertOrderSchema,
   insertUserSchema: () => insertUserSchema,
   loginSchema: () => loginSchema,
+  massSendJobs: () => massSendJobs,
   orders: () => orders,
   ordersRelations: () => ordersRelations,
   users: () => users,
@@ -46489,6 +46490,16 @@ var courtesyAttendees = pgTable("courtesy_attendees", {
   eventTitle: varchar("event_title", { length: 255 }).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow()
+});
+var massSendJobs = pgTable("mass_send_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  status: text("status", { enum: ["pending", "processing", "completed", "failed"] }).default("pending").notNull(),
+  csvData: text("csv_data").notNull(),
+  attachmentData: text("attachment_data"),
+  // Storing as JSON string
+  createdBy: text("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 });
 var usersRelations = relations(users, ({ many }) => ({
   orders: many(orders),
@@ -46684,6 +46695,8 @@ var DatabaseStorage = class {
       userId: orders.userId,
       eventId: orders.eventId,
       status: orders.status,
+      courtesyAttendeeId: orders.courtesyAttendeeId,
+      cpf: orders.cpf,
       paymentMethod: orders.paymentMethod,
       amount: orders.amount,
       asaasPaymentId: orders.asaasPaymentId,
@@ -46796,6 +46809,34 @@ var DatabaseStorage = class {
       usedCount: sql2`used_count + 1`,
       updatedAt: /* @__PURE__ */ new Date()
     }).where(eq(courtesyLinks.id, id));
+  }
+  async addMassSendJobToQueue(jobData) {
+    const newJob = {
+      // ID is removed, database will generate it
+      status: "pending",
+      csvData: jobData.csvData,
+      attachmentData: jobData.attachmentData,
+      createdBy: jobData.createdBy
+    };
+    const [insertedJob] = await db.insert(massSendJobs).values(newJob).returning();
+    return insertedJob;
+  }
+  /**
+   * Gets pending mass-send jobs for the worker to process.
+   * This is called by your new worker.
+   */
+  async getPendingMassSendJobs(limit = 5) {
+    return db.select().from(massSendJobs).where(eq(massSendJobs.status, "pending")).orderBy(asc(massSendJobs.createdAt)).limit(limit);
+  }
+  /**
+   * Updates the status of a specific mass-send job.
+   * This is called by your new worker.
+   */
+  async updateMassSendJobStatus(jobId, status) {
+    return db.update(massSendJobs).set({
+      status,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).where(eq(massSendJobs.id, jobId));
   }
 };
 var storage = new DatabaseStorage();
@@ -47530,7 +47571,6 @@ var requireEmailVerification = (req, res, next) => {
 
 // server/routes.ts
 import multer from "multer";
-import { parse } from "csv-parse/sync";
 var JWT_SECRET2 = process.env.JWT_SECRET || "your-secret-key";
 var authenticateToken = async (req, res, next) => {
   const authHeader = req.headers["authorization"];
@@ -48473,68 +48513,23 @@ async function registerRoutes(app2) {
     }
     try {
       const csvBuffer = req.files.csvFile[0].buffer;
-      const delimiter = detectDelimiter(csvBuffer);
-      console.log(`Detected delimiter: ${delimiter === "," ? "comma" : delimiter === ";" ? "semicolon" : "tab"}`);
-      const results = parse(csvBuffer, {
-        columns: true,
-        skip_empty_lines: true,
-        delimiter,
-        trim: true,
-        relax_column_count: true
+      const attachmentFile = req.files?.attachment ? req.files.attachment[0] : null;
+      const attachmentData = attachmentFile ? {
+        filename: attachmentFile.originalname,
+        content: attachmentFile.buffer.toString("base64"),
+        type: attachmentFile.mimetype
+      } : null;
+      await storage.addMassSendJobToQueue({
+        csvData: csvBuffer.toString("utf-8"),
+        // Store CSV as text
+        attachmentData: attachmentData ? JSON.stringify(attachmentData) : null,
+        createdBy: req.user.id
       });
-      let attachment;
-      if (req.files?.attachment) {
-        const attachmentFile = req.files.attachment[0];
-        attachment = [{
-          filename: attachmentFile.originalname,
-          content: attachmentFile.buffer.toString("base64"),
-          type: attachmentFile.mimetype
-        }];
-      }
-      console.log("CSV processing started. Rows found:", results.length);
-      for (let i = 0; i < results.length; i++) {
-        const row = results[i];
-        const normalizedRow = Object.keys(row).reduce((acc, key) => {
-          acc[key.trim()] = row[key];
-          return acc;
-        }, {});
-        const { name, email, amount_of_courtesies, event_id } = normalizedRow;
-        console.log(`Processing Row ${i + 1}:`, normalizedRow);
-        if (!event_id) {
-          console.warn(`Skipping row ${i + 1} due to missing event_id:`, normalizedRow);
-          continue;
-        }
-        const event = await storage.getEvent(event_id);
-        if (event) {
-          console.log(`Event found for ID ${event_id}: ${event.title}`);
-          const code = `CDPI${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-          const link = await storage.createCourtesyLink({
-            code,
-            eventId: event.id,
-            ticketCount: parseInt(amount_of_courtesies, 10),
-            createdBy: req.user.id,
-            isActive: true,
-            recipientEmail: email,
-            recipientName: name
-          });
-          console.log(`Courtesy link created for ${email}: ${link.code}`);
-          emailService.sendCourtesyMassEmail(
-            email,
-            name,
-            event.title,
-            link.code,
-            event.date,
-            attachment
-          );
-        } else {
-          console.warn(`Event not found for ID in row ${i + 1}: ${event_id}`);
-        }
-      }
-      console.log("CSV processing finished.");
-      res.status(200).json({ message: "E-mails de cortesia enfileirados para envio." });
+      console.log("Mass send job has been queued.");
+      res.status(202).json({ message: "Processamento do CSV iniciado. Os e-mails ser\xE3o enviados em segundo plano." });
     } catch (error) {
-      console.error("Error processing CSV:", error);
-      res.status(500).json({ message: "Erro ao processar o arquivo CSV." });
+      console.error("Error queuing CSV job:", error);
+      res.status(500).json({ message: "Erro ao enfileirar o processamento." });
     }
   });
   const httpServer = createServer(app2);

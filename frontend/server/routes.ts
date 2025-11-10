@@ -1279,93 +1279,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!req.user.isAdmin) {
       return res.status(403).json({ message: 'Acesso negado.' });
     }
-
     if (!req.files?.csvFile) {
       return res.status(400).json({ message: 'Nenhum arquivo CSV enviado.' });
     }
 
     try {
       const csvBuffer = req.files.csvFile[0].buffer;
-      
-      // Detect the delimiter
-      const delimiter = detectDelimiter(csvBuffer);
-      console.log(`Detected delimiter: ${delimiter === ',' ? 'comma' : delimiter === ';' ? 'semicolon' : 'tab'}`);
+      const attachmentFile = req.files?.attachment ? req.files.attachment[0] : null;
 
-      // Parse CSV with detected delimiter - type the results properly
-      const results: CSVRow[] = parse(csvBuffer, {
-        columns: true,
-        skip_empty_lines: true,
-        delimiter: delimiter,
-        trim: true,
-        relax_column_count: true,
+      // 1. Prepare attachment data to be stored
+      const attachmentData = attachmentFile ? {
+        filename: attachmentFile.originalname,
+        content: attachmentFile.buffer.toString('base64'),
+        type: attachmentFile.mimetype
+      } : null;
+
+      // 2. Add the job to the database queue (you'll need to create this in 'storage')
+      await storage.addMassSendJobToQueue({
+        csvData: csvBuffer.toString('utf-8'), // Store CSV as text
+        attachmentData: attachmentData ? JSON.stringify(attachmentData) : null,
+        createdBy: req.user.id,
       });
 
-      // Prepare attachment if provided
-      let attachment: Array<{ filename: string; content: string; type: string }> | undefined;
-      if (req.files?.attachment) {
-        const attachmentFile = req.files.attachment[0];
-        attachment = [{
-          filename: attachmentFile.originalname,
-          content: attachmentFile.buffer.toString('base64'),
-          type: attachmentFile.mimetype
-        }];
-      }
+      // 3. Respond IMMEDIATELY
+      console.log('Mass send job has been queued.');
+      res.status(202).json({ message: 'Processamento do CSV iniciado. Os e-mails serão enviados em segundo plano.' });
 
-      console.log('CSV processing started. Rows found:', results.length);
-
-      // Process each row
-      for (let i = 0; i < results.length; i++) {
-        const row = results[i];
-        
-        // Normalize field names by trimming them
-        const normalizedRow: CSVRow = Object.keys(row).reduce((acc, key) => {
-          acc[key.trim()] = row[key];
-          return acc;
-        }, {} as CSVRow);
-
-        const { name, email, amount_of_courtesies, event_id } = normalizedRow;
-        
-        console.log(`Processing Row ${i + 1}:`, normalizedRow);
-
-        if (!event_id) {
-          console.warn(`Skipping row ${i + 1} due to missing event_id:`, normalizedRow);
-          continue;
-        }
-
-        const event = await storage.getEvent(event_id);
-        if (event) {
-          console.log(`Event found for ID ${event_id}: ${event.title}`);
-          const code = `CDPI${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-          const link = await storage.createCourtesyLink({
-            code,
-            eventId: event.id,
-            ticketCount: parseInt(amount_of_courtesies, 10),
-            createdBy: req.user.id,
-            isActive: true,
-            recipientEmail: email,
-            recipientName: name,
-          });
-          console.log(`Courtesy link created for ${email}: ${link.code}`);
-          
-          // Pass attachment to sendCourtesyMassEmail
-          emailService.sendCourtesyMassEmail(
-            email,
-            name,
-            event.title,
-            link.code,
-            event.date,
-            attachment
-          );
-        } else {
-          console.warn(`Event not found for ID in row ${i + 1}: ${event_id}`);
-        }
-      }
-
-      console.log('CSV processing finished.');
-      res.status(200).json({ message: 'E-mails de cortesia enfileirados para envio.' });
     } catch (error) {
-      console.error('Error processing CSV:', error);
-      res.status(500).json({ message: 'Erro ao processar o arquivo CSV.' });
+      console.error('Error queuing CSV job:', error);
+      res.status(500).json({ message: 'Erro ao enfileirar o processamento.' });
     }
   });
 

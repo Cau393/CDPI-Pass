@@ -5,6 +5,7 @@ import {
   emailQueue,
   courtesyLinks,
   courtesyAttendees,
+  massSendJobs,
   type User,
   type InsertUser,
   type Event,
@@ -168,6 +169,8 @@ export class DatabaseStorage implements IStorage {
         userId: orders.userId,
         eventId: orders.eventId,
         status: orders.status,
+        courtesyAttendeeId: orders.courtesyAttendeeId,
+        cpf: orders.cpf,
         paymentMethod: orders.paymentMethod,
         amount: orders.amount,
         asaasPaymentId: orders.asaasPaymentId,
@@ -361,6 +364,50 @@ export class DatabaseStorage implements IStorage {
         updatedAt: new Date()
       })
       .where(eq(courtesyLinks.id, id));
+  }
+
+  async addMassSendJobToQueue(jobData: {
+    csvData: string;
+    attachmentData: string | null;
+    createdBy: string;
+  }) {
+    const newJob = {
+      // ID is removed, database will generate it
+      status: 'pending' as const,
+      csvData: jobData.csvData,
+      attachmentData: jobData.attachmentData,
+      createdBy: jobData.createdBy,
+    };
+    // Use 'db' instead of 'this.db'
+    const [insertedJob] = await db.insert(massSendJobs).values(newJob).returning();
+    return insertedJob;
+  }
+
+/**
+ * Gets pending mass-send jobs for the worker to process.
+ * This is called by your new worker.
+ */
+async getPendingMassSendJobs(limit: number = 5) {
+  return db
+    .select()
+    .from(massSendJobs)
+    .where(eq(massSendJobs.status, 'pending'))
+    .orderBy(asc(massSendJobs.createdAt))
+    .limit(limit);
+}
+
+/**
+ * Updates the status of a specific mass-send job.
+ * This is called by your new worker.
+ */
+  async updateMassSendJobStatus(jobId: string, status: 'processing' | 'completed' | 'failed') {
+    return db
+      .update(massSendJobs)
+      .set({
+        status: status,
+        updatedAt: new Date(),
+      })
+      .where(eq(massSendJobs.id, jobId));
   }
 }
 

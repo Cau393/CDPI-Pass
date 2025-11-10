@@ -5,6 +5,7 @@
   "license": "MIT",
   "scripts": {
     "dev": "NODE_ENV=development tsx server/index.ts",
+    "dev:worker": "NODE_ENV=development tsx server/run-email-worker.ts",
     "build": "npx tsup && vite build",
     "start": "NODE_ENV=production node dist/index.js",
     "check": "tsc",

@@ -28,6 +28,7 @@ __export(schema_exports, {
   insertOrderSchema: () => insertOrderSchema,
   insertUserSchema: () => insertUserSchema,
   loginSchema: () => loginSchema,
+  massSendJobs: () => massSendJobs,
   orders: () => orders,
   ordersRelations: () => ordersRelations,
   users: () => users,
@@ -136,6 +137,16 @@ var courtesyAttendees = pgTable("courtesy_attendees", {
   eventTitle: varchar("event_title", { length: 255 }).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow()
+});
+var massSendJobs = pgTable("mass_send_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  status: text("status", { enum: ["pending", "processing", "completed", "failed"] }).default("pending").notNull(),
+  csvData: text("csv_data").notNull(),
+  attachmentData: text("attachment_data"),
+  // Storing as JSON string
+  createdBy: text("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 });
 var usersRelations = relations(users, ({ many }) => ({
   orders: many(orders),
@@ -330,6 +341,8 @@ var DatabaseStorage = class {
       userId: orders.userId,
       eventId: orders.eventId,
       status: orders.status,
+      courtesyAttendeeId: orders.courtesyAttendeeId,
+      cpf: orders.cpf,
       paymentMethod: orders.paymentMethod,
       amount: orders.amount,
       asaasPaymentId: orders.asaasPaymentId,
@@ -442,6 +455,34 @@ var DatabaseStorage = class {
       usedCount: sql2`used_count + 1`,
       updatedAt: /* @__PURE__ */ new Date()
     }).where(eq(courtesyLinks.id, id));
+  }
+  async addMassSendJobToQueue(jobData) {
+    const newJob = {
+      // ID is removed, database will generate it
+      status: "pending",
+      csvData: jobData.csvData,
+      attachmentData: jobData.attachmentData,
+      createdBy: jobData.createdBy
+    };
+    const [insertedJob] = await db.insert(massSendJobs).values(newJob).returning();
+    return insertedJob;
+  }
+  /**
+   * Gets pending mass-send jobs for the worker to process.
+   * This is called by your new worker.
+   */
+  async getPendingMassSendJobs(limit = 5) {
+    return db.select().from(massSendJobs).where(eq(massSendJobs.status, "pending")).orderBy(asc(massSendJobs.createdAt)).limit(limit);
+  }
+  /**
+   * Updates the status of a specific mass-send job.
+   * This is called by your new worker.
+   */
+  async updateMassSendJobStatus(jobId, status) {
+    return db.update(massSendJobs).set({
+      status,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).where(eq(massSendJobs.id, jobId));
   }
 };
 var storage = new DatabaseStorage();
@@ -777,12 +818,14 @@ var EmailService = class {
 var emailService = new EmailService();
 
 // server/workers/emailWorker.ts
+import { parse } from "csv-parse/sync";
 var EmailWorker = class {
   isRunning = false;
   processInterval = null;
   PROCESS_INTERVAL = 2e3;
   // 2 seconds
   MAX_CONCURRENT_JOBS = 5;
+  isCycleRunning = false;
   start() {
     if (this.isRunning) {
       console.log("Email worker is already running");
@@ -791,7 +834,7 @@ var EmailWorker = class {
     this.isRunning = true;
     console.log("Starting email worker...");
     this.processInterval = setInterval(() => {
-      this.processEmailQueue();
+      this.runWorkerCycle();
     }, this.PROCESS_INTERVAL);
   }
   stop() {
@@ -806,8 +849,24 @@ var EmailWorker = class {
       this.processInterval = null;
     }
   }
+  async runWorkerCycle() {
+    if (this.isCycleRunning) {
+      return;
+    }
+    this.isCycleRunning = true;
+    try {
+      await Promise.allSettled([
+        this.processEmailQueue(),
+        this.processMassSendQueue()
+        // <-- This is our new function
+      ]);
+    } catch (error) {
+      console.error("Error during worker cycle:", error);
+    } finally {
+      this.isCycleRunning = false;
+    }
+  }
   async processEmailQueue() {
-    if (!this.isRunning) return;
     try {
       const pendingEmails = await storage.getPendingEmails();
       if (pendingEmails.length === 0) {
@@ -853,6 +912,66 @@ var EmailWorker = class {
       console.error(`Email job ${email.id} failed after ${maxAttempts} attempts`);
     } else {
       console.log(`Email job ${email.id} failed, will retry (attempt ${email.attempts + 1}/${maxAttempts})`);
+    }
+  }
+  async processMassSendQueue() {
+    const pendingJobs = await storage.getPendingMassSendJobs(1);
+    if (pendingJobs.length === 0) {
+      return;
+    }
+    const job = pendingJobs[0];
+    try {
+      console.log(`Processing mass-send job ${job.id}.`);
+      await storage.updateMassSendJobStatus(job.id, "processing");
+      const results = parse(job.csvData, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+        delimiter: [",", ";"],
+        // Detects comma or semicolon
+        relax_column_count: true
+      });
+      const attachments = job.attachmentData ? [JSON.parse(job.attachmentData)] : void 0;
+      console.log(`Job ${job.id}: Found ${results.length} rows to process.`);
+      for (const row of results) {
+        const normalizedRow = Object.keys(row).reduce((acc, key) => {
+          acc[key.trim()] = row[key];
+          return acc;
+        }, {});
+        const { name, email, amount_of_courtesies, event_id } = normalizedRow;
+        if (!name || !email || !event_id || !amount_of_courtesies) {
+          console.warn(`Job ${job.id}: Skipping row due to missing data:`, normalizedRow);
+          continue;
+        }
+        const event = await storage.getEvent(event_id);
+        if (event) {
+          const code = `CDPI${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+          const link = await storage.createCourtesyLink({
+            code,
+            eventId: event.id,
+            ticketCount: parseInt(amount_of_courtesies, 10),
+            createdBy: job.createdBy,
+            isActive: true,
+            recipientEmail: email,
+            recipientName: name
+          });
+          await emailService.sendCourtesyMassEmail(
+            email,
+            name,
+            event.title,
+            link.code,
+            event.date,
+            attachments
+          );
+        } else {
+          console.warn(`Job ${job.id}: Event not found for ID ${event_id}`);
+        }
+      }
+      await storage.updateMassSendJobStatus(job.id, "completed");
+      console.log(`Mass-send job ${job.id} completed successfully.`);
+    } catch (error) {
+      console.error(`Error processing mass-send job ${job.id}:`, error);
+      await storage.updateMassSendJobStatus(job.id, "failed");
     }
   }
   async addEmailJob(emailData) {
