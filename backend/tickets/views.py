@@ -34,7 +34,7 @@ class VerifyTicketView(APIView):
             { 
                 "success": True, 
                 "message": "Ingresso verificado com sucesso",
-                "userName": "Participante Confirmado", # alter this when the Pouso Alegre event ends
+                "userName": ticket.name,
                 "eventTitle": ticket.event.title or "Evento"
             },
             status=status.HTTP_201_CREATED)
