@@ -5,7 +5,7 @@ import { log } from "./vite";
 
 const app = express();
 
-app.set('trust proxy', 1);
+app.set('trust proxy', true);
 
 // Increase upload size limits BEFORE other middleware
 app.use(express.json({ limit: '50mb' }));

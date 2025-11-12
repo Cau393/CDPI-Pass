@@ -61,11 +61,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Apply rate limiting to all /api/auth routes
   const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // Limit each IP to 100 requests per windowMs
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: 'Too many requests from this IP, please try again after 15 minutes',
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests from this IP, please try again after 15 minutes',
+  keyGenerator: (req) => {
+    const xForwardedFor = req.headers['x-forwarded-for'];
+
+    // Normalize and guarantee string return
+    if (typeof xForwardedFor === 'string') {
+      return xForwardedFor.split(',')[0].trim();
+    }
+
+    // Fallback: always return a string, even if req.ip is undefined
+    return req.ip || 'unknown-ip';
+    },
   });
 
   app.use('/api/auth', authLimiter);
