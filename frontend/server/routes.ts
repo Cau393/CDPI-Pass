@@ -323,6 +323,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Erro ao reenviar email de verificação" });
     }
   });
+  
+  app.post("/api/admin/generate-reset-link", authenticateToken, async (req: any, res) => {
+  try {
+    // 1. Check if the logged-in user is an admin
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+    }
+
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    // 2. Find the user to reset
+    const userToReset = await storage.getUserByEmail(email);
+    if (!userToReset) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // 3. Manually create the password reset token
+    // This token is identical to the one your /reset-password endpoint expects
+    const token = jwt.sign(
+      { userId: userToReset.id, type: 'password-reset' },
+      JWT_SECRET,
+      { expiresIn: '1h' } // 1 hour expiration is standard
+    );
+
+    // 4. Construct the full URL
+    // Make sure to use your *frontend* domain here
+    const resetUrl = `${req.protocol}://${req.get('host')}/reset-password?token=${token}`;
+
+    // 5. Return the link to the admin
+    res.json({ 
+      message: "Password reset link generated successfully",
+      resetUrl: resetUrl 
+    });
+
+  } catch (error) {
+    console.error("Error generating reset link:", error);
+    res.status(500).json({ message: "Erro interno do servidor" });
+  }
+});
 
   // Events routes
   app.get("/api/events", async (req, res) => {
