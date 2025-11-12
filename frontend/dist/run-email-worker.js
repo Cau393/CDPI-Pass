@@ -822,8 +822,7 @@ import { parse } from "csv-parse/sync";
 var EmailWorker = class {
   isRunning = false;
   processInterval = null;
-  PROCESS_INTERVAL = 2e3;
-  // 2 seconds
+  PROCESS_INTERVAL = 2e4;
   MAX_CONCURRENT_JOBS = 5;
   isCycleRunning = false;
   start() {

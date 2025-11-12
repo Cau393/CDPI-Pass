@@ -1,5 +1,5 @@
 import axios from "axios";
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
@@ -60,7 +60,7 @@ const authenticateToken = async (req: any, res: any, next: any) => {
 export async function registerRoutes(app: Express): Promise<Server> {
 
   // Apply rate limiting to all /api/auth routes
-  const authLimiter = rateLimit({
+ const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   standardHeaders: true,
@@ -69,14 +69,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   keyGenerator: (req) => {
     const xForwardedFor = req.headers['x-forwarded-for'];
 
-    // Normalize and guarantee string return
     if (typeof xForwardedFor === 'string') {
-      return xForwardedFor.split(',')[0].trim();
+      const clientIp = xForwardedFor.split(',')[0].trim();
+      return ipKeyGenerator(clientIp);
     }
 
-    // Fallback: always return a string, even if req.ip is undefined
-    return req.ip || 'unknown-ip';
-    },
+    // Normalize IPv6 and always return a string
+    return ipKeyGenerator(req.ip || 'unknown-ip');
+  },
   });
 
   app.use('/api/auth', authLimiter);
