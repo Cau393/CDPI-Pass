@@ -34,10 +34,7 @@ export default function LoginPage() {
       localStorage.setItem("token", data.token);
       queryClient.invalidateQueries({ queryKey: ["/api/users/auth/me/"] });
 
-      console.log("Login Success Data:", JSON.stringify(data, null, 2));
-
       if (data.user.is_email_verified) {
-        console.log("Login Success Data:", data);
         toast({ title: "Login realizado com sucesso!" });
         setLocation("/");
       } else {

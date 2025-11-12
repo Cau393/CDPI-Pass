@@ -67,7 +67,6 @@ export default function CourtesyAdminPage() {
   queryFn: async () => {
     const response = await apiRequest("GET", `/api/orders/courtesy/links/?page=${currentPage}`);
     const data: PaginatedLinksResponse = await response.json();
-    console.log(data);
     return data;
     },
     enabled: isAuthenticated,
@@ -81,7 +80,6 @@ export default function CourtesyAdminPage() {
   const createLinkMutation = useMutation({
     // FIX: Update the mutation function signature to use snake_case
     mutationFn: async (data: { eventId: string; ticket_count: number; override_price: number | null }) => {
-      console.log(data);
       return await apiRequest("POST", "/api/orders/courtesy/links/", data);
     },
     onSuccess: () => {
@@ -219,8 +217,6 @@ export default function CourtesyAdminPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {console.log("Links Loading:", linksLoading)}
-          {console.log("Paginated Links Data:", paginatedLinksData)}
           {linksLoading ? (
             <div className="text-center py-8">
               <p className="text-gray-500">Carregando links...</p>

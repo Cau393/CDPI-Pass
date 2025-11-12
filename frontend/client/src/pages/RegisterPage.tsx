@@ -82,7 +82,6 @@ export default function RegisterPage() {
       birth_date: formattedBirthDate,
       password_confirm: passwordConfirm,
     };
-    console.log("DEBUG formatted registerData:", JSON.stringify(registerData, null, 2));
 
       // Send birthDate as string in dd/mm/yyyy format - server will convert it
       const response = await apiRequest("POST", "/api/users/auth/register/", registerData);
