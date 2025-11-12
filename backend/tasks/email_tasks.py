@@ -1,31 +1,40 @@
+from os import getenv
+from dotenv import load_dotenv
+import logging
+from datetime import datetime, timedelta
+
 from celery import shared_task
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, From, To
-from datetime import datetime, timedelta
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
-
-import logging
-logger = logging.getLogger(__name__)
+from sendgrid.helpers.mail import (
+    Attachment,
+    Disposition,
+    FileContent,
+    FileName,
+    FileType,
+    From,
+    Mail,
+    To,
+)
 
 from orders.models import Order
 
-from os import getenv
-from dotenv import load_dotenv
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
 
 @shared_task
 def send_verification_email(email: str, verification_code: str):
-    sg = SendGridAPIClient(getenv('SENDGRID_API_KEY'))
-    from_email = From(getenv('DEFAULT_FROM_EMAIL'), 'CDPI Pass')
-    subject = 'Seu Código de Verificação - CDPI Pass'
-    plain_text_content = f'Seu código de verificação é: {verification_code}'
-    html_content = f'''
+    sg = SendGridAPIClient(getenv("SENDGRID_API_KEY"))
+    from_email = From(getenv("DEFAULT_FROM_EMAIL"), "CDPI Pass")
+    subject = "Seu Código de Verificação - CDPI Pass"
+    plain_text_content = f"Seu código de verificação é: {verification_code}"
+    html_content = f"""
                         <h1>Confirme seu email - CDPI Pass</h1>
                         <p>Seu código de verificação é:</p>
                         <h2><b>{verification_code}</b></h2>
                         <p>Este código expira em 15 minutos.</p>
-                    '''
+                    """
     to_email = To(email)
     mail = Mail(from_email, to_email, subject, plain_text_content, html_content)
     response = sg.send(mail)
@@ -38,40 +47,42 @@ def send_password_reset_email(email: str):
     Send a password reset email to the user.
     """
     from helper_functions import generate_reset_token
-    
+
     reset_token = generate_reset_token(email)
 
-    sg = SendGridAPIClient(getenv('SENDGRID_API_KEY'))
+    sg = SendGridAPIClient(getenv("SENDGRID_API_KEY"))
     reset_link = f"{getenv('BASE_URL')}/reset-password?token={reset_token}"
-    from_email = From(getenv('DEFAULT_FROM_EMAIL'), 'CDPI Pass')
-    subject = 'Redefinição de Senha - CDPI Pass'
-    plain_text_content = f'Clique no link abaixo para redefinir sua senha: {reset_link}'
-    html_content = f'''
+    from_email = From(getenv("DEFAULT_FROM_EMAIL"), "CDPI Pass")
+    subject = "Redefinição de Senha - CDPI Pass"
+    plain_text_content = f"Clique no link abaixo para redefinir sua senha: {reset_link}"
+    html_content = f"""
                         <h1>Redefinição de Senha - CDPI Pass</h1>
                         <p>Clique no link abaixo para redefinir sua senha:</p>
                         <a href="{reset_link}">{reset_link}</a>
                         <p>Este link expira em 15 minutos.</p>
-                    '''
+                    """
     to_email = To(email)
     mail = Mail(from_email, to_email, subject, plain_text_content, html_content)
     response = sg.send(mail)
     return response.status_code
 
-@shared_task
+
+@shared_task(bind=True, max_retries=3)
 def send_ticket_email(recipient_email, order_id):
     """
     Sends ticket email(s) for a given order ID after payment confirmation.
     Fetches required data efficiently from the database.
     Sends one email per ticket associated with the order.
     """
-    logger.info(f"Attempting to send ticket email(s) for order_id: {order_id} to {recipient_email}")
+    logger.info(
+        f"Attempting to send ticket email(s) for order_id: {order_id} to {recipient_email}"
+    )
     try:
-        order = Order.objects.select_related(
-                    'user', 
-                    'courtesy_link_id__event'
-                ).prefetch_related(
-                    'tickets__event'
-                ).get(id=order_id)
+        order = (
+            Order.objects.select_related("user", "courtesy_link_id__event")
+            .prefetch_related("tickets__event")
+            .get(id=order_id)
+        )
 
     except Order.DoesNotExist:
         logger.error(f"Order with ID {order_id} not found for sending ticket email.")
@@ -100,7 +111,9 @@ def send_ticket_email(recipient_email, order_id):
             # Ensure ticket has necessary data
             qr_code_url = ticket.qr_code_s3_url
             if not qr_code_url:
-                 logger.warning(f"QR code S3 URL missing for ticket {ticket.id} in order {order.id}. Email content might be incomplete.")
+                logger.warning(
+                    f"QR code S3 URL missing for ticket {ticket.id} in order {order.id}. Email content might be incomplete."
+                )
 
             html_content = f"""
             <!DOCTYPE html>
@@ -182,7 +195,7 @@ def send_ticket_email(recipient_email, order_id):
 
             # Build SendGrid message
             message = Mail(
-                from_email=From(getenv('DEFAULT_FROM_EMAIL'), 'CDPI Pass'),
+                from_email=From(getenv("DEFAULT_FROM_EMAIL"), "CDPI Pass"),
                 to_emails=recipient_email,
                 subject=f"Seu ingresso para {ticket_event.title} - CDPI Pass (Ingresso {ticket.id})",
                 html_content=html_content,
@@ -190,24 +203,40 @@ def send_ticket_email(recipient_email, order_id):
             )
 
             # Send via SendGrid
-            sg = SendGridAPIClient(getenv('SENDGRID_API_KEY'))
+            sg = SendGridAPIClient(getenv("SENDGRID_API_KEY"))
             response = sg.send(message)
-            logger.info(f"SendGrid response for ticket {ticket.id} (Order {order.id}) to {recipient_email}: Status {response.status_code}")
+            logger.info(
+                f"SendGrid response for ticket {ticket.id} (Order {order.id}) to {recipient_email}: Status {response.status_code}"
+            )
             email_sent_count += 1
 
         except Exception as e:
-            logger.error(f"🚨 Error sending specific ticket email for ticket {ticket.id} (Order {order.id}) to {recipient_email}: {e}", exc_info=True)
-            raise self.retry(exc=e, countdown=60)
+            logger.error(
+                f"🚨 Error sending specific ticket email for ticket {ticket.id} (Order {order.id}) to {recipient_email}: {e}",
+                exc_info=True,
+            )
+            raise self.retry(exc=e, countdown=60, max_retries=3)
 
     if email_sent_count == len(tickets):
-        logger.info(f"✅ Successfully sent all {email_sent_count} ticket email(s) for order {order_id} to {recipient_email}")
+        logger.info(
+            f"✅ Successfully sent all {email_sent_count} ticket email(s) for order {order_id} to {recipient_email}"
+        )
         return {"status": "success", "sent_count": email_sent_count}
     else:
-         logger.warning(f"⚠️ Sent {email_sent_count} out of {len(tickets)} ticket email(s) for order {order_id} to {recipient_email}")
-         return {"status": "partial_failure", "sent_count": email_sent_count, "total_tickets": len(tickets)}
+        logger.warning(
+            f"⚠️ Sent {email_sent_count} out of {len(tickets)} ticket email(s) for order {order_id} to {recipient_email}"
+        )
+        return {
+            "status": "partial_failure",
+            "sent_count": email_sent_count,
+            "total_tickets": len(tickets),
+        }
+
 
 @shared_task
-def send_mass_email(email, name, event_name, courtesy_code, event_date, attachments=None):
+def send_mass_email(
+    email, name, event_name, courtesy_code, event_date, attachments=None
+):
     """Asynchronous task to send courtesy email using SendGrid."""
     try:
         base_url = getenv("BASE_URL", "https://cdpipharma.com.br")
@@ -269,9 +298,7 @@ def send_mass_email(email, name, event_name, courtesy_code, event_date, attachme
                 </p>
                 <p>Para resgatar seu ingresso, clique no botão abaixo:</p>
               </div>
-              
               <a href="{redeem_url}" class="cta-button">Resgatar Ingresso Agora</a>
-              
               <div class="important-notice">
               <p>Ou se preferir, você pode resgatar a cortesia por meio do nosso site com o código:    <strong>{courtesy_code}</strong></p>
                 <h4>⚠️ Instruções Importantes:</h4>
@@ -306,7 +333,7 @@ def send_mass_email(email, name, event_name, courtesy_code, event_date, attachme
 
         # Create email
         message = Mail(
-            from_email=From(getenv("DEFAULT_FROM_EMAIL"), 'CDPI Pass'),
+            from_email=From(getenv("DEFAULT_FROM_EMAIL"), "CDPI Pass"),
             to_emails=To(email),
             subject=subject,
             html_content=html_content,

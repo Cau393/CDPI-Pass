@@ -1,13 +1,16 @@
 import logging
-import httpx
-from os import getenv
-from dotenv import load_dotenv
 from datetime import date
+from os import getenv
+
+import httpx
+from dotenv import load_dotenv
+
 from tickets.models import Ticket
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
 
 class AsaasPaymentTask:
     """
@@ -20,12 +23,16 @@ class AsaasPaymentTask:
         self.base_url = getenv("ASAAS_API_URL", "https://api.asaas.com/v3")
 
         if not self.api_key:
-            logger.error("ASAAS_API_KEY environment variable is required for payment processing")
+            logger.error(
+                "ASAAS_API_KEY environment variable is required for payment processing"
+            )
 
     # ------------------------
     # Internal request helper
     # ------------------------
-    def _make_request(self, endpoint: str, method: str = "GET", data: dict | None = None):
+    def _make_request(
+        self, endpoint: str, method: str = "GET", data: dict | None = None
+    ):
         url = f"{self.base_url}{endpoint}"
         headers = {
             "Content-Type": "application/json",
@@ -38,7 +45,9 @@ class AsaasPaymentTask:
                 response.raise_for_status()
                 return response.json()
         except httpx.HTTPStatusError as e:
-            logger.error(f"Asaas API error: {e.response.status_code} - {e.response.text}")
+            logger.error(
+                f"Asaas API error: {e.response.status_code} - {e.response.text}"
+            )
             raise
         except Exception as e:
             logger.exception(f"Failed Asaas API request to {url}: {e}")
@@ -62,7 +71,7 @@ class AsaasPaymentTask:
             # Create if not found
             return self._make_request("/customers", "POST", customer_data)
         except Exception as e:
-            logger.exception("Error creating/finding Asaas customer")
+            logger.exception(f"Error creating/finding Asaas customer: {str(e)}")
             raise
 
     # ------------------------
@@ -101,7 +110,9 @@ class AsaasPaymentTask:
                 "externalReference": str(order.id),
             }
 
-            logger.info(f"Creating Asaas payment for order {order.id} - {payment_payload}")
+            logger.info(
+                f"Creating Asaas payment for order {order.id} - {payment_payload}"
+            )
 
             payment = self._make_request("/payments", "POST", payment_payload)
 
@@ -110,7 +121,9 @@ class AsaasPaymentTask:
             # ---------------------------------------------------
             if payment_payload["billingType"] == "PIX":
                 try:
-                    pix_info = self._make_request(f"/payments/{payment['id']}/pixQrCode")
+                    pix_info = self._make_request(
+                        f"/payments/{payment['id']}/pixQrCode"
+                    )
                     payment["pixTransaction"] = {
                         "qrCode": {
                             "encodedImage": pix_info.get("encodedImage"),
@@ -119,7 +132,9 @@ class AsaasPaymentTask:
                         "expirationDate": pix_info.get("expirationDate"),
                     }
                 except Exception as e:
-                    logger.warning(f"Failed to retrieve PIX QR code for {payment['id']}: {e}")
+                    logger.warning(
+                        f"Failed to retrieve PIX QR code for {payment['id']}: {e}"
+                    )
 
             # ---------------------------------------------------
             # 🔹 For BOLETO payments: the link is already in the response
@@ -134,7 +149,8 @@ class AsaasPaymentTask:
                 # Optionally, you can generate a payment link
                 try:
                     payment_link_data = self._make_request(
-                        "/paymentLinks", "POST",
+                        "/paymentLinks",
+                        "POST",
                         {
                             "name": f"Order {order.id}",
                             "billingType": "CREDIT_CARD",
@@ -143,16 +159,18 @@ class AsaasPaymentTask:
                             "dueDateLimitDays": 1,
                             "description": f"Payment for order {order.id}",
                             "endDate": due_date,
-                        }
+                        },
                     )
                     payment["paymentLink"] = payment_link_data.get("url")
                 except Exception as e:
-                    logger.warning(f"Failed to create credit card link for {order.id}: {e}")
+                    logger.warning(
+                        f"Failed to create credit card link for {order.id}: {e}"
+                    )
 
             return payment
 
         except Exception as e:
-            logger.exception("Error creating Asaas payment")
+            logger.exception(f"Error creating Asaas payment: {str(e)}")
             raise
 
     # ------------------------
@@ -163,7 +181,7 @@ class AsaasPaymentTask:
         try:
             return self._make_request(f"/payments/{payment_id}")
         except Exception as e:
-            logger.exception(f"Error fetching Asaas payment {payment_id}")
+            logger.exception(f"Error fetching Asaas payment {payment_id}: {str(e)}")
             raise
 
     # ------------------------
@@ -174,7 +192,7 @@ class AsaasPaymentTask:
         try:
             return self._make_request(f"/payments/{payment_id}", method="DELETE")
         except Exception as e:
-            logger.exception(f"Error cancelling Asaas payment {payment_id}")
+            logger.exception(f"Error cancelling Asaas payment {payment_id}: {str(e)}")
             raise
 
     # ------------------------

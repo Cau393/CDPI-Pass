@@ -1,10 +1,12 @@
+import logging
+
 from django.core.management.base import BaseCommand
-from .models import Order
-from .asaas_payment_task import AsaasPaymentTask
 from django.db import transaction
 from utils_apps import fulfill_order
 
-import logging
+from .asaas_payment_task import AsaasPaymentTask
+from .models import Order
+
 logger = logging.getLogger(__name__)
 
 
@@ -13,7 +15,9 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         service = AsaasPaymentTask()
-        pending_orders = Order.objects.filter(status="pending", asaas_payment_id__isnull=False)
+        pending_orders = Order.objects.filter(
+            status="pending", asaas_payment_id__isnull=False
+        )
 
         logger.info(f"Checking {pending_orders.count()} pending Asaas payments...")
 

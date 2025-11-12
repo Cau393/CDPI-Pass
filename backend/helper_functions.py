@@ -10,11 +10,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 def generate_verification_code():
-        """
-        Generate a 6-digit verification code.
-        """
-        return str(randint(100000, 999999))
-    
+    """
+    Generate a 6-digit verification code.
+    """
+    return str(randint(100000, 999999))
+
 def get_code_expiration():
     """
     Get the expiration time for the verification code.
@@ -52,18 +52,18 @@ def generate_courtesy_code():
     return f"CDPI{random_part}"
 
 def detect_delimiter(file_obj):
-        """Detect the most likely delimiter in the CSV."""
-        sample = file_obj.read(1024).decode("utf-8").split("\n")[0]
-        comma_count = sample.count(",")
-        semicolon_count = sample.count(";")
-        tab_count = sample.count("\t")
+    """Detect the most likely delimiter in the CSV."""
+    sample = file_obj.read(1024).decode("utf-8").split("\n")[0]
+    comma_count = sample.count(",")
+    semicolon_count = sample.count(";")
+    tab_count = sample.count("\t")
 
-        if semicolon_count > comma_count and semicolon_count > tab_count:
-            return ";"
-        elif tab_count > comma_count and tab_count > semicolon_count:
-            return "\t"
-        else:
-            return ","
+    if semicolon_count > comma_count and semicolon_count > tab_count:
+        return ";"
+    elif tab_count > comma_count and tab_count > semicolon_count:
+        return "\t"
+    else:
+        return ","
 
 def fulfill_order(order):
     """
@@ -73,19 +73,19 @@ def fulfill_order(order):
     from tasks.email_tasks import send_ticket_email
     from tickets.models import Ticket
     from tickets.models import CourtesyAttendee
-    
+
     try:
         # Get all tickets for this order
         tickets = Ticket.objects.filter(order=order).select_related('event', 'courtesy_link_id')
-        
+
         if not tickets.exists():
             logger.warning(f"No tickets found for order {order.id}")
             return
-        
+
         # Track events to update attendee counts (handle multiple events)
         events_to_update = {}
         failed_qr_count = 0
-        
+
         # Update order status
         order.status = "paid"
         order.save(update_fields=["status"])
@@ -96,7 +96,7 @@ def fulfill_order(order):
             if not qr_url:
                 logger.error(f"Failed to process QR for ticket {ticket.id}")
                 failed_qr_count += 1
-            
+
             # Track event for attendee count update
             event = ticket.event
             if event and hasattr(event, "current_attendees"):
@@ -108,20 +108,19 @@ def fulfill_order(order):
                 email = attendee.email
             else:
                 email = order.user.email
-            
+
             send_ticket_email.delay(email, str(order.id))
-        
-        
+
         # Update attendee counts for all events
         for event in events_to_update.values():
             event.current_attendees = (event.current_attendees or 0) + order.quantity
             event.save(update_fields=["current_attendees"])
-        
+
         if failed_qr_count > 0:
             logger.warning(f"⚠️ Order {order.id} fulfilled with {failed_qr_count} QR code failures")
         else:
             logger.info(f"✅ Order {order.id} fulfilled successfully")
-        
+
     except Exception as e:
         logger.error(f"Error fulfilling order {order.id}: {e}", exc_info=True)
         raise
@@ -130,7 +129,7 @@ def process_ticket_qr(ticket):
     """
     Generate QR code and upload to S3 for a ticket.
     Updates ticket.qr_code_s3_url.
-    
+
     Returns: S3 URL or None
     """
     from tasks.qr_code_task import generate_ticket_qr_code
@@ -139,20 +138,20 @@ def process_ticket_qr(ticket):
     try:
         # 1. Generate QR code
         qr_bytes = generate_ticket_qr_code(ticket)
-        
+
         # 2. Upload to S3
         filename = f"{ticket.id}-{ticket.event.id}"
         s3_url = upload_qr_to_s3(qr_bytes, filename)
-        
+
         # 3. Update ticket
         if s3_url:
             ticket.qr_code_s3_url = s3_url
             ticket.save(update_fields=["qr_code_s3_url"])
             return s3_url
-        
+
         logger.warning(f"Failed to upload QR code for ticket {ticket.id}")
         return None
-        
+
     except Exception as e:
         logger.error(f"Error processing QR for ticket {ticket.id}: {e}")
         return None

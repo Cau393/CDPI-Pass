@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 
+
 class PaymentTask(ABC):
     @abstractmethod
     def create_payment(self, order):

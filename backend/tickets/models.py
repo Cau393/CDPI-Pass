@@ -1,42 +1,59 @@
 from uuid import uuid4
+
 from django.db import models
-from events.models import Event
 from django.utils import timezone
 
+from events.models import Event
+
+
 class Ticket(models.Model):
-    id = models.UUIDField(
-        primary_key=True,
-        default=uuid4,
-        editable=False
-    )
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     name = models.CharField(max_length=255)
     cpf = models.CharField(max_length=14)
-    order = models.ForeignKey('orders.Order', related_name='tickets', on_delete=models.CASCADE, db_column='order_id')
-    event = models.ForeignKey(Event, on_delete=models.CASCADE, db_column='event_id')
-    type_of_ticket = models.CharField(max_length=20, choices=[('first batch', 'First Batch'), ('second batch', 'Second Batch'), ('third batch', 'Third Batch'), ('coupon', 'Coupon'), ('courtesy', 'Courtesy')])
+    order = models.ForeignKey(
+        "orders.Order",
+        related_name="tickets",
+        on_delete=models.CASCADE,
+        db_column="order_id",
+    )
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, db_column="event_id")
+    type_of_ticket = models.CharField(
+        max_length=20,
+        choices=[
+            ("first batch", "First Batch"),
+            ("second batch", "Second Batch"),
+            ("third batch", "Third Batch"),
+            ("coupon", "Coupon"),
+            ("courtesy", "Courtesy"),
+        ],
+    )
     qr_code_data = models.TextField()
     qr_code_s3_url = models.CharField(max_length=500, blank=True)
     is_used = models.BooleanField(default=False)
     used_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    courtesy_link_id = models.ForeignKey('orders.CourtesyLink', on_delete=models.SET_NULL, null=True, blank=True, db_column='courtesy_link_id')
-    
+    courtesy_link_id = models.ForeignKey(
+        "orders.CourtesyLink",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="courtesy_link_id",
+    )
+
     class Meta:
-        db_table = 'tickets'
-    
+        db_table = "tickets"
+
     def __str__(self):
         return f"Ticket {self.id} - {self.event.title}"
+
 
 # Preference for not having this table later in the database
 class CourtesyAttendee(models.Model):
     """
     Represents an attendee registered as a courtesy guest for an event.
     """
-    id = models.UUIDField(
-        primary_key=True,
-        default=uuid4,
-        editable=False
-    )
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
 
     name = models.CharField(max_length=255)
     email = models.EmailField(max_length=255)
@@ -47,17 +64,24 @@ class CourtesyAttendee(models.Model):
     partner_company = models.CharField(max_length=255, blank=True, null=True)
     occupation = models.CharField(max_length=255, blank=True, null=True)
     event_title = models.CharField(max_length=255, blank=True, null=True)
-    order = models.ForeignKey('orders.Order', related_name='courtesy_attendees', on_delete=models.CASCADE, db_column='order_id')
-    courtesy_link_id = models.ForeignKey('orders.CourtesyLink', on_delete=models.CASCADE, db_column='courtesy_link_id')
+    order = models.ForeignKey(
+        "orders.Order",
+        related_name="courtesy_attendees",
+        on_delete=models.CASCADE,
+        db_column="order_id",
+    )
+    courtesy_link_id = models.ForeignKey(
+        "orders.CourtesyLink", on_delete=models.CASCADE, db_column="courtesy_link_id"
+    )
 
     created_at = models.DateTimeField(default=timezone.now, editable=False)
     updated_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
-        db_table = 'courtesy_attendees'
-        verbose_name = 'Courtesy Attendee'
-        verbose_name_plural = 'Courtesy Attendees'
-        ordering = ['-created_at']
+        db_table = "courtesy_attendees"
+        verbose_name = "Courtesy Attendee"
+        verbose_name_plural = "Courtesy Attendees"
+        ordering = ["-created_at"]
 
     def __str__(self):
         return f"{self.name} ({self.email})"

@@ -1,8 +1,9 @@
+from os import getenv
+
 import boto3
 from botocore.exceptions import BotoCoreError, NoCredentialsError
-
-from os import getenv
 from dotenv import load_dotenv
+
 load_dotenv()
 
 
@@ -19,7 +20,7 @@ def upload_qr_to_s3(buffer, filename):
         )
         bucket_name = getenv("AWS_S3_BUCKET_NAME")
 
-        file_name_with_ext = f"{filename}.png" 
+        file_name_with_ext = f"{filename}.png"
         key = f"qr-codes/{file_name_with_ext}"
 
         s3.put_object(
@@ -28,7 +29,7 @@ def upload_qr_to_s3(buffer, filename):
             Body=buffer,
             ContentType="image/png",
             # Pass ContentDisposition as a top-level argument
-            ContentDisposition=f'attachment; filename="{file_name_with_ext}"'
+            ContentDisposition=f'attachment; filename="{file_name_with_ext}"',
         )
 
         # Return the URL

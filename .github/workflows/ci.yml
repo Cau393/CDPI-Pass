@@ -1,0 +1,68 @@
+name: CI - Lint and Test
+on:
+  push:
+  pull_request:
+    branches: [main]
+jobs:
+  # First Job: Lint and Test on Backend
+  backend-ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+    
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install -r backend/dev-requirements.txt
+        
+      - name: Lint Backend Code
+        run: |
+          flake8 backend/ --count --show-source --statistics
+          black --check backend/
+          isort --check-only backend/
+        
+      - name: Run Backend Tests
+        run: |
+          cd backend/
+          pytest
+
+  # Second Job: Lint and Test on Frontend
+  frontend-ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+    
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install Dependencies
+        run: |
+          cd frontend/
+          npm install
+      
+      - name: Lint Frontend Code
+        run: |
+          cd frontend/
+          npm run lint
+      
+      - name: Run Frontend Tests
+        run: |
+          cd frontend/
+          npm test
+      
+      - name: Build Frontend
+        run: |
+          cd frontend/
+          npm run build

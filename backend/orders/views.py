@@ -1,27 +1,29 @@
-from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated, AllowAny
-from rest_framework import status, permissions, parsers
-from rest_framework.response import Response
-from rest_framework.pagination import PageNumberPagination
-from django.db import transaction
-
-import io
 import csv
-from uuid import uuid4
-from decimal import Decimal
+import io
+import logging
 from datetime import datetime
+from decimal import Decimal
+from uuid import uuid4
 
-from .models import Order, CourtesyLink
-from tickets.models import Ticket, CourtesyAttendee
+from django.db import transaction
+from rest_framework import parsers, permissions, status
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
 from events.models import Event
-from helper_functions import detect_delimiter, generate_courtesy_code, fulfill_order
-from .serializers import OrderSerializer, CourtesyLinkSerializer
-from tickets.serializers import TicketSerializer
+from helper_functions import detect_delimiter, fulfill_order, generate_courtesy_code
 from tasks.asaas_payment_task import AsaasPaymentTask
 from tasks.email_tasks import send_mass_email
+from tickets.models import CourtesyAttendee, Ticket
+from tickets.serializers import TicketSerializer
 
-import logging
+from .models import CourtesyLink, Order
+from .serializers import CourtesyLinkSerializer, OrderSerializer
+
 logger = logging.getLogger(__name__)
+
 
 class OrderView(APIView):
     permission_classes = [IsAuthenticated]
@@ -36,33 +38,45 @@ class OrderView(APIView):
 
         # 🧩 Validate basic input
         if not event_id or not payment_method:
-            return Response({"error": "eventId and paymentMethod are required"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "eventId and paymentMethod are required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             event = Event.objects.get(id=event_id)
         except Event.DoesNotExist:
-            return Response({"error": "Evento não encontrado"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"error": "Evento não encontrado"}, status=status.HTTP_404_NOT_FOUND
+            )
 
         # 🏷️ Check event capacity
         if hasattr(event, "max_attendees") and event.max_attendees is not None:
             current_tickets = Ticket.objects.filter(event=event).count()
             if current_tickets + quantity > event.max_attendees:
-                return Response({"error": "Evento lotado"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"error": "Evento lotado"}, status=status.HTTP_400_BAD_REQUEST
+                )
 
         # 💰 Base ticket price
         final_price = Decimal(event.price)
-        
+
         # FIX: Initialize courtesy_link as None here
-        courtesy_link = None 
+        courtesy_link = None
 
         # 🎟️ Handle promoCode / Courtesy logic
         if promo_code:
             try:
-                courtesy_link = CourtesyLink.objects.get(code=promo_code, event=event, is_active=True)
+                courtesy_link = CourtesyLink.objects.get(
+                    code=promo_code, event=event, is_active=True
+                )
                 remaining_uses = courtesy_link.ticket_count - courtesy_link.used_count
 
                 if remaining_uses <= 0:
-                    return Response({"error": "Código promocional esgotado"}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {"error": "Código promocional esgotado"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
                 if courtesy_link.override_price:
                     final_price = courtesy_link.override_price
@@ -71,14 +85,17 @@ class OrderView(APIView):
                 courtesy_link.used_count += quantity
                 courtesy_link.save(update_fields=["used_count"])
             except CourtesyLink.DoesNotExist:
-                return Response({"error": "Código promocional inválido"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"error": "Código promocional inválido"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         # ⚙️ Calculate total (ticket price + convenience fee)
         convenience_fee = Decimal("5.00")
         total_amount = (final_price * quantity) + convenience_fee
 
         # FIX: This line was the bug. It has been removed.
-        # courtesy_link = None 
+        # courtesy_link = None
 
         # 💾 Create order and tickets atomically
         try:
@@ -96,8 +113,10 @@ class OrderView(APIView):
                 # 🎫 Create tickets
                 tickets = []
                 for i in range(quantity):
-                    ticket_name = f"{user.get_full_name() or user.username} - Ticket {i+1}"
-                    
+                    ticket_name = (
+                        f"{user.get_full_name() or user.username} - Ticket {i+1}"
+                    )
+
                     ticket = Ticket.objects.create(
                         id=uuid4(),
                         name=ticket_name,
@@ -107,12 +126,14 @@ class OrderView(APIView):
                         type_of_ticket=event.batch,
                         qr_code_data=f"QR-{uuid4()}",
                     )
-                    
+
                     # Add courtesy link if applicable
                     if courtesy_link:
                         ticket.courtesy_link_id = courtesy_link
                         ticket.type_of_ticket = "sale"
-                        ticket.save(update_fields=["courtesy_link_id", "type_of_ticket"])
+                        ticket.save(
+                            update_fields=["courtesy_link_id", "type_of_ticket"]
+                        )
 
                         order.courtesy_link_id = courtesy_link
                         order.save(update_fields=["courtesy_link_id"])
@@ -128,7 +149,10 @@ class OrderView(APIView):
 
         except Exception as e:
             logger.error(f"Error creating order: {e}", exc_info=True)
-            return Response({"error": "Erro interno ao criar pedido"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"error": "Erro interno ao criar pedido"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         # ✅ Success response
         return Response(
@@ -137,7 +161,7 @@ class OrderView(APIView):
                 "order": OrderSerializer(order).data,
                 "payment": payment_data,
             },
-            status=status.HTTP_201_CREATED
+            status=status.HTTP_201_CREATED,
         )
 
     def get(self, request, format=None):
@@ -145,11 +169,12 @@ class OrderView(APIView):
         orders = Order.objects.filter(user=user).order_by("-created_at")
 
         paginator = PageNumberPagination()
-        paginator.page_size_query_param = 'page_size'
+        paginator.page_size_query_param = "page_size"
         paginated_orders = paginator.paginate_queryset(orders, request, view=self)
 
         serializer = OrderSerializer(paginated_orders, many=True)
         return paginator.get_paginated_response(serializer.data)
+
 
 class TicketListView(APIView):
     permission_classes = [IsAuthenticated]
@@ -157,20 +182,23 @@ class TicketListView(APIView):
 
     def get(self, request, format=None):
         user = request.user
-        
+
         # Use select_related to efficiently fetch related order and event
         # in a single query
-        tickets = Ticket.objects.filter(order__user=user) \
-                                .select_related('order', 'event') \
-                                .order_by("-created_at")
+        tickets = (
+            Ticket.objects.filter(order__user=user)
+            .select_related("order", "event")
+            .order_by("-created_at")
+        )
 
         # The rest of the logic works perfectly with the new paginator class
         paginator = self.pagination_class()
         paginated_tickets = paginator.paginate_queryset(tickets, request, view=self)
-        
+
         # Use the new TicketSerializer with nested data
         serializer = TicketSerializer(paginated_tickets, many=True)
         return paginator.get_paginated_response(serializer.data)
+
 
 class CancelOrderView(APIView):
     def delete(self, request, pk, format=None):
@@ -181,10 +209,15 @@ class CancelOrderView(APIView):
         try:
             order = Order.objects.get(id=pk, user=user)
         except Order.DoesNotExist:
-            return Response({"message": "Pedido não encontrado"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"message": "Pedido não encontrado"}, status=status.HTTP_404_NOT_FOUND
+            )
 
         if order.status == "canceled":
-            return Response({"message": "Pedido já foi cancelado"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"message": "Pedido já foi cancelado"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # --- Cancel payment (Asaas)
         payment_task = AsaasPaymentTask()
@@ -194,10 +227,13 @@ class CancelOrderView(APIView):
         order.status = "canceled"
         order.save(update_fields=["status"])
 
-        # --- Delete associated tickets 
+        # --- Delete associated tickets
         Ticket.objects.filter(order=order).delete()
 
-        return Response({"message": "Pedido cancelado com sucesso"}, status=status.HTTP_200_OK)
+        return Response(
+            {"message": "Pedido cancelado com sucesso"}, status=status.HTTP_200_OK
+        )
+
 
 class CheckOrderStatusView(APIView):
     permission_classes = [IsAuthenticated]
@@ -210,9 +246,14 @@ class CheckOrderStatusView(APIView):
         try:
             order = Order.objects.get(id=pk, user=user)
         except Order.DoesNotExist:
-            return Response({"message": "Pedido não encontrado"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"message": "Pedido não encontrado"}, status=status.HTTP_404_NOT_FOUND
+            )
         if not order.asaas_payment_id:
-            return Response({"message": "Pedido não possui um ID de pagamento"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"message": "Pedido não possui um ID de pagamento"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         payment_task = AsaasPaymentTask()
         payment_status = payment_task.get_payment(order.asaas_payment_id)
@@ -233,7 +274,11 @@ class CheckOrderStatusView(APIView):
         }
 
         # Extract status string, handling both dict and string cases
-        status_value = payment_status.get("status") if isinstance(payment_status, dict) else payment_status
+        status_value = (
+            payment_status.get("status")
+            if isinstance(payment_status, dict)
+            else payment_status
+        )
 
         # Convert to uppercase safely
         status_value = str(status_value).upper() if status_value else ""
@@ -241,17 +286,18 @@ class CheckOrderStatusView(APIView):
         # Map to internal status
         internal_status = status_map.get(status_value, "pending")
 
-        if internal_status == 'paid':
+        if internal_status == "paid":
             fulfill_order(order)
 
         return Response(
             {
                 "asaas_status": payment_status,
                 "internal_status": internal_status,
-                "message": f"Status do pedido atualizado para {internal_status}"
+                "message": f"Status do pedido atualizado para {internal_status}",
             },
             status=status.HTTP_200_OK,
         )
+
 
 class CourtesyLinksView(APIView):
     permission_classes = [IsAuthenticated]
@@ -262,29 +308,34 @@ class CourtesyLinksView(APIView):
         """
         user = request.user
         if not user.is_staff:
-            return Response({"message": "Acesso negado"}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"message": "Acesso negado"}, status=status.HTTP_403_FORBIDDEN
+            )
 
-        links_qs = CourtesyLink.objects.filter(created_by=user).order_by('-created_at')
+        links_qs = CourtesyLink.objects.filter(created_by=user).order_by("-created_at")
         paginator = PageNumberPagination()
-        paginator.page_size_query_param = 'page_size'
+        paginator.page_size_query_param = "page_size"
         paginated_links = paginator.paginate_queryset(links_qs, request, view=self)
 
         serializer = CourtesyLinkSerializer(paginated_links, many=True)
 
         return paginator.get_paginated_response(serializer.data)
-    
+
     def post(self, request, format=None):
         """
         Create a new courtesy link.
         """
         user = request.user
         if not user.is_staff:
-            return Response({"message": "Acesso negado"}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"message": "Acesso negado"}, status=status.HTTP_403_FORBIDDEN
+            )
         serializer = CourtesyLinkSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save(created_by=user)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class CourtesyLinksDetailView(APIView):
     permission_classes = [IsAuthenticated]
@@ -296,14 +347,24 @@ class CourtesyLinksDetailView(APIView):
         try:
             link = CourtesyLink.objects.get(code=code)
         except CourtesyLink.DoesNotExist:
-            return Response({"message": "Link de cortesia não encontrado"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"message": "Link de cortesia não encontrado"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         if not link.is_active:
-            return Response({"message": "Link de cortesia inativo"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"message": "Link de cortesia inativo"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if link.used_count >= link.ticket_count:
-            return Response({"message": "Todos os ingressos deste link já foram resgatados"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"message": "Todos os ingressos deste link já foram resgatados"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         serializer = CourtesyLinkSerializer(link)
         return Response(serializer.data)
+
 
 class CourtesyRedeemView(APIView):
     permission_classes = [IsAuthenticated]
@@ -318,12 +379,18 @@ class CourtesyRedeemView(APIView):
 
         # --- Validate input
         if not code:
-            return Response({"message": "Código de cortesia é obrigatório"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"message": "Código de cortesia é obrigatório"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         required_fields = ["name", "email", "cpf", "phone", "birthDate"]
         missing = [f for f in required_fields if f not in data]
         if missing:
-            return Response({"message": f"Campos obrigatórios ausentes: {', '.join(missing)}"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"message": f"Campos obrigatórios ausentes: {', '.join(missing)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             with transaction.atomic():
@@ -331,25 +398,41 @@ class CourtesyRedeemView(APIView):
                 try:
                     link = CourtesyLink.objects.select_related("event").get(code=code)
                 except CourtesyLink.DoesNotExist:
-                    return Response({"message": "Link de cortesia não encontrado"}, status=status.HTTP_404_NOT_FOUND)
+                    return Response(
+                        {"message": "Link de cortesia não encontrado"},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
 
                 if link.override_price:
                     return Response(
-                        {"message": "Este é um código de desconto e deve ser usado na página do evento."},
-                        status=status.HTTP_400_BAD_REQUEST
+                        {
+                            "message": "Este é um código de desconto e deve ser usado na página do evento."
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
                     )
 
                 if not link.is_active:
-                    return Response({"message": "Link de cortesia inativo"}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {"message": "Link de cortesia inativo"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
                 remaining = link.ticket_count - link.used_count
                 if remaining <= 0:
-                    return Response({"message": "Todos os ingressos deste link já foram resgatados"}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {
+                            "message": "Todos os ingressos deste link já foram resgatados"
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
                 # --- Get Event
                 event = link.event
                 if not event:
-                    return Response({"message": "Evento não encontrado"}, status=status.HTTP_404_NOT_FOUND)
+                    return Response(
+                        {"message": "Evento não encontrado"},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
 
                 # --- Check if CPF already used for same event
                 cpf_exists = Ticket.objects.filter(
@@ -357,13 +440,19 @@ class CourtesyRedeemView(APIView):
                     cpf=data["cpf"],
                 ).exists()
                 if cpf_exists:
-                    return Response({"message": "CPF já cadastrado para este evento"}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {"message": "CPF já cadastrado para este evento"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
                 # --- Check event capacity
                 if hasattr(event, "max_attendees") and event.max_attendees is not None:
                     current_tickets = Ticket.objects.filter(event=event).count()
                     if current_tickets >= event.max_attendees:
-                        return Response({"message": "Evento lotado"}, status=status.HTTP_400_BAD_REQUEST)
+                        return Response(
+                            {"message": "Evento lotado"},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
 
                 # --- Create CourtesyAttendee record
                 birth_date = None
@@ -433,29 +522,42 @@ class CourtesyRedeemView(APIView):
 
         except Exception as e:
             logger.error(f"Erro ao resgatar cortesia: {e}", exc_info=True)
-            return Response({"message": "Erro interno ao resgatar cortesia"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"message": "Erro interno ao resgatar cortesia"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
 
 class CourtesyMassSendView(APIView):
     """
     POST /api/courtesy/mass-send/
     Admin-only endpoint to process a CSV and send courtesy emails.
     """
+
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [parsers.MultiPartParser, parsers.FormParser]
 
     def post(self, request, *args, **kwargs):
         if not request.user.is_staff:
-            return Response({"message": "Acesso negado. Somente administradores podem usar este endpoint."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {
+                    "message": "Acesso negado. Somente administradores podem usar este endpoint."
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
         csv_file = request.FILES.get("csvFile")
         attachment_file = request.FILES.get("attachment")
 
         if not csv_file:
-            return Response({"message": "Nenhum arquivo CSV enviado."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"message": "Nenhum arquivo CSV enviado."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             delimiter = detect_delimiter(csv_file)
             csv_file.seek(0)
-            decoded_file = io.TextIOWrapper(csv_file, encoding='utf-8')
+            decoded_file = io.TextIOWrapper(csv_file, encoding="utf-8")
             reader = csv.DictReader(decoded_file, delimiter=delimiter)
             rows = list(reader)
 
@@ -464,11 +566,15 @@ class CourtesyMassSendView(APIView):
             # Prepare optional attachment
             attachment_data = None
             if attachment_file:
-                attachment_data = [{
-                    "filename": attachment_file.name,
-                    "content": attachment_file.read().decode("latin1"),  # base64 handled in task if needed
-                    "type": attachment_file.content_type
-                }]
+                attachment_data = [
+                    {
+                        "filename": attachment_file.name,
+                        "content": attachment_file.read().decode(
+                            "latin1"
+                        ),  # base64 handled in task if needed
+                        "type": attachment_file.content_type,
+                    }
+                ]
 
             rows_processed = 0
             with transaction.atomic():
@@ -480,7 +586,9 @@ class CourtesyMassSendView(APIView):
                     event_id = normalized.get("event_id")
 
                     if not event_id or not email:
-                        print(f"⚠️ Row {i} skipped (missing event_id or email): {normalized}")
+                        print(
+                            f"⚠️ Row {i} skipped (missing event_id or email): {normalized}"
+                        )
                         continue
 
                     try:
@@ -488,7 +596,9 @@ class CourtesyMassSendView(APIView):
                     except Event.DoesNotExist:
                         print(f"❌ Event not found (row {i}, id={event_id})")
                         # Stop everything if one event is wrong
-                        raise Exception(f"Evento com ID {event_id} na linha {i} não foi encontrado.")
+                        raise Exception(
+                            f"Evento com ID {event_id} na linha {i} não foi encontrado."
+                        )
 
                     code = generate_courtesy_code()
 
@@ -507,44 +617,64 @@ class CourtesyMassSendView(APIView):
                         event_name=event.title,
                         courtesy_code=link.code,
                         event_date=event.date.isoformat(),
-                        attachments=attachment_data
+                        attachments=attachment_data,
                     )
                     rows_processed += 1
 
             print(f"✅ Processed {rows_processed} rows.")
-            return Response({"message": "E-mails de cortesia enfileirados para envio."}, status=status.HTTP_200_OK)
+            return Response(
+                {"message": "E-mails de cortesia enfileirados para envio."},
+                status=status.HTTP_200_OK,
+            )
 
         except Exception as e:
             print("🚨 Error processing CSV:", e)
-            return Response({"message": "Erro ao processar o arquivo CSV."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-
+            return Response(
+                {"message": "Erro ao processar o arquivo CSV."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class WebHookView(APIView):
     permission_classes = [AllowAny]
+
     def post(self, request, format=None):
         payment_task = AsaasPaymentTask()
-        
+
         try:
-            token = request.headers.get("access_token") or request.headers.get("Authorization")
+            token = request.headers.get("access_token") or request.headers.get(
+                "Authorization"
+            )
             if not token:
-                return Response({"error": "Authorization token missing"}, status=status.HTTP_401_UNAUTHORIZED)
+                return Response(
+                    {"error": "Authorization token missing"},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
             if not payment_task.validate_webhook_signature(token):
-                return Response({"error": "Invalid webhook signature"}, status=status.HTTP_403_FORBIDDEN)
-            
+                return Response(
+                    {"error": "Invalid webhook signature"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
             payment_data = request.data.get("payment", {})
             external_reference = payment_data.get("externalReference")
             if not external_reference:
-                return Response({"error": "External reference missing"}, status=status.HTTP_400_BAD_REQUEST)
-            
+                return Response(
+                    {"error": "External reference missing"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             try:
                 order = Order.objects.get(id=external_reference)
                 if order.status == "paid":
-                    return Response({"message": "Order already paid"}, status=status.HTTP_200_OK)
+                    return Response(
+                        {"message": "Order already paid"}, status=status.HTTP_200_OK
+                    )
             except Order.DoesNotExist:
-                return Response({"error": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
-            
+                return Response(
+                    {"error": "Order not found"}, status=status.HTTP_404_NOT_FOUND
+                )
+
             payment_status = payment_data.get("status")
             if payment_status in ["CONFIRMED", "RECEIVED"]:
                 fulfill_order(order)
@@ -554,8 +684,13 @@ class WebHookView(APIView):
                     order.status = "canceled"
                     order.event.current_attendees -= 1
                     order.save()
-            
-            return Response({"status": "Webhook processed successfully"}, status=status.HTTP_200_OK)
+
+            return Response(
+                {"status": "Webhook processed successfully"}, status=status.HTTP_200_OK
+            )
         except Exception as e:
             logger.error(f"Error processing webhook: {e}")
-            return Response({"error": "Internal server error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"error": "Internal server error"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
@@ -30,14 +31,20 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // String shorthand for simple cases: http://localhost:5173/api -> http://localhost:8000/api
-      '/api': {
-        target: 'http://127.0.0.1:8000', // <-- YOUR DJANGO SERVER ADDRESS
-        changeOrigin: true, // Needed for virtual hosted sites
-        secure: false,      // Set to false if Django is running on HTTP, true for HTTPS
-        // Optional: Rewrite path if needed, but usually not necessary if Django URLs start with /api/
-        // rewrite: (path) => path.replace(/^\/api/, '/api')
-      }
-    }
+      "/api": {
+        target: "http://backend:8000",
+        changeOrigin: true,
+        secure: false,
+      },
+    },
+  },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: "./vitest.setup.ts",
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json", "html"],
+    },
   },
 });

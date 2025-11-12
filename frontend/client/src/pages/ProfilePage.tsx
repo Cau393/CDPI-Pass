@@ -98,6 +98,7 @@ export default function ProfilePage() {
       confirmPassword: "",
     },
   });
+  
 
   const updateProfileMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -600,10 +601,6 @@ const handleCancelOrder = (orderId: string) => {
                         <Input
                           id="name"
                           {...profileForm.register("name")}
-                          onChange={(e) => {
-                            profileForm.register("name").onChange(e);
-                            checkSensitiveFieldChanges();
-                          }}
                           data-testid="input-profile-name"
                         />
                       </div>
@@ -626,10 +623,6 @@ const handleCancelOrder = (orderId: string) => {
                         <Input
                           id="email"
                           {...profileForm.register("email")}
-                          onChange={(e) => {
-                            profileForm.register("email").onChange(e);
-                            checkSensitiveFieldChanges();
-                          }}
                           data-testid="input-profile-email"
                         />
                       </div>
@@ -638,14 +631,29 @@ const handleCancelOrder = (orderId: string) => {
                           Telefone
                         </Label>
                         <Input
-                          id="phone"
-                          {...profileForm.register("phone")}
-                          onChange={(e) => {
-                            profileForm.register("phone").onChange(e);
-                            checkSensitiveFieldChanges();
-                          }}
-                          data-testid="input-profile-phone"
-                        />
+                        id="phone"
+                        {...profileForm.register("phone", {
+                          pattern: {
+                            value: /^\(\d{2}\)\s\d{5}-\d{4}$/,
+                            message: "Formato inválido. Use (99) 99999-9999",
+                          },
+                          onChange: (e) => {
+                            let value = e.target.value.replace(/\D/g, ""); // remove all non-digits
+                            if (value.length > 11) value = value.slice(0, 11);
+                            if (value.length > 6) {
+                              e.target.value = `(${value.slice(0, 2)}) ${value.slice(2, 7)}-${value.slice(7)}`;
+                            } else if (value.length > 2) {
+                              e.target.value = `(${value.slice(0, 2)}) ${value.slice(2)}`;
+                            } else {
+                              e.target.value = value;
+                            }
+                            profileForm.setValue("phone", e.target.value);
+                          },
+                        })}
+                        placeholder="(99) 99999-9999"
+                        maxLength={15}
+                        data-testid="input-profile-phone"
+                      />
                       </div>
                     </div>
                     <div>

@@ -1,7 +1,7 @@
 import io
+
 import qrcode
 from celery import shared_task
-from tickets.models import Ticket
 
 
 @shared_task
@@ -29,4 +29,3 @@ def generate_ticket_qr_code(ticket):
 
     except Exception as e:
         print(f"🚨 Error processing ticket #{ticket.id}: {e}")
-
