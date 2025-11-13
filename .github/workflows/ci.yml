@@ -8,6 +8,36 @@ jobs:
   backend-ci:
     runs-on: ubuntu-latest
 
+    env:
+      # ---- DEVELOPING AND TESTING SETTINGS ----
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      # Django Config
+      DEBUG: ${{ secrets.DEBUG }}
+      SECRET_KEY: ${{ secrets.SECRET_KEY }}
+
+      # Email (SendGrid)
+      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+      DEFAULT_FROM_EMAIL: ${{ secrets.DEFAULT_FROM_EMAIL }}
+
+      # Celery Configuration
+      CELERY_BROKER_URL: ${{ secrets.CELERY_BROKER_URL }}
+      CELERY_RESULT_BACKEND: ${{ secrets.CELERY_RESULT_BACKEND }}
+
+      # BaseURL
+      BASE_URL: ${{ secrets.BASE_URL }}
+
+      # AWS S3 Configuration
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      AWS_S3_BUCKET_NAME: ${{ secrets.AWS_S3_BUCKET_NAME }}
+
+      # --- Payment Gateway (Asaas) ---
+      ASAAS_API_KEY: ${{ secrets.ASAAS_API_KEY }}
+      ASAAS_API_URL: ${{ secrets.ASAAS_API_URL }}
+      ASAAS_WEBHOOK_TOKEN: ${{ secrets.ASAAS_WEBHOOK_TOKEN }}
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -19,9 +49,8 @@ jobs:
       
       - name: Install Dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
-          pip install -r backend/dev-requirements.txt
+          pip install -r --no-cache-dir backend/requirements.txt
+          pip install -r --no-cache-dir backend/dev-requirements.txt
         
       - name: Lint Backend Code
         run: |
