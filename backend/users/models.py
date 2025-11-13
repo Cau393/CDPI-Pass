@@ -52,8 +52,8 @@ class User(AbstractUser):
     Whether the user's email is verified.
     """
 
-    # Email verification (6 digits code)
-    email_verification_code = models.CharField(max_length=6, blank=True)
+    # Email verification (6 digits code hashed)
+    email_verification_code = models.CharField(max_length=128, blank=True)
     email_verification_code_expires_at = models.DateTimeField(null=True, blank=True)
 
     USERNAME_FIELD = "email"
