@@ -5,7 +5,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 from django.utils import timezone
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from events.models import Event
 from orders.models import CourtesyLink, Order

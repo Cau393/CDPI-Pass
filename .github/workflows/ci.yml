@@ -51,6 +51,7 @@ jobs:
           DATABASE_URL: postgresql://pytest:pytest@localhost:5432/pytest
           SECRET_KEY: "test-secret-key"
           CELERY_BROKER_URL: "redis://localhost:6379/0"
+          ASAAS_API_KEY: ${{ secrets.ASAAS_API_KEY }}
         run: |
           python backend/manage.py makemigrations
           python backend/manage.py makemigrations users
@@ -58,7 +59,7 @@ jobs:
           python backend/manage.py makemigrations orders
           python backend/manage.py makemigrations events
           python backend/manage.py migrate --noinput
-          pytest backend/
+          pytest backend/ --reuse-db
 
   frontend-ci:
     runs-on: ubuntu-latest
