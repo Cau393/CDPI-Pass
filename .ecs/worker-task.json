@@ -1,0 +1,52 @@
+{
+  "family": "cdpi-pass-worker",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::866605741038:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::866605741038:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "worker",
+      "image": "PLACEHOLDER_IMAGE",
+      "essential": true,
+      "command": [
+        "celery",
+        "-A",
+        "backend",
+        "worker",
+        "-l",
+        "info",
+        "--concurrency",
+        "2"
+      ],
+      "environmentFiles": [
+        {
+          "value": "arn:aws:s3:::env-cdpi-pass/.env",
+          "type": "s3"
+        }
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "celery -A backend inspect ping -d celery@$HOSTNAME || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/cdpi-pass-worker",
+          "awslogs-region": "sa-east-1",
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group": "true"
+        }
+      },
+      "stopTimeout": 120
+    }
+  ]
+}

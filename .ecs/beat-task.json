@@ -1,0 +1,42 @@
+{
+  "family": "cdpi-pass-beat",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::866605741038:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::866605741038:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "beat",
+      "image": "PLACEHOLDER_IMAGE",
+      "essential": true,
+      "command": [
+        "celery",
+        "-A",
+        "backend",
+        "beat",
+        "-l",
+        "info",
+        "--scheduler",
+        "django_celery_beat.schedulers:DatabaseScheduler"
+      ],
+      "environmentFiles": [
+        {
+          "value": "arn:aws:s3:::env-cdpi-pass/.env",
+          "type": "s3"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/cdpi-pass-beat",
+          "awslogs-region": "sa-east-1",
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group": "true"
+        }
+      },
+      "stopTimeout": 30
+    }
+  ]
+}

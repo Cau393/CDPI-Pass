@@ -29,7 +29,7 @@ SECRET_KEY = getenv("SECRET_KEY", "dev-secret")
 
 DEBUG = getenv("DEBUG")
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = getenv('ALLOWED_HOSTS', '').split(',')
 
 AUTH_USER_MODEL = "users.User"
 
@@ -111,7 +111,7 @@ CELERY_TASK_TIME_LIMIT = 30 * 60
 
 CELERY_BEAT_SCHEDULE = {
     "check-pending-payments-every-30min": {
-        "task": "orders.tasks.check_pending_payments_task",
+        "task": "backend.celery.check_pending_payments_task",
         "schedule": crontab(minute="*/30"),
     },
 }
