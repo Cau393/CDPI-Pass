@@ -53,6 +53,11 @@ jobs:
           CELERY_BROKER_URL: "redis://localhost:6379/0"
           ASAAS_API_KEY: ${{ secrets.ASAAS_API_KEY }}
         run: |
+          python backend/manage.py makemigrations
+          python backend/manage.py makemigrations users
+          python backend/manage.py makemigrations tickets
+          python backend/manage.py makemigrations orders
+          python backend/manage.py makemigrations events
           python backend/manage.py migrate --noinput
           pytest backend/ --reuse-db
 
