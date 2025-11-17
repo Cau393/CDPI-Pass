@@ -18,19 +18,18 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write  # Required for OIDC (recommended over access keys)
+      id-token: write
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Configure AWS Credentials
+      - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-      
+          role-to-assume: arn:aws:iam::866605741038:role/GitHubActions-CDPI-Pass-Deploy-Role
+          aws-region: sa-east-1
+
       # ==========================================
       # 1. DEPLOY FRONTEND
       # ==========================================
@@ -67,7 +66,7 @@ jobs:
           fi
       
       # ==========================================
-      # 2. DEPLOY BACKEND TO ECR
+      # 2. BUILD & PUSH DOCKER IMAGE TO ECR
       # ==========================================
       
       - name: Login to Amazon ECR
@@ -81,9 +80,8 @@ jobs:
           ECR_REPOSITORY: cdpi-pass/backend
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Build for AMD64 (standard for most ECS instances)
           docker buildx build \
-            --platform linux/amd64 \
+            --platform linux/arm64 \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             -f backend/Dockerfile \
@@ -91,6 +89,10 @@ jobs:
             --push
           
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+      
+      - name: Debug - Show Built Image
+        run: |
+          echo "✅ Built and pushed image: ${{ steps.build-image.outputs.image }}"
       
       # ==========================================
       # 3. UPDATE ECS TASK DEFINITIONS & DEPLOY
@@ -148,13 +150,14 @@ jobs:
           wait-for-service-stability: true
       
       # ==========================================
-      # 4. DEPLOYMENT NOTIFICATION (Optional)
+      # 4. DEPLOYMENT NOTIFICATION
       # ==========================================
       
       - name: Deployment Summary
         if: success()
         run: |
           echo "✅ Deployment successful!"
-          echo "Frontend: s3://${{ secrets.AWS_S3_BUCKET_NAME }}"
-          echo "Backend Image: ${{ steps.build-image.outputs.image }}"
-          echo "Services updated: backend-service, worker-service, beat-service"
+          echo "📦 Frontend: s3://${{ secrets.AWS_S3_BUCKET_NAME }}"
+          echo "🐳 Backend Image: ${{ steps.build-image.outputs.image }}"
+          echo "🚀 Services updated: backend-service, worker-service, beat-service"
+          echo "🔗 Check your app at: http://cdpi-pass-alb-1278726590.sa-east-1.elb.amazonaws.com"

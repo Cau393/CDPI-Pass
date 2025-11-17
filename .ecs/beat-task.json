@@ -1,11 +1,15 @@
 {
-  "family": "cdpi-pass-beat",
+  "family": "beat-task",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "256",
   "memory": "512",
   "executionRoleArn": "arn:aws:iam::866605741038:role/ecsTaskExecutionRole",
   "taskRoleArn": "arn:aws:iam::866605741038:role/ecsTaskExecutionRole",
+  "runtimePlatform": {
+  "cpuArchitecture": "ARM64",
+  "operatingSystemFamily": "LINUX"
+    },
   "containerDefinitions": [
     {
       "name": "beat",
@@ -21,10 +25,66 @@
         "--scheduler",
         "django_celery_beat.schedulers:DatabaseScheduler"
       ],
-      "environmentFiles": [
+      "secrets": [
         {
-          "value": "arn:aws:s3:::env-cdpi-pass/.env",
-          "type": "s3"
+          "name": "ASAAS_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:ASAAS_API_KEY::"
+        },
+        {
+          "name": "ASAAS_API_URL",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:ASAAS_API_URL::"
+        },
+        {
+          "name": "ASAAS_WEBHOOK_TOKEN",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:ASAAS_WEBHOOK_TOKEN::"
+        },
+        {
+          "name": "AWS_ACCESS_KEY_ID",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:AWS_ACCESS_KEY_ID::"
+        },
+        {
+          "name": "AWS_REGION",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:AWS_REGION::"
+        },
+        {
+          "name": "AWS_S3_BUCKET_NAME",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:AWS_S3_BUCKET_NAME::"
+        },
+        {
+          "name": "AWS_SECRET_ACCESS_KEY",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:AWS_SECRET_ACCESS_KEY::"
+        },
+        {
+          "name": "BASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:BASE_URL::"
+        },
+        {
+          "name": "CELERY_BROKER_URL",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:CELERY_BROKER_URL::"
+        },
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:DATABASE_URL::"
+        },
+        {
+          "name": "DEBUG",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:DEBUG::"
+        },
+        {
+          "name": "DEFAULT_FROM_EMAIL",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:DEFAULT_FROM_EMAIL::"
+        },
+        {
+          "name": "SECRET_KEY",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:SECRET_KEY::"
+        },
+        {
+          "name": "SENDGRID_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:SENDGRID_API_KEY::"
+        },
+        {
+          "name": "ALLOWED_HOSTS",
+          "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:ALLOWED_HOSTS::"
         }
       ],
       "logConfiguration": {
