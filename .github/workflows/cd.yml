@@ -22,20 +22,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - id: github-token
-        name: Request OIDC Token URL
-        run: echo "url=$ACTIONS_ID_TOKEN_REQUEST_URL&token=$ACTIONS_ID_TOKEN_REQUEST_TOKEN" >> $GITHUB_OUTPUT
-      
-      - name: Dump OIDC token payload
+      - id: oidc
+        name: Request OIDC Token
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken('sts.amazonaws.com');
+            core.setOutput('token', token);
+
+      - name: Decode OIDC Token
         run: |
           echo "::group::OIDC DEBUG"
-          curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-               "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" \
-               | jq -r '.payload | @json' | jq
+          PAYLOAD=$(echo "${{ steps.oidc.outputs.token }}" | cut -d '.' -f 2 | base64 -d 2>/dev/null)
+          echo "$PAYLOAD" | jq
           echo "::endgroup::"
-        env:
-          ACTIONS_ID_TOKEN_REQUEST_URL: ${{ steps.github-token.outputs.url }}
-          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ steps.github-token.outputs.token }}
 
       - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
