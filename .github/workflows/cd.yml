@@ -27,6 +27,21 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::866605741038:role/GitHubActions-CDPI-Pass-Deploy-Role
           aws-region: sa-east-1
+      
+      - id: github-token
+        name: Request OIDC Token URL
+        run: echo "url=$ACTIONS_ID_TOKEN_REQUEST_URL&token=$ACTIONS_ID_TOKEN_REQUEST_TOKEN" >> $GITHUB_OUTPUT
+      
+      - name: Dump OIDC token payload
+        run: |
+          echo "::group::OIDC DEBUG"
+          curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+               "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" \
+               | jq -r '.payload | @json' | jq
+          echo "::endgroup::"
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ${{ steps.github-token.outputs.url }}
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ steps.github-token.outputs.token }}
 
       # ==========================================
       # 1. DEPLOY FRONTEND
