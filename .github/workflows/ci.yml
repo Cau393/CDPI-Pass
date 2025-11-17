@@ -2,11 +2,11 @@ name: CI - Test
 
 on:
   push:
-    branches-ignore:
+    branches:
       - main
   pull_request:
     branches:
-      - django-migration
+      - main
 
 jobs:
   backend-ci:
