@@ -30,12 +30,13 @@ jobs:
             const token = await core.getIDToken('sts.amazonaws.com');
             core.setOutput('token', token);
 
-      - name: Decode OIDC Token
+      - name: Decode OIDC Token Payload
         run: |
-          echo "::group::OIDC DEBUG"
-          PAYLOAD=$(echo "${{ steps.oidc.outputs.token }}" | cut -d '.' -f 2 | base64 -d 2>/dev/null)
-          echo "$PAYLOAD" | jq
-          echo "::endgroup::"
+          echo "${{ steps.oidc.outputs.token }}" \
+            | awk -F '.' '{print $2}' \
+            | base64 -d 2>/dev/null \
+            | jq
+
 
       - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
