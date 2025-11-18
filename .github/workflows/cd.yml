@@ -120,30 +120,6 @@ jobs:
       # ==========================================
       # 3. UPDATE ECS TASK DEFINITIONS & DEPLOY
       # ==========================================
-      
-      # Configure deployment strategy WITHOUT force-new-deployment
-      - name: Configure ECS Service Deployment Strategy
-        run: |
-          # Backend service - keep 100% healthy during deployment
-          aws ecs update-service \
-            --cluster cdpi-pass-cluster \
-            --service backend-service \
-            --desired-count 1 \
-            --deployment-configuration "maximumPercent=200,minimumHealthyPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}"
-          
-          # Worker service - keep 100% healthy during deployment
-          aws ecs update-service \
-            --cluster cdpi-pass-cluster \
-            --service worker-service \
-            --desired-count 1 \
-            --deployment-configuration "maximumPercent=200,minimumHealthyPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}"
-          
-          # Beat service - can go down during deployment (only 1 instance needed)
-          aws ecs update-service \
-            --cluster cdpi-pass-cluster \
-            --service beat-service \
-            --desired-count 1 \
-            --deployment-configuration "maximumPercent=200,minimumHealthyPercent=0,deploymentCircuitBreaker={enable=true,rollback=true}"
 
       # Backend Service
       - name: Render Backend Task Definition
@@ -199,6 +175,15 @@ jobs:
       # ==========================================
       # 4. DEPLOYMENT NOTIFICATION
       # ==========================================
+
+      - name: Verify Deployments
+        run: |
+          echo "🔍 Checking deployment status..."
+          aws ecs describe-services \
+            --cluster cdpi-pass-cluster \
+            --services backend-service worker-service beat-service \
+            --query 'services[*].{Service:serviceName,TaskDef:taskDefinition,Running:runningCount,Desired:desiredCount,Deployments:deployments[*].{Status:status,TaskDef:taskDefinition}}' \
+            --output table
       
       - name: Deployment Summary
         if: success()
