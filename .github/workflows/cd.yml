@@ -109,7 +109,7 @@ jobs:
             --push \
             --provenance=false --sbom=false
 
-          DIGEST=$(docker buildx imagetools inspect $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG --format '{{.Digest}}')
+          DIGEST=$(docker buildx imagetools inspect $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG --format '{{.Manifest.Digest}}')
           FULL_IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY@$DIGEST"
 
           echo "image=$FULL_IMAGE" >> $GITHUB_OUTPUT
