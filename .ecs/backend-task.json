@@ -7,7 +7,7 @@
   "executionRoleArn": "arn:aws:iam::866605741038:role/ecsTaskExecutionRole",
   "taskRoleArn": "arn:aws:iam::866605741038:role/ecsTaskExecutionRole",
   "runtimePlatform": {
-  "cpuArchitecture": "ARM64",
+  "cpuArchitecture": "X86_64",
   "operatingSystemFamily": "LINUX"
     },
   "containerDefinitions": [
