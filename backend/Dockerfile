@@ -1,14 +1,14 @@
-FROM python:3.13-alpine
+FROM python:3.13-slim
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-RUN apk update && apk add --no-cache \
-    libpq \
-    postgresql-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev \
     gcc \
-    musl-dev \
-    linux-headers
+    build-essential \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
