@@ -121,6 +121,30 @@ jobs:
       # 3. UPDATE ECS TASK DEFINITIONS & DEPLOY
       # ==========================================
       
+      # Configure deployment strategy WITHOUT force-new-deployment
+      - name: Configure ECS Service Deployment Strategy
+        run: |
+          # Backend service - keep 100% healthy during deployment
+          aws ecs update-service \
+            --cluster cdpi-pass-cluster \
+            --service backend-service \
+            --desired-count 1 \
+            --deployment-configuration "maximumPercent=200,minimumHealthyPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}"
+          
+          # Worker service - keep 100% healthy during deployment
+          aws ecs update-service \
+            --cluster cdpi-pass-cluster \
+            --service worker-service \
+            --desired-count 1 \
+            --deployment-configuration "maximumPercent=200,minimumHealthyPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}"
+          
+          # Beat service - can go down during deployment (only 1 instance needed)
+          aws ecs update-service \
+            --cluster cdpi-pass-cluster \
+            --service beat-service \
+            --desired-count 1 \
+            --deployment-configuration "maximumPercent=200,minimumHealthyPercent=0,deploymentCircuitBreaker={enable=true,rollback=true}"
+
       # Backend Service
       - name: Render Backend Task Definition
         id: backend-task-def

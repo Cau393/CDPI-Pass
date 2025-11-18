@@ -16,6 +16,8 @@ from datetime import timedelta
 from os import getenv
 from pathlib import Path
 
+# 3rd party apps
+import socket
 from celery.schedules import crontab
 from dj_database_url import parse
 from dotenv import load_dotenv
@@ -30,6 +32,14 @@ SECRET_KEY = getenv("SECRET_KEY", "dev-secret")
 DEBUG = getenv("DEBUG")
 
 ALLOWED_HOSTS = getenv('ALLOWED_HOSTS', '').split(',')
+
+try:
+    hostname = socket.gethostname()
+    container_ip = socket.gethostbyname(hostname)
+    ALLOWED_HOSTS.append(container_ip)
+    print(f"Added container IP to ALLOWED_HOSTS: {container_ip}")
+except Exception as e:
+    print(f"Could not determine container IP: {e}")
 
 AUTH_USER_MODEL = "users.User"
 
