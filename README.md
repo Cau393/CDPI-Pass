@@ -1,178 +1,267 @@
-CDPI Pass | Enterprise Event Management Platform
+# CDPI Pass — Enterprise Event Management Platform
 
 <div align="center">
 
-A cloud-native, asynchronous ticketing solution architected for high-volume pharmaceutical events.
+A cloud-native, asynchronous ticketing platform engineered for **high-volume pharmaceutical events**.
 
-Report Bug · Request Feature
+[Report Bug](https://github.com/Cau393/CDPI-Pass/issues) · [Request Feature](https://github.com/Cau393/CDPI-Pass/issues/new)
 
 </div>
 
-🚀 Overview
+---
 
-CDPI Pass is a production-ready event management ecosystem designed to handle the complex lifecycle of corporate event ticketing. Unlike standard CRUD applications, CDPI Pass implements an event-driven architecture to ensure system stability during high-traffic ticket drops.
+## Table of Contents
 
-The system features a decoupled frontend/backend architecture, utilizing Celery workers for heavy background processing (payment reconciliation, PDF generation, email dispatch) and AWS ECS for scalable, containerized deployment.
+- [Overview](#overview)
+- [Key Engineering Highlights](#key-engineering-highlights)
+- [Tech Stack](#tech-stack)
+- [System Architecture](#system-architecture)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Environment Variables](#environment-variables)
+  - [Development Workflow](#development-workflow)
+- [Running Tests](#running-tests)
+- [CI / CD](#ci--cd)
+- [Security](#security)
+- [Operational Notes](#operational-notes)
+  - [Local debugging tips](#local-debugging-tips)
+  - [Scaling & cost control](#scaling--cost-control)
+- [Troubleshooting](#troubleshooting)
+- [Contact](#contact)
 
-🎯 Key Engineering Highlights
+---
 
-⚡ Asynchronous Architecture
+## 🚀 Overview
 
-To prevent API blocking during peak traffic, resource-intensive tasks are offloaded to background workers:
+**CDPI Pass** is a production-grade event management ecosystem that handles full ticketing lifecycle for large, regulated events. It’s designed for resiliency during traffic spikes (ticket drops, payment storms) using an asynchronous, event-driven architecture.
 
-* Message Broker: Redis serves as the broker between the Django API and Celery workers.
+Goals:
+- Maintain <100–200ms API latency for ticket endpoints under normal load
+- Offload heavy work (PDF generation, email, reconciliation) to background workers
+- Integrate securely with local payment providers (Asaas) and enterprise email (SendGrid)
+- Deploy in a cloud-native fashion (ECS/Fargate, CloudFront, S3)
 
-* Task Orchestration: Celery handles email delivery (SendGrid), PDF ticket generation, and webhook processing asynchronously.
+---
 
-* Scheduled Jobs: Celery Beat manages periodic tasks, such as invalidating expired reserved tickets.
+## 🎯 Key Engineering Highlights
 
-💳 Robust Payment Integration
+### ⚡ Asynchronous Architecture
+- **Redis** as broker/cache
+- **Celery** for background tasks:
+  - PNG ticket generation
+  - Email delivery (SendGrid)
+  - Payment reconciliation & webhook handling
+- **Celery Beat** for scheduled maintenance tasks (expire reservations, data sanity checks)
 
-* Gateway: Full integration with Asaas for Brazilian payment methods (PIX, Boleto, Credit Card).
+### 💳 Payment Resilience
+- Full Asaas integration: PIX, Boleto, Credit Card
+- Webhook verification with signature validation
+- Reconciliation tasks run to ensure financial consistency
 
-* Webhooks: Secure webhook endpoints verify payment confirmation signatures to update order statuses in real-time, ensuring financial data integrity.
+### ☁️ Cloud-Native DevOps
+- Multi-stage Docker builds (security & size optimized)
+- AWS ECS (Fargate) services for API and workers
+- GitHub Actions using OIDC to avoid long-lived AWS credentials
+- Blue/Green / rolling deployment strategies for zero downtime
+- Frontend served via S3 + CloudFront
 
-☁️ Cloud-Native DevOps
+---
 
-* Containerization: Multi-stage Docker builds optimized for production size and security.
+## 🧰 Tech Stack
 
-* Infrastructure: Deployed on AWS ECS (Fargate) using OIDC for secure, passwordless GitHub Actions authentication.
+| Domain | Technologies |
+|---|---|
+| Frontend | React 18, TypeScript, Vite, TanStack Query, Tailwind CSS, Shadcn/UI |
+| Backend | Python 3.13, Django REST Framework, Drizzle ORM (schema reference) |
+| DB | PostgreSQL (Neon/managed), Redis (broker & cache) |
+| Async | Celery, Celery Beat |
+| Infra | Docker, AWS ECS (Fargate), AWS ECR, S3, CloudFront |
+| Services | SendGrid (email), Asaas (payments), GitHub Actions (CI/CD) |
 
-* CI/CD: Automated pipeline ensuring code quality (linting/testing) and zero-downtime deployments via Blue/Green strategies.
+---
 
-🛠️ Tech Stack
+## 🏗️ System Architecture
 
-Domain
-
-Technologies
-
-Frontend:
-
-* React 18, TypeScript, Vite, TanStack Query, Tailwind CSS, Shadcn/UI
-
-Backend:
-
-* Python 3.13, Django REST Framework (DRF), Drizzle ORM (Schema Reference)
-
-Database:
-
-* PostgreSQL (NeonDB Serverless), Redis (Caching & Broker)
-
-Async Tasks:
-
-* Celery, Celery Beat
-
-Infrastructure:
-
-* Docker, AWS ECS, AWS ECR, AWS S3, GitHub Actions
-
-Services:
-
-* SendGrid (Email), Asaas (Payments), AWS CloudFront (CDN)
-
-🏗️ System Architecture
-
+```mermaid
 graph TD
-    User[User / Client] -->|HTTPS| CloudFront[AWS CloudFront]
-    CloudFront -->|Static Assets| S3[AWS S3]
+    User[User/Client] -->|HTTPS| CF[CloudFront CDN]
+    CF --> S3[Static Assets S3]
     User -->|API Requests| ALB[Application Load Balancer]
-    ALB --> ECS[AWS ECS Service (Django API)]
+    ALB --> ECS[ECS Fargate Service Django API]
     
-    subgraph VPC [AWS VPC]
-        ECS -->|Read/Write| DB[(PostgreSQL)]
-        ECS -->|Enqueue Tasks| Redis[(Redis Broker)]
-        
-        Worker[Celery Worker] -->|Consume Tasks| Redis
-        Worker -->|Update Status| DB
-        Beat[Celery Beat] -->|Schedule| Redis
-    end
+    ECS -->|Read/Write| DB[(PostgreSQL NeonDB)]
+    ECS -->|Enqueue Tasks| REDIS[(Redis Broker/Cache)]
     
-    Worker -->|Send Email| SendGrid
-    Worker -->|Process Payment| Asaas
-
-
-💻 Getting Started
-
-This project is fully containerized. You can spin up the entire stack locally using Docker Compose.
-
-Prerequisites:
-
-* Docker & Docker Compose
-
-* Node.js v20+ (for local frontend development)
-
-Installation:
-
-1. Clone the repository
-
-git clone [(https://github.com/your-username/cdpi-pass.git](https://github.com/Cau393/CDPI-Pass.git)]
-cd cdpi-pass
-
-
-2. Configure Environment
-
-cp .env.example backend/.env
-# Fill in your postgres, redis, and API keys in backend/.env
-
-
-3. Start the Stack
+    Worker[Celery Worker] -->|Consume| REDIS
+    Worker -->|Update DB| DB
+    Beat[Celery Beat] -->|Schedules| REDIS
+    
+    Worker -->|Send Emails| SendGrid[SendGrid]
+    Worker -->|Payment Events| Asaas[Asaas API]
 ```
+
+## 💻 Getting Started
+
+### Prerequisites
+
+- Docker & Docker Compose
+- Node.js v20+
+- Python 3.13 for running backend tasks locally without containers
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/Cau393/CDPI-Pass.git
+cd CDPI-Pass
+```
+
+### Environment Variables
+
+Keep secrets out of git. Use `.env` files or a secrets manager (AWS Secrets Manager). Typical variables used (add to `.env.example`):
+
+#### Backend (`backend/.env`)
+
+```env
+# ---- DEVELOPING AND TESTING SETTINGS ----
+DATABASE_URL=DBURL
+
+ALLOWED_HOSTS=localhost,127.0.0.1
+
+# Django Config
+DEBUG=PLACEHOLDER
+SECRET_KEY=PLACEHOLDER
+
+# Email (SendGrid)
+SENDGRID_API_KEY=PLACEHOLDER
+DEFAULT_FROM_EMAIL=PLACEHOLDER
+
+# Celery Configuration
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_RESULT_BACKEND=redis://redis:6379/0
+
+# BaseURL
+BASE_URL=http://localhost:5173
+
+# AWS S3 Configuration
+AWS_ACCESS_KEY_ID=PLACEHOLDER
+AWS_SECRET_ACCESS_KEY=PLACEHOLDER
+AWS_REGION=PLACEHOLDER
+AWS_S3_BUCKET_NAME=PLACEHOLDER
+
+# --- Payment Gateway (Asaas) ---
+ASAAS_API_KEY=PLACEHOLDER
+ASAAS_API_URL=https://api.asaas.com/v3
+ASAAS_WEBHOOK_TOKEN="PLACEHOLDER"
+```
+
+### Start Everything Locally (Docker Compose)
+
+```bash
 docker-compose up --build
 ```
 
-* API: http://localhost:8000
+**Services:**
+- **API:** http://localhost:8000
+- **Frontend:** http://localhost:5173
+- **Redis:** localhost:6379
+- **DB:** (Using external)
 
-* Frontend: http://localhost:5173
+### Useful Local Commands
 
-* Redis: localhost:6379
+```bash
+# Backend shell
+docker-compose exec backend bash
 
-* Running Tests
+# Run backend migrations
+docker-compose exec backend python manage.py migrate
 
-Backend (Pytest):
+# Create superuser
+docker-compose exec backend python manage.py createsuperuser
+
+# Launch a celery worker (if not using compose-managed worker)
+docker-compose exec worker celery -A backend_app worker --loglevel=info
 ```
-docker-compose exec backend pytest
+
+## 🧪 Running Tests
+
+### Backend
+
+```bash
+docker-compose exec backend pytest -q
 ```
 
-Frontend (Vitest):
-```
+### Frontend
+
+```bash
 cd frontend
-npm test
+npm ci
+npm run test
 ```
 
-🔄 CI/CD Pipeline
+> **Tip:** Add test coverage reporting to CI for credibility: `pytest --cov=.` and upload reports to coverage services.
 
-The project utilizes GitHub Actions for a modern DevSecOps workflow:
+## 🔄 CI/CD
 
-* Continuous Integration (CI): Triggers on Pull Requests to main.
+### High Level (GitHub Actions)
 
-* Linting: Black (Python) & ESLint (TypeScript).
+#### CI (PRs):
+- **Lint:** Black (Python), isort, Flake8/Pylint
+- **ESLint** + TypeScript type-check
+- Unit tests & lightweight integration tests
+- Dependency vulnerability scan
 
-* Testing: Runs full unit and integration test suites.
+#### CD (merge → main):
+- Build multi-arch Docker images
+- Push to AWS ECR
+- Update ECS task definitions (application + worker)
+- Invalidate CloudFront & sync S3 for frontend
 
-* Security: Scans dependencies for known vulnerabilities.
+> **Security:** Use OIDC in Actions to assume fine-grained IAM roles; avoid long-lived credentials.
 
-* Continuous Deployment (CD): Triggers on merge to main.
+## 🛡️ Security
 
-* Build: Creates optimized Docker images for amd64.
+- JWT with rotation and refresh token policies
+- Webhook signature verification for Asaas
+- Least-privilege IAM roles for ECS tasks
+- Rate limiting & monitoring at ALB/API level
+- Secrets stored in Parameter Store or Secrets Manager (not in repo)
 
-* Push: Uploads images to private AWS ECR repositories.
+## 📋 Operational Notes
 
-* Deploy: Updates AWS ECS Task Definitions, forcing a rolling deployment of the API and Worker services.
+### Scaling & Cost Control
 
-* Static Assets: * Syncs frontend build artifacts to AWS S3 and invalidates CloudFront cache.
+- **ECS Fargate:** Scale via service autoscaling (target CPU/RPS)
+- Move long-running analytic jobs to separate batch cluster
+- Pause dev worker services in non-active branches to save cost
 
-🛡️ Security Features
+## 🔧 Troubleshooting
 
-JWT Authentication: Stateless, secure API access with rotation strategies.
+### API returning 502 from ALB
+Check ECS task health, container logs, and target group health checks.
 
-OIDC AWS Auth: Uses OpenID Connect for GitHub Actions to access AWS resources without storing long-lived credentials.
+### Celery tasks failing silently
+- Check worker logs
+- Confirm broker connection: `redis-cli -h <host> ping`
+- Verify result backend connectivity
 
-Role-Based Access Control (RBAC): Granular permissions for Admins vs. Standard Users.
+### Webhook events not received
+- Confirm public endpoint is reachable (ngrok for local dev)
+- Verify webhook signature secret matches stored secret
+
+**If you get stuck:** Open an issue with logs and a short reproduction.
+
+## 📞 Contact
+
+**Developed by Caue Casonato**
+
+- GitHub: [@Cau393](https://github.com/Cau393)
+- LinkedIn: [Caue Casonato](https://www.linkedin.com/in/cauê-casonato/)
+- Portfolio: [My Website](https://cauecasonatoportifolio.dev)
+
+---
 
 <div align="center">
-
-Developed by Caue Casonato
-
-LinkedIn · Portfolio
-
+  Made with ❤️ by Caue Casonato
 </div>
