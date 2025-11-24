@@ -1,81 +1,178 @@
-# Overview
+CDPI Pass | Enterprise Event Management Platform
 
-CDPI Pass is a comprehensive event management platform specifically designed for CDPI Pharma, enabling seamless ticket purchasing, event registration, and attendee management for pharmaceutical industry events. The application serves as a complete ticketing solution that handles user registration, payment processing, QR code generation for tickets, and email notifications.
+<div align="center">
 
-The platform supports two main user flows: courtesy ticket redemption (via exclusive links) and direct ticket purchases. It provides a modern, responsive web interface built with React and a robust backend API for handling all business operations including payment processing through Asaas, email notifications via SendGrid, and secure user authentication.
+A cloud-native, asynchronous ticketing solution architected for high-volume pharmaceutical events.
 
-# User Preferences
+Report Bug · Request Feature
 
-Preferred communication style: Simple, everyday language.
+</div>
 
-# System Architecture
+🚀 Overview
 
-## Frontend Architecture
+CDPI Pass is a production-ready event management ecosystem designed to handle the complex lifecycle of corporate event ticketing. Unlike standard CRUD applications, CDPI Pass implements an event-driven architecture to ensure system stability during high-traffic ticket drops.
 
-The frontend is built using React with TypeScript, leveraging modern development practices and a component-based architecture. The application uses Vite as the build tool for fast development and optimized production builds.
+The system features a decoupled frontend/backend architecture, utilizing Celery workers for heavy background processing (payment reconciliation, PDF generation, email dispatch) and AWS ECS for scalable, containerized deployment.
 
-**UI Framework**: The interface is built with shadcn/ui components on top of Radix UI primitives, providing accessible and customizable components. Tailwind CSS handles styling with a comprehensive design system including custom color schemes and responsive breakpoints.
+🎯 Key Engineering Highlights
 
-**State Management**: The application uses TanStack Query (React Query) for server state management, providing caching, synchronization, and background updates. Local state is managed through React's built-in hooks.
+⚡ Asynchronous Architecture
 
-**Routing**: Wouter provides client-side routing, offering a lightweight alternative to React Router with a simple API for navigation between pages.
+To prevent API blocking during peak traffic, resource-intensive tasks are offloaded to background workers:
 
-**Form Handling**: React Hook Form with Zod validation ensures type-safe form submissions with comprehensive validation rules, particularly important for user registration and event booking forms.
+* Message Broker: Redis serves as the broker between the Django API and Celery workers.
 
-## Backend Architecture
+* Task Orchestration: Celery handles email delivery (SendGrid), PDF ticket generation, and webhook processing asynchronously.
 
-The backend follows a RESTful API design using Express.js with TypeScript, providing a clean separation between routing, business logic, and data access layers.
+* Scheduled Jobs: Celery Beat manages periodic tasks, such as invalidating expired reserved tickets.
 
-**API Structure**: Routes are organized by feature (auth, events, orders) with middleware for authentication, error handling, and request logging. The authentication system uses JWT tokens for secure API access.
+💳 Robust Payment Integration
 
-**Database Layer**: The application uses Drizzle ORM with PostgreSQL, providing type-safe database operations and schema management. The storage layer is abstracted through an interface pattern, making it easy to swap implementations if needed.
+* Gateway: Full integration with Asaas for Brazilian payment methods (PIX, Boleto, Credit Card).
 
-**Service Layer**: Business logic is encapsulated in service classes (EmailService, AsaasService, QRCodeService) that handle external integrations and complex operations. This separation allows for better testing and maintainability.
+* Webhooks: Secure webhook endpoints verify payment confirmation signatures to update order statuses in real-time, ensuring financial data integrity.
 
-## Data Storage Solutions
+☁️ Cloud-Native DevOps
 
-**Primary Database**: PostgreSQL serves as the main data store, chosen for its reliability, ACID compliance, and excellent TypeScript integration through Drizzle ORM.
+* Containerization: Multi-stage Docker builds optimized for production size and security.
 
-**Schema Design**: The database includes tables for users, events, orders, and email queues. Relationships are properly defined with foreign key constraints, and UUIDs are used for primary keys to ensure uniqueness across distributed systems.
+* Infrastructure: Deployed on AWS ECS (Fargate) using OIDC for secure, passwordless GitHub Actions authentication.
 
-**Migration Management**: Database schema changes are managed through Drizzle Kit, providing version control for database structure and safe deployment procedures.
+* CI/CD: Automated pipeline ensuring code quality (linting/testing) and zero-downtime deployments via Blue/Green strategies.
 
-## Authentication and Authorization
+🛠️ Tech Stack
 
-**Authentication Strategy**: JWT-based authentication provides stateless security suitable for API consumption. Passwords are hashed using bcrypt with proper salt rounds for security.
+Domain
 
-**Authorization Patterns**: The system implements middleware-based authorization, with optional and required authentication decorators. User sessions are validated on each protected request.
+Technologies
 
-**Security Measures**: CPF validation, email verification, and secure password policies ensure data integrity and user account security.
+Frontend:
 
-## Payment Processing
+* React 18, TypeScript, Vite, TanStack Query, Tailwind CSS, Shadcn/UI
 
-**Payment Gateway**: Integration with Asaas payment service supports multiple payment methods including credit cards, bank slips (boleto), and PIX. The service handles payment verification and webhook processing.
+Backend:
 
-**Order Management**: Orders track payment status, event registration, and ticket generation. The system supports different order states (pending, confirmed, cancelled) with proper state transitions.
+* Python 3.13, Django REST Framework (DRF), Drizzle ORM (Schema Reference)
 
-# External Dependencies
+Database:
 
-## Third-Party Services
+* PostgreSQL (NeonDB Serverless), Redis (Caching & Broker)
 
-**Neon Database**: PostgreSQL database hosting service providing managed database infrastructure with connection pooling and serverless scaling capabilities.
+Async Tasks:
 
-**SendGrid**: Email delivery service handling transactional emails including ticket confirmations, event reminders, and user verification emails. Includes email queuing system for reliability.
+* Celery, Celery Beat
 
-**Asaas**: Brazilian payment processor supporting local payment methods (PIX, boleto) essential for the target market. Provides webhook integration for real-time payment updates.
+Infrastructure:
 
-## Development and Build Tools
+* Docker, AWS ECS, AWS ECR, AWS S3, GitHub Actions
 
-**Replit Infrastructure**: The application is configured for Replit hosting with specific plugins for error handling and development tools.
+Services:
 
-**Vite Build System**: Modern build tool providing fast development server, hot module replacement, and optimized production builds with code splitting.
+* SendGrid (Email), Asaas (Payments), AWS CloudFront (CDN)
 
-**TypeScript Ecosystem**: Comprehensive TypeScript setup with strict type checking, path mapping, and shared types between client and server.
+🏗️ System Architecture
 
-## Runtime Dependencies
+graph TD
+    User[User / Client] -->|HTTPS| CloudFront[AWS CloudFront]
+    CloudFront -->|Static Assets| S3[AWS S3]
+    User -->|API Requests| ALB[Application Load Balancer]
+    ALB --> ECS[AWS ECS Service (Django API)]
+    
+    subgraph VPC [AWS VPC]
+        ECS -->|Read/Write| DB[(PostgreSQL)]
+        ECS -->|Enqueue Tasks| Redis[(Redis Broker)]
+        
+        Worker[Celery Worker] -->|Consume Tasks| Redis
+        Worker -->|Update Status| DB
+        Beat[Celery Beat] -->|Schedule| Redis
+    end
+    
+    Worker -->|Send Email| SendGrid
+    Worker -->|Process Payment| Asaas
 
-**Node.js Libraries**: Express.js for server framework, various Radix UI components for accessible interfaces, React Query for data fetching, and utility libraries for validation, date handling, and cryptographic operations.
 
-**Asset Management**: QR code generation for tickets, image handling for event photos, and PDF generation capabilities for downloadable tickets.
+💻 Getting Started
 
-**Email Queue System**: Background processing system for email delivery with retry logic and failure handling, ensuring reliable communication with users.
+This project is fully containerized. You can spin up the entire stack locally using Docker Compose.
+
+Prerequisites:
+
+* Docker & Docker Compose
+
+* Node.js v20+ (for local frontend development)
+
+Installation:
+
+1. Clone the repository
+
+git clone [(https://github.com/your-username/cdpi-pass.git](https://github.com/Cau393/CDPI-Pass.git)]
+cd cdpi-pass
+
+
+2. Configure Environment
+
+cp .env.example backend/.env
+# Fill in your postgres, redis, and API keys in backend/.env
+
+
+3. Start the Stack
+```
+docker-compose up --build
+```
+
+* API: http://localhost:8000
+
+* Frontend: http://localhost:5173
+
+* Redis: localhost:6379
+
+* Running Tests
+
+Backend (Pytest):
+```
+docker-compose exec backend pytest
+```
+
+Frontend (Vitest):
+```
+cd frontend
+npm test
+```
+
+🔄 CI/CD Pipeline
+
+The project utilizes GitHub Actions for a modern DevSecOps workflow:
+
+* Continuous Integration (CI): Triggers on Pull Requests to main.
+
+* Linting: Black (Python) & ESLint (TypeScript).
+
+* Testing: Runs full unit and integration test suites.
+
+* Security: Scans dependencies for known vulnerabilities.
+
+* Continuous Deployment (CD): Triggers on merge to main.
+
+* Build: Creates optimized Docker images for amd64.
+
+* Push: Uploads images to private AWS ECR repositories.
+
+* Deploy: Updates AWS ECS Task Definitions, forcing a rolling deployment of the API and Worker services.
+
+* Static Assets: * Syncs frontend build artifacts to AWS S3 and invalidates CloudFront cache.
+
+🛡️ Security Features
+
+JWT Authentication: Stateless, secure API access with rotation strategies.
+
+OIDC AWS Auth: Uses OpenID Connect for GitHub Actions to access AWS resources without storing long-lived credentials.
+
+Role-Based Access Control (RBAC): Granular permissions for Admins vs. Standard Users.
+
+<div align="center">
+
+Developed by Caue Casonato
+
+LinkedIn · Portfolio
+
+</div>
