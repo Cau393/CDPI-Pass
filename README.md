@@ -119,8 +119,6 @@ cd CDPI-Pass
 
 ### Environment Variables
 
-Keep secrets out of git. Use `.env` files or a secrets manager (AWS Secrets Manager). Typical variables used (add to `.env.example`):
-
 #### Backend (`backend/.env`)
 
 ```env
@@ -207,8 +205,7 @@ npm run test
 ### High Level (GitHub Actions)
 
 #### CI (PRs):
-- **Lint:** Black (Python), isort, Flake8/Pylint
-- **ESLint** + TypeScript type-check
+- **Lint:** Black (Python)
 - Unit tests & lightweight integration tests
 - Dependency vulnerability scan
 
@@ -216,7 +213,8 @@ npm run test
 - Build multi-arch Docker images
 - Push to AWS ECR
 - Update ECS task definitions (application + worker)
-- Invalidate CloudFront & sync S3 for frontend
+ - Attention: For the deployment, there is a need to have the services running in ECS. (manual step initially)
+- Invalidate CloudFront (cache) & sync S3 for frontend
 
 > **Security:** Use OIDC in Actions to assume fine-grained IAM roles; avoid long-lived credentials.
 
@@ -249,6 +247,23 @@ Check ECS task health, container logs, and target group health checks.
 ### Webhook events not received
 - Confirm public endpoint is reachable (ngrok for local dev)
 - Verify webhook signature secret matches stored secret
+
+### 📊 Monitoring & Observability
+To ensure high availability operational excellence, the platform utilizes a centralized observability strategy via AWS CloudWatch:
+
+- Dashboards & Metrics
+- Application Health: Real-time tracking of ALB Request Counts, Target Response Times (latency), and HTTP 4XX/5XX Error rates.
+- Infrastructure: Granular monitoring of ECS Fargate CPU and Memory utilization to inform scaling decisions.
+- Edge Performance: CloudFront metrics tracking Cache Hit Ratios and global edge latency to ensure static assets (React frontend) load instantly.
+- Broker Health: Redis (ElastiCache) CPU usage and Cache Hits/Misses to monitor Celery task throughput.
+
+### 🚨 Alarms & Alerting
+
+The system employs automated alarms via Amazon SNS to trigger immediate email notifications during incidents:
+
+- Availability: Triggers if HTTP 5XX errors > 0 for a 5-minute window.
+
+- Saturation: Triggers if ECS Service CPU utilization exceeds 80%, indicating a need to scale out.
 
 **If you get stuck:** Open an issue with logs and a short reproduction.
 
