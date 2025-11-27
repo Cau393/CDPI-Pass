@@ -87,16 +87,6 @@
           "valueFrom": "arn:aws:secretsmanager:sa-east-1:866605741038:secret:cdpi-pass-prod-rg17Wh:ALLOWED_HOSTS::"
         }
       ],
-      "healthCheck": {
-        "command": [
-          "CMD-SHELL",
-          "celery -A backend inspect ping -d celery@$HOSTNAME || exit 1"
-        ],
-        "interval": 30,
-        "timeout": 5,
-        "retries": 3,
-        "startPeriod": 60
-      },
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
