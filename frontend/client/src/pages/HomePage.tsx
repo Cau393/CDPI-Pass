@@ -39,7 +39,7 @@ export default function HomePage() {
   ?.filter(event => new Date(event.date) > new Date())
   .filter(
     (event) =>
-      event.title !== 'Workshop 360º na indústria farmacêutica - Montes Claros'
+      event.title !== 'Meeting CDPI 2026'
   )
   ?.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
