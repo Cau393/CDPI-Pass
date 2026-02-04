@@ -61,23 +61,6 @@ export default function HomePage() {
                   onClick={() => setLocation(`/event/${mainEvent.id}`)}
                   data-testid={`card-main-event-${mainEvent.id}`}
                 >
-                  {/* Workshop 360° Badge */}
-                  <div className="absolute top-4 left-4 z-10">
-                    <div className="bg-white/90 backdrop-blur-sm rounded-lg px-4 py-2 flex items-center space-x-2">
-                      <svg width="40" height="40" viewBox="0 0 100 100" className="text-primary">
-                        <circle cx="50" cy="50" r="45" fill="none" stroke="currentColor" strokeWidth="3"/>
-                        <circle cx="50" cy="20" r="8" fill="currentColor"/>
-                        <circle cx="80" cy="50" r="8" fill="currentColor"/>
-                        <circle cx="50" cy="80" r="8" fill="currentColor"/>
-                        <circle cx="20" cy="50" r="8" fill="currentColor"/>
-                        <path d="M50 20 L80 50 L50 80 L20 50 Z" fill="none" stroke="currentColor" strokeWidth="2"/>
-                      </svg>
-                      <div>
-                        <div className="text-xs font-semibold text-gray-600 uppercase">Workshop</div>
-                        <div className="text-lg font-bold text-primary">360°</div>
-                      </div>
-                    </div>
-                  </div>
 
                   <div className="flex flex-col lg:flex-row">
                     {/* Event Image */}
@@ -352,9 +335,9 @@ export default function HomePage() {
             <div>
               <div className="flex items-center mb-4">
                 <img 
-              src="/LOGO rodape 200px 60x negativa.svg" 
+              src="/LOGO-FACULDADE-CDPI-BRANCA.png" 
               alt="CDPI Faculdade Logo" 
-              className="h-12 w-auto" 
+              className="h-14 w-auto" 
                 />
               </div>
               <p className="text-white/80 text-sm">
@@ -366,7 +349,7 @@ export default function HomePage() {
 
             {/* Contact */}
             <div className="text-center">
-              <h3 className="font-bold mb-4">CDPI</h3>
+              <h3 className="font-bold mb-4">Telefone</h3>
               <p className="text-2xl font-bold mb-2">+55 (62) 99860-6833</p>
               <p className="text-sm text-white/80">
                 Entre em contato conosco<br/>

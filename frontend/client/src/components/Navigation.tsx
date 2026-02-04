@@ -42,9 +42,9 @@ export default function Navigation() {
               data-testid="button-logo"
             >
               <img 
-            src="/Marca CDPI negativa 32x32px.svg" 
+            src="/LOGO-FACULDADE-CDPI-BRANCA.png" 
             alt="CDPI Faculdade Logo" 
-            className="h-10 w-auto mr-3" 
+            className="h-12 w-auto mr-3" 
               />
               <span className="text-xl font-bold text-white">
                 {user?.isAdmin && <span className="text-xs ml-2 bg-white/20 text-white px-2 py-1 rounded">ADMIN</span>}
