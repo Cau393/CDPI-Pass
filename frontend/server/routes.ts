@@ -1065,7 +1065,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/courtesy-links", authenticateToken, async (req: any, res) => {
   try {
-    // console.log("🔍 GET /api/courtesy-links - UserId:", req.user.id, "Page:", req.query.page); // Add this
+    // console.log("🔍 GET /api/courtesy-links - UserId:", req.user.id, "Page:", req.query.page);
     
     if (!req.user.isAdmin) {
       return res.status(403).json({ message: "Acesso negado" });
