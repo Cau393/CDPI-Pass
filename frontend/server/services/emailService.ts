@@ -11,7 +11,7 @@ if (process.env.SENDGRID_API_KEY) {
   mailService.setApiKey(process.env.SENDGRID_API_KEY);
 }
 
-const FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || "relacionamento@cdpipharma.com.br";
+const FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || "relacionamento.mkt@cdpipharma.com.br";
 
 interface TicketEmailData {
   userName: string;
@@ -316,9 +316,9 @@ class EmailService {
           <div class="content">
             <div class="message-box">
               <p style="font-size: 18px;">Olá, <strong>${name}</strong>!</p>
-              <p>Você recebeu uma cortesia para o <strong>${eventName}</strong> na data <strong>${formattedEventDate}</strong>!</p>
+              <p>Você recebeu uma cortesia para o <strong>${eventName}</strong> nas datas <strong>quarta-feira e quinta-feira, 04 e 05 de março de 2026!</strong>!</p>
               <p style="font-style: italic; color: #333;">
-                Um evento que amplia horizontes e conecta quem faz a diferença na indústria. Oportunidade ímpar para você dominar o Ciclo de Vida do Medicamento e acelerar a sua trajetória profissional!
+                Um evento que tem como objetivo aprofundar a discussão sobre os critérios técnicos e regulatórios para comprovação de eficácia e segurança de medicamentos de liberação prolongada, considerando os parâmetros farmacocinéticos exigidos atualmente e a aplicação prática dos guias internacionais utilizados como referência regulatória.
               </p>
               <p>Para resgatar seu ingresso, clique no botão abaixo:</p>
             </div>
@@ -335,7 +335,7 @@ class EmailService {
           </div>
           <div class="footer">
             <p>Atenciosamente,<br>Equipe CDPI Pass</p>
-            <p>relacionamento@cdpipharma.com.br | +55 (62) 99860-6833</p>
+            <p>relacionamento.mkt@cdpipharma.com.br | +55 (62) 99702-8693</p>
           </div>
         </div>
       </body>
@@ -345,10 +345,9 @@ class EmailService {
     const text = `
       Olá, ${name}!
 
-      Você recebeu uma cortesia para o ${eventName} na data ${formattedEventDate}!
+      Você recebeu uma cortesia para o ${eventName} nas datas quarta-feira e quinta-feira, 04 e 05 de março de 2026!
 
-      Um evento que amplia horizontes e conecta quem faz a diferença na indústria.
-      Oportunidade ímpar para você dominar o Ciclo de Vida do Medicamento e acelerar a sua trajetória profissional!
+      Um evento que tem como objetivo aprofundar a discussão sobre os critérios técnicos e regulatórios para comprovação de eficácia e segurança de medicamentos de liberação prolongada, considerando os parâmetros farmacocinéticos exigidos atualmente e a aplicação prática dos guias internacionais utilizados como referência regulatória.
 
       Para resgatar seu ingresso, acesse o seguinte link:
       ${redeemUrl}
