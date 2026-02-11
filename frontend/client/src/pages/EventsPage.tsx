@@ -17,6 +17,7 @@ export default function EventsPage() {
 
   // Sort and filter events
   const sortedAndFilteredEvents = events
+    ?.filter(event => new Date(event.date) > new Date())
     ?.filter((event) => {
       const search = searchTerm.toLowerCase();
       return (
