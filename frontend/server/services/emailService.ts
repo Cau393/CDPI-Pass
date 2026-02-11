@@ -173,7 +173,7 @@ class EmailService {
           </div>
           <div class="footer">
             <p>CDPI Pass</p>
-            <p>relacionamento@cdpipharma.com.br | +55 (62) 99860-6833</p>
+            <p>relacionamento.mkt@cdpipharma.com.br | +55 (62) 3636-9909 / (62) 99610-1694</p>
           </div>
         </div>
       </body>
@@ -335,7 +335,7 @@ class EmailService {
           </div>
           <div class="footer">
             <p>Atenciosamente,<br>Equipe CDPI Pass</p>
-            <p>relacionamento.mkt@cdpipharma.com.br | +55 (62) 99702-8693</p>
+            <p>relacionamento.mkt@cdpipharma.com.br | +55 (62) 3636-9909 / (62) 99610-1694</p>
           </div>
         </div>
       </body>
