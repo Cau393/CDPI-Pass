@@ -27,7 +27,6 @@ export default function EventsPage() {
     })
     .filter(
       (event) =>
-        event.title !== 'Meeting CDPI 2026' &&
         event.title !== 'Workshop Eficácia e Segurança de Medicamentos: Comprovação de Eficácia e Aspectos Técnicos para Medicamentos de Liberação Prolongada'
     )
     ?.sort((a, b) => +new Date(a.date) - +new Date(b.date)); // Sort by date ascending

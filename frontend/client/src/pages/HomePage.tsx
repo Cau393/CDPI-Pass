@@ -38,7 +38,7 @@ export default function HomePage() {
   ?.filter(event => new Date(event.date) > new Date())
   .filter(
     (event) =>
-      event.title !== 'Meeting CDPI 2026' && event.title !== 'Workshop Eficácia e Segurança de Medicamentos: Comprovação de Eficácia e Aspectos Técnicos para Medicamentos de Liberação Prolongada'
+      event.title !== 'Workshop Eficácia e Segurança de Medicamentos: Comprovação de Eficácia e Aspectos Técnicos para Medicamentos de Liberação Prolongada'
   )
   ?.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
