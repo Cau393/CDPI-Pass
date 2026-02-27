@@ -178,6 +178,8 @@ export class DatabaseStorage implements IStorage {
         qrCodeData: orders.qrCodeData,
         qr_code_s3_url: orders.qr_code_s3_url,
         qrCodeUsed: orders.qrCodeUsed,
+        maxUses: orders.maxUses,
+        amntUsed: orders.amntUsed,
         qrCodeUsedAt: orders.qrCodeUsedAt,
         createdAt: orders.createdAt,
         updatedAt: orders.updatedAt,

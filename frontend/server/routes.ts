@@ -724,11 +724,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Check if ticket was already used
-      if (order.qrCodeUsed) {
+      // Check if ticket was already used more than it should
+      if (order.amntUsed >= order.maxUses) {
         return res.status(400).json({ 
           success: false, 
-          message: "Ingresso já foi utilizado" 
+          message: "Ingresso já foi utilizado o número máximo de vezes" 
         });
       }
 
@@ -743,17 +743,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Mark ticket as used
       await storage.updateOrder(order.id, { 
         qrCodeUsed: true,
-        qrCodeUsedAt: new Date()
+        qrCodeUsedAt: new Date(),
+        amntUsed: order.amntUsed + 1
       });
 
-      // Get user and event info for response
-      const ticketUser = await storage.getUser(order.userId);
+      // Get event info for response
       const event = await storage.getEvent(order.eventId);
 
       res.json({ 
         success: true, 
         message: "Ingresso verificado com sucesso",
-        userName: "Participante Confirmado", // alter this when the Pouso Alegre event ends
+        userName: "Participante Confirmado",
         eventTitle: event?.title || "Evento"
       });
     } catch (error) {

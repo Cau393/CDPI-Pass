@@ -107,6 +107,8 @@ var orders = pgTable("orders", {
   qrCodeData: text("qr_code_data"),
   qrCodeUsed: boolean("qr_code_used").default(false),
   qrCodeUsedAt: timestamp("qr_code_used_at"),
+  maxUses: integer("max_uses").default(1).notNull(),
+  amntUsed: integer("amnt_used").default(0).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
   qr_code_s3_url: varchar("qr_code_s3_url", { length: 500 })
@@ -350,6 +352,8 @@ var DatabaseStorage = class {
       qrCodeData: orders.qrCodeData,
       qr_code_s3_url: orders.qr_code_s3_url,
       qrCodeUsed: orders.qrCodeUsed,
+      maxUses: orders.maxUses,
+      amntUsed: orders.amntUsed,
       qrCodeUsedAt: orders.qrCodeUsedAt,
       createdAt: orders.createdAt,
       updatedAt: orders.updatedAt,
@@ -495,7 +499,7 @@ var mailService = new MailService();
 if (process.env.SENDGRID_API_KEY) {
   mailService.setApiKey(process.env.SENDGRID_API_KEY);
 }
-var FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || "relacionamento@cdpipharma.com.br";
+var FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || "relacionamento.mkt@cdpipharma.com.br";
 var EmailService = class {
   async sendEmail(to, subject, html, text2, attachments) {
     if (!process.env.SENDGRID_API_KEY) {
@@ -627,7 +631,7 @@ var EmailService = class {
           </div>
           <div class="footer">
             <p>CDPI Pass</p>
-            <p>relacionamento@cdpipharma.com.br | +55 (62) 99860-6833</p>
+            <p>relacionamento.mkt@cdpipharma.com.br | +55 (62) 3636-9909 / (62) 99610-1694</p>
           </div>
         </div>
       </body>
@@ -748,9 +752,9 @@ var EmailService = class {
           <div class="content">
             <div class="message-box">
               <p style="font-size: 18px;">Ol\xE1, <strong>${name}</strong>!</p>
-              <p>Voc\xEA recebeu uma cortesia para o <strong>${eventName}</strong> na data <strong>${formattedEventDate}</strong>!</p>
+              <p>Voc\xEA recebeu uma cortesia para o <strong>${eventName}</strong> nas datas <strong>quarta-feira e quinta-feira, 04 e 05 de mar\xE7o de 2026!</strong>!</p>
               <p style="font-style: italic; color: #333;">
-                Um evento que amplia horizontes e conecta quem faz a diferen\xE7a na ind\xFAstria. Oportunidade \xEDmpar para voc\xEA dominar o Ciclo de Vida do Medicamento e acelerar a sua trajet\xF3ria profissional!
+                Um evento que tem como objetivo aprofundar a discuss\xE3o sobre os crit\xE9rios t\xE9cnicos e regulat\xF3rios para comprova\xE7\xE3o de efic\xE1cia e seguran\xE7a de medicamentos de libera\xE7\xE3o prolongada, considerando os par\xE2metros farmacocin\xE9ticos exigidos atualmente e a aplica\xE7\xE3o pr\xE1tica dos guias internacionais utilizados como refer\xEAncia regulat\xF3ria.
               </p>
               <p>Para resgatar seu ingresso, clique no bot\xE3o abaixo:</p>
             </div>
@@ -767,7 +771,7 @@ var EmailService = class {
           </div>
           <div class="footer">
             <p>Atenciosamente,<br>Equipe CDPI Pass</p>
-            <p>relacionamento@cdpipharma.com.br | +55 (62) 99860-6833</p>
+            <p>relacionamento.mkt@cdpipharma.com.br | +55 (62) 3636-9909 / (62) 99610-1694</p>
           </div>
         </div>
       </body>
@@ -776,10 +780,9 @@ var EmailService = class {
     const text2 = `
       Ol\xE1, ${name}!
 
-      Voc\xEA recebeu uma cortesia para o ${eventName} na data ${formattedEventDate}!
+      Voc\xEA recebeu uma cortesia para o ${eventName} nas datas quarta-feira e quinta-feira, 04 e 05 de mar\xE7o de 2026!
 
-      Um evento que amplia horizontes e conecta quem faz a diferen\xE7a na ind\xFAstria.
-      Oportunidade \xEDmpar para voc\xEA dominar o Ciclo de Vida do Medicamento e acelerar a sua trajet\xF3ria profissional!
+      Um evento que tem como objetivo aprofundar a discuss\xE3o sobre os crit\xE9rios t\xE9cnicos e regulat\xF3rios para comprova\xE7\xE3o de efic\xE1cia e seguran\xE7a de medicamentos de libera\xE7\xE3o prolongada, considerando os par\xE2metros farmacocin\xE9ticos exigidos atualmente e a aplica\xE7\xE3o pr\xE1tica dos guias internacionais utilizados como refer\xEAncia regulat\xF3ria.
 
       Para resgatar seu ingresso, acesse o seguinte link:
       ${redeemUrl}

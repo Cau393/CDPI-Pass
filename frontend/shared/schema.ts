@@ -78,6 +78,8 @@ export const orders = pgTable("orders", {
   qrCodeData: text("qr_code_data"),
   qrCodeUsed: boolean("qr_code_used").default(false),
   qrCodeUsedAt: timestamp("qr_code_used_at"),
+  maxUses: integer("max_uses").default(1).notNull(),
+  amntUsed: integer("amnt_used").default(0).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
   qr_code_s3_url: varchar("qr_code_s3_url", { length: 500 }),
