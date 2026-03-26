@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { MapPin, Calendar, ChevronDown, ChevronUp, Facebook, Instagram, Twitter, Linkedin, Youtube } from "lucide-react";
 import { useLocation } from "wouter";
@@ -7,18 +7,52 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
 import type { Event } from "@shared/schema";
+import { apiRequest } from "@/lib/queryClient";
 
 export default function HomePage() {
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [expandedFAQ, setExpandedFAQ] = useState<string | null>(null);
+  const [promoCode, setPromoCode] = useState<string | null>(null);
   const [, setLocation] = useLocation();
   const { isAuthenticated } = useAuth();
   const { toast } = useToast();
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setPromoCode(params.get("promo"));
+  }, []);
+
   const { data: events, isLoading } = useQuery<Event[]>({
     queryKey: ["/api/events"],
   });
+
+  const { data: promoLink } = useQuery({
+    queryKey: ["/api/courtesy-links", promoCode],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/courtesy-links/${promoCode}`);
+      return res.json();
+    },
+    enabled: !!promoCode,
+  });
+
+  /**
+   * List price vs promo override (aligned with EventDetailsPage).
+   * On the home page we only apply override when the link is for that event (sidebar may list others).
+   */
+  const displayPriceForEvent = (ev: Event) => {
+    const override = promoLink?.overridePrice;
+    const linkEventId = promoLink?.eventId as string | undefined;
+    if (
+      override != null &&
+      override !== "" &&
+      linkEventId != null &&
+      linkEventId === ev.id
+    ) {
+      return parseFloat(String(override));
+    }
+    return parseFloat(String(ev.price));
+  };
 
   const handleBuyTicket = (event: Event) => {
     if (!isAuthenticated) {
@@ -111,7 +145,7 @@ export default function HomePage() {
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-3xl font-bold text-primary">
-                            R$ {parseFloat(mainEvent.price).toFixed(2)}
+                            R$ {displayPriceForEvent(mainEvent).toFixed(2)}
                           </p>
                           <p className="text-xs text-gray-500">+ taxa de conveniência</p>
                         </div>
@@ -185,7 +219,7 @@ export default function HomePage() {
                         </div>
                         <div className="mt-3 flex items-center justify-between">
                           <span className="font-bold text-primary">
-                            R$ {parseFloat(event.price).toFixed(2)}
+                            R$ {displayPriceForEvent(event).toFixed(2)}
                           </span>
                           <Button
                             size="sm"
@@ -382,6 +416,8 @@ export default function HomePage() {
       {selectedEvent && (
         <PaymentModal
           event={selectedEvent}
+          promoCode={promoCode}
+          displayPrice={displayPriceForEvent(selectedEvent)}
           isOpen={isPaymentModalOpen}
           onClose={() => {
             setIsPaymentModalOpen(false);
