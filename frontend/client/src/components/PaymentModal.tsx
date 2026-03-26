@@ -41,24 +41,30 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
       });
       return response.json();
     },
-    onSuccess: (data) => {
-      setPaymentData(data);
-      toast({
-        title: "Pedido criado!",
-        description: "Complete o pagamento para confirmar seu ingresso.",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Erro ao processar pagamento",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
   });
 
   const handlePayment = () => {
-    createOrderMutation.mutate(selectedMethod);
+    const method = selectedMethod;
+    createOrderMutation.mutate(method, {
+      onSuccess: (data) => {
+        const payUrl = data?.payment?.link ?? data?.payment?.paymentLink;
+        if (method === "credit_card" && payUrl) {
+          globalThis.open(payUrl, "_blank", "noopener,noreferrer");
+        }
+        setPaymentData(data);
+        toast({
+          title: "Pedido criado!",
+          description: "Complete o pagamento para confirmar seu ingresso.",
+        });
+      },
+      onError: (error: Error) => {
+        toast({
+          title: "Erro ao processar pagamento",
+          description: error.message,
+          variant: "destructive",
+        });
+      },
+    });
   };
 
   const copyToClipboard = (text: string) => {
@@ -170,10 +176,10 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
                         <CreditCard className="h-12 w-12 mx-auto text-primary" />
                         <h3 className="font-semibold">Pagamento com Cartão</h3>
                         <p className="text-sm text-gray-600">
-                          O link de pagamento será enviado no seu email!
+                          Ao continuar, o link de pagamento abre em uma nova aba e enviamos o mesmo link por e-mail.
                         </p>
                         <p className="text-sm text-gray-600">
-                          Aceitamos todas as bandeiras
+                          Aceitamos as principais bandeiras e parcelamento em até 3x.
                         </p>
                       </div>
                     </CardContent>
@@ -268,9 +274,28 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
                   <CardContent className="pt-6">
                     <div className="text-center space-y-4">
                       <CreditCard className="h-12 w-12 mx-auto text-primary" />
-                      <h3 className="font-semibold text-lg">Pagamento Pendente, cheque seu email</h3>
+                      <h3 className="font-semibold text-lg">Pagamento pendente</h3>
                       <p className="text-sm text-gray-600">
-                        Foi enviado um link no seu email para finalizar o pagamento!
+                        Complete o pagamento e, quando confirmado, seu QR Code será enviado por e-mail.
+                      </p>
+                      {(paymentData?.payment?.link ?? paymentData?.payment?.paymentLink) && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full"
+                          onClick={() =>
+                            globalThis.open(
+                              paymentData.payment.link ?? paymentData.payment.paymentLink,
+                              "_blank",
+                              "noopener,noreferrer",
+                            )
+                          }
+                        >
+                          Abrir link de pagamento
+                        </Button>
+                      )}
+                      <p className="text-xs text-gray-500">
+                        O mesmo link foi enviado para o seu e-mail.
                       </p>
                     </div>
                   </CardContent>

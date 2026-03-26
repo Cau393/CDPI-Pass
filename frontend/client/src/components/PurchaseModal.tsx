@@ -33,27 +33,6 @@ export default function PurchaseModal({ event, isOpen, onClose }: PurchaseModalP
       const response = await apiRequest("POST", "/api/orders", data);
       return response.json();
     },
-    onSuccess: (data) => {
-      toast({
-        title: "Pedido criado com sucesso!",
-        description: "Você será redirecionado para o pagamento.",
-      });
-      
-      // Handle payment redirect based on method
-      if (data.payment?.paymentLink) {
-        window.open(data.payment.paymentLink, '_blank');
-      }
-      
-      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
-      onClose();
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Erro ao criar pedido",
-        description: error.message || "Tente novamente",
-        variant: "destructive",
-      });
-    },
   });
 
   const handlePurchase = () => {
@@ -68,10 +47,31 @@ export default function PurchaseModal({ event, isOpen, onClose }: PurchaseModalP
 
     if (!event) return;
 
-    createOrderMutation.mutate({
-      eventId: event.id,
-      paymentMethod,
-    });
+    const method = paymentMethod;
+    createOrderMutation.mutate(
+      { eventId: event.id, paymentMethod: method },
+      {
+        onSuccess: (data) => {
+          toast({
+            title: "Pedido criado com sucesso!",
+            description: "Você será redirecionado para o pagamento.",
+          });
+          const payUrl = data.payment?.link ?? data.payment?.paymentLink;
+          if (method === "credit_card" && payUrl) {
+            globalThis.open(payUrl, "_blank", "noopener,noreferrer");
+          }
+          queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+          onClose();
+        },
+        onError: (error: Error) => {
+          toast({
+            title: "Erro ao criar pedido",
+            description: error.message || "Tente novamente",
+            variant: "destructive",
+          });
+        },
+      },
+    );
   };
 
   const formatCurrency = (price: string | number) => {

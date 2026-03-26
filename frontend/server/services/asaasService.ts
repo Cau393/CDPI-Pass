@@ -98,11 +98,43 @@ class AsaasService {
       // Create or get customer
       const customer = await this.createCustomer(paymentData.customer);
 
+      /**
+       * Cartão: apenas Link de Pagamento — evita criar uma cobrança avulsa que dispara
+       * e-mail automático de "cobrança" do Asaas. Ver PaymentLinkSaveRequestDTO:
+       * notificationEnabled: false desativa notificações para clientes cadastrados via o link.
+       */
+      if (paymentData.billingType === "CREDIT_CARD") {
+        const paymentLinkPayload = {
+          name: `Pedido ${paymentData.externalReference}`,
+          billingType: "CREDIT_CARD",
+          chargeType: "INSTALLMENT",
+          maxInstallmentCount: 3,
+          value: paymentData.value,
+          dueDateLimitDays: 1,
+          description: paymentData.description,
+          externalReference: paymentData.externalReference,
+          notificationEnabled: false,
+        };
+
+        const paymentLinkData = await this.makeRequest("/paymentLinks", "POST", paymentLinkPayload);
+
+        return {
+          id: paymentLinkData.id,
+          dateCreated: paymentLinkData.dateCreated,
+          customer: customer.id,
+          paymentLink: paymentLinkData.url,
+          value: paymentLinkData.value,
+          netValue: paymentLinkData.netValue ?? paymentLinkData.value,
+          billingType: "CREDIT_CARD",
+          status: "PENDING",
+        };
+      }
+
       const paymentPayload = {
         customer: customer.id,
         billingType: paymentData.billingType,
         value: paymentData.value,
-        dueDate: paymentData.dueDate.toISOString().split('T')[0], // YYYY-MM-DD format
+        dueDate: paymentData.dueDate.toISOString().split("T")[0],
         description: paymentData.description,
         externalReference: paymentData.externalReference,
       };
@@ -139,6 +171,20 @@ class AsaasService {
 
   async getPayment(paymentId: string): Promise<AsaasPaymentResponse> {
     try {
+      // Se o ID for de um Link de Pagamento (começa com pl_)
+      if (paymentId.startsWith('pl_')) {
+        // Busca os pagamentos reais gerados através deste link
+        const payments = await this.makeRequest(`/payments?paymentLink=${paymentId}`);
+        
+        // Se o cliente já gerou transação na página de checkout, retorna o status do pagamento real
+        if (payments.data && payments.data.length > 0) {
+          return payments.data;
+        }
+        
+        // Se ainda não preencheu o cartão, consideramos como PENDENTE
+        return { status: "PENDING" } as AsaasPaymentResponse;
+      }
+      // Normal flow with pix and boleto
       return await this.makeRequest(`/payments/${paymentId}`);
     } catch (error) {
       console.error("Error getting payment:", error);
@@ -176,12 +222,14 @@ class AsaasService {
   }
 
   async cancelPayment(paymentId: string): Promise<any> {
-  try {
-    // The endpoint for deleting a payment is typically /payments/{id}
-    return await this.makeRequest(`/payments/${paymentId}`, "DELETE");
+    try {
+      if (paymentId.startsWith("pay_")) {
+        return await this.makeRequest(`/payments/${paymentId}`, "DELETE");
+      }
+      return await this.makeRequest(`/paymentLinks/${paymentId}`, "DELETE");
     } catch (error) {
-    console.error("Error canceling Asaas payment:", error);
-    throw error;
+      console.error("Error canceling Asaas payment:", error);
+      throw error;
     }
   }
 }

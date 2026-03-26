@@ -201,6 +201,30 @@ class EmailService {
     return this.sendEmail(email, `Seu ingresso para ${data.eventTitle} - CDPI Pass`, html, text);
   }
 
+  /**
+   * E-mail simples com o link de checkout (cartão): sem template de cobrança Asaas;
+   * apenas o link gerado pelo nosso fluxo.
+   */
+  async sendCardPaymentLinkEmail(
+    email: string,
+    data: { userName: string; eventTitle: string; paymentUrl: string },
+  ): Promise<boolean> {
+    const html = `
+      <p>Olá, <strong>${data.userName}</strong>,</p>
+      <p>Para pagar com cartão o ingresso <strong>${data.eventTitle}</strong>, use o link abaixo:</p>
+      <p><a href="${data.paymentUrl}">${data.paymentUrl}</a></p>
+      <p>Após a confirmação do pagamento, você receberá o QR Code do ingresso por e-mail.</p>
+      <p style="color:#666;font-size:12px;">CDPI Pass</p>
+    `;
+    const text = `Olá, ${data.userName}. Link para pagamento com cartão (${data.eventTitle}): ${data.paymentUrl}`;
+    return this.sendEmail(
+      email,
+      `Link de pagamento — ${data.eventTitle} — CDPI Pass`,
+      html,
+      text,
+    );
+  }
+
   async processEmailQueue(): Promise<void> {
     if (!process.env.SENDGRID_API_KEY) {
       console.log("SendGrid not configured, skipping email queue processing");

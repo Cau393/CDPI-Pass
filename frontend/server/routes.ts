@@ -481,10 +481,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           payment: {
             id: paymentData.id,
             link: paymentData.paymentLink,
+            paymentLink: paymentData.paymentLink,
             status: paymentData.status,
             value: paymentData.value,
           }
         };
+
+        if (paymentMethod === "credit_card" && paymentData.paymentLink) {
+          try {
+            await emailService.sendCardPaymentLinkEmail(req.user.email, {
+              userName: req.user.name,
+              eventTitle: event.title,
+              paymentUrl: paymentData.paymentLink,
+            });
+          } catch (emailErr) {
+            console.error("Erro ao enviar e-mail com link de pagamento:", emailErr);
+          }
+        }
 
         // Add payment method specific data
         if (paymentMethod === 'pix' && paymentData.pixTransaction) {
@@ -782,7 +795,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Handle different payment events
       if (eventType === "PAYMENT_CONFIRMED" || eventType === "PAYMENT_RECEIVED") {
-        const order = await storage.getOrderByAsaasPaymentId(payment.id);
+        const order = payment.externalReference 
+            ? await storage.getOrder(payment.externalReference)
+            : await storage.getOrderByAsaasPaymentId(payment.id);
         
         if (order && order.status !== "paid") {
           // Update order status
