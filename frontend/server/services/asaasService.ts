@@ -169,23 +169,46 @@ class AsaasService {
     }
   }
 
-  async getPayment(paymentId: string): Promise<AsaasPaymentResponse> {
+  /**
+   * Cobranças PIX/boleto usam id `pay_...`. Cartão via link de pagamento guarda o id do link (numérico);
+   * a cobrança real é resolvida por `externalReference` (= id do pedido no sistema).
+   */
+  private pickBestPaymentFromList(payments: any[]): AsaasPaymentResponse {
+    const paidStatuses = new Set(["CONFIRMED", "RECEIVED"]);
+    const paid = payments.filter((p) => paidStatuses.has(p.status));
+    const pool = paid.length > 0 ? paid : payments;
+    const sorted = [...pool].sort((a, b) => {
+      const ta = new Date(
+        a.paymentDate || a.confirmedDate || a.dateCreated || 0
+      ).getTime();
+      const tb = new Date(
+        b.paymentDate || b.confirmedDate || b.dateCreated || 0
+      ).getTime();
+      return tb - ta;
+    });
+    return sorted[0] as AsaasPaymentResponse;
+  }
+
+  async getPayment(
+    storedAsaasId: string,
+    orderExternalRef: string
+  ): Promise<AsaasPaymentResponse> {
     try {
-      // Se o ID for de um Link de Pagamento (começa com pl_)
-      if (paymentId.startsWith('pl_')) {
-        // Busca os pagamentos reais gerados através deste link
-        const payments = await this.makeRequest(`/payments?paymentLink=${paymentId}`);
-        
-        // Se o cliente já gerou transação na página de checkout, retorna o status do pagamento real
-        if (payments.data && payments.data.length > 0) {
-          return payments.data;
-        }
-        
-        // Se ainda não preencheu o cartão, consideramos como PENDENTE
+      if (storedAsaasId.startsWith("pay_")) {
+        return await this.makeRequest(`/payments/${storedAsaasId}`);
+      }
+
+      const query = new URLSearchParams({
+        externalReference: orderExternalRef,
+        limit: "100",
+      });
+      const list = await this.makeRequest(`/payments?${query.toString()}`);
+
+      if (!list.data || list.data.length === 0) {
         return { status: "PENDING" } as AsaasPaymentResponse;
       }
-      // Normal flow with pix and boleto
-      return await this.makeRequest(`/payments/${paymentId}`);
+
+      return this.pickBestPaymentFromList(list.data);
     } catch (error) {
       console.error("Error getting payment:", error);
       throw error;

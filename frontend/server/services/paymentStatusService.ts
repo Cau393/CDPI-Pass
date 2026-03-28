@@ -12,7 +12,10 @@ class PaymentStatusService {
       }
 
       // Check payment status with Asaas
-      const payment = await asaasService.getPayment(order.asaasPaymentId);
+      const payment = await asaasService.getPayment(
+        order.asaasPaymentId,
+        order.id
+      );
       
       console.log(`Checking payment status for order ${orderId}:`, payment.status);
 

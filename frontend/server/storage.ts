@@ -34,6 +34,8 @@ export interface IStorage {
 
   // Event operations
   getEvents(): Promise<Event[]>;
+  /** All events (active and inactive), for admin tooling. */
+  getAllEventsForAdmin(): Promise<Event[]>;
   getEvent(id: string): Promise<Event | undefined>;
   createEvent(event: InsertEvent): Promise<Event>;
   updateEvent(id: string, updates: Partial<Event>): Promise<Event | undefined>;
@@ -126,6 +128,10 @@ export class DatabaseStorage implements IStorage {
       .from(events)
       .where(eq(events.isActive, true))
       .orderBy(asc(events.date));
+  }
+
+  async getAllEventsForAdmin(): Promise<Event[]> {
+    return await db.select().from(events).orderBy(asc(events.date));
   }
 
   async getEvent(id: string): Promise<Event | undefined> {

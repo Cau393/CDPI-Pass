@@ -8,6 +8,9 @@ import {
   decimal,
   boolean,
   integer,
+  serial,
+  jsonb,
+  unique,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -45,7 +48,28 @@ export const events = pgTable("events", {
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+  /** S3 URL of the .docx template. Placeholder `{nome}` uses docxtemplater default delimiters (single curly braces), not `{{nome}}`. */
+  certificateTemplateUrl: text("certificate_template_url"),
 });
+
+// Generated certificates (one per user per event)
+export const certificates = pgTable(
+  "certificates",
+  {
+    id: serial("id").primaryKey(),
+    userId: varchar("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    eventId: varchar("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    certificateUrl: text("certificate_url").notNull(),
+    fullName: text("full_name").notNull(),
+    npsResponses: jsonb("nps_responses").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [unique("certificates_user_id_event_id_unique").on(t.userId, t.eventId)],
+);
 
 // Courtesy Links table
 export const courtesyLinks = pgTable("courtesy_links", {
@@ -130,11 +154,24 @@ export const massSendJobs = pgTable('mass_send_jobs', {
 export const usersRelations = relations(users, ({ many }) => ({
   orders: many(orders),
   courtesyLinks: many(courtesyLinks),
+  certificates: many(certificates),
 }));
 
 export const eventsRelations = relations(events, ({ many }) => ({
   orders: many(orders),
   courtesyLinks: many(courtesyLinks),
+  certificates: many(certificates),
+}));
+
+export const certificatesRelations = relations(certificates, ({ one }) => ({
+  user: one(users, {
+    fields: [certificates.userId],
+    references: [users.id],
+  }),
+  event: one(events, {
+    fields: [certificates.eventId],
+    references: [events.id],
+  }),
 }));
 
 export const ordersRelations = relations(orders, ({ one }) => ({
@@ -240,6 +277,7 @@ export type CourtesyLink = typeof courtesyLinks.$inferSelect;
 export type InsertCourtesyLink = z.infer<typeof insertCourtesyLinkSchema>;
 export type CourtesyAttendee = typeof courtesyAttendees.$inferSelect;
 export type InsertCourtesyAttendee = z.infer<typeof insertCourtesyAttendeeSchema>;
+export type Certificate = typeof certificates.$inferSelect;
 
 // Login schema
 export const loginSchema = z.object({

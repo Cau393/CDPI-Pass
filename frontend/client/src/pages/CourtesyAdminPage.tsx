@@ -1,21 +1,39 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Ticket, Link, Copy, CheckCircle } from "lucide-react";
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Ticket, Link, Copy, CheckCircle, Check, ChevronsUpDown } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import type { Event } from "@shared/schema";
 import { useAuth } from "@/hooks/useAuth";
+
+function normalizeForSearch(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function eventMatchesQuery(title: string, query: string): boolean {
+  const nt = normalizeForSearch(title);
+  const nq = normalizeForSearch(query.trim());
+  if (!nq) return true;
+  const tokens = nq.split(/\s+/).filter(Boolean);
+  return tokens.every((t) => nt.includes(t));
+}
 
 interface CourtesyLink {
   id: string;
@@ -32,7 +50,9 @@ interface CourtesyLink {
 }
 
 export default function CourtesyAdminPage() {
-  const [selectedEventId, setSelectedEventId] = useState("");
+  const [eventComboOpen, setEventComboOpen] = useState(false);
+  const [eventSearch, setEventSearch] = useState("");
+  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [ticketCount, setTicketCount] = useState("1");
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
   const { toast } = useToast();
@@ -42,9 +62,13 @@ export default function CourtesyAdminPage() {
   const [overridePrice, setOverridePrice] = useState("");
 
   // Fetch events
-  const { data: events } = useQuery<Event[]>({
+  const { data: events = [], isLoading: eventsLoading } = useQuery<Event[]>({
     queryKey: ["/api/events"],
   });
+
+  const filteredEvents = useMemo(() => {
+    return events.filter((e) => eventMatchesQuery(e.title, eventSearch));
+  }, [events, eventSearch]);
 
   // Fetch courtesy links
   const { data: links, isLoading: linksLoading } = useQuery({
@@ -70,7 +94,7 @@ export default function CourtesyAdminPage() {
         title: "Link criado com sucesso!",
         description: "O link de cortesia foi gerado e está pronto para uso.",
       });
-      setSelectedEventId("");
+      setSelectedEvent(null);
       setTicketCount("1");
     },
     onError: (error) => {
@@ -83,7 +107,7 @@ export default function CourtesyAdminPage() {
   });
 
   const handleCreateLink = () => {
-    if (!selectedEventId) {
+    if (!selectedEvent) {
       toast({
         title: "Selecione um evento",
         description: "Por favor, selecione um evento para o link de cortesia",
@@ -93,7 +117,7 @@ export default function CourtesyAdminPage() {
     }
 
     createLinkMutation.mutate({
-      eventId: selectedEventId,
+      eventId: selectedEvent.id,
       ticketCount: parseInt(ticketCount),
       overridePrice: overridePrice ? parseFloat(overridePrice) : null,
     });
@@ -132,19 +156,58 @@ export default function CourtesyAdminPage() {
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="event">Evento</Label>
-              <Select value={selectedEventId} onValueChange={setSelectedEventId}>
-                <SelectTrigger id="event" data-testid="select-event">
-                  <SelectValue placeholder="Selecione um evento" />
-                </SelectTrigger>
-                <SelectContent>
-                  {events?.map((event) => (
-                    <SelectItem key={event.id} value={event.id}>
-                      {event.title}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>Evento</Label>
+              <Popover open={eventComboOpen} onOpenChange={setEventComboOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    id="event"
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={eventComboOpen}
+                    className="w-full justify-between font-normal"
+                    disabled={eventsLoading}
+                    data-testid="select-event"
+                  >
+                    {selectedEvent ? selectedEvent.title : "Buscar e selecionar evento..."}
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[min(100vw-2rem,28rem)] p-0" align="start">
+                  <Command shouldFilter={false}>
+                    <CommandInput
+                      placeholder="Buscar por nome (sem acentos ou maiúsculas)..."
+                      value={eventSearch}
+                      onValueChange={setEventSearch}
+                    />
+                    <CommandList>
+                      <CommandEmpty>
+                        {eventsLoading ? "Carregando..." : "Nenhum evento encontrado."}
+                      </CommandEmpty>
+                      <CommandGroup>
+                        {filteredEvents.map((ev) => (
+                          <CommandItem
+                            key={ev.id}
+                            value={ev.id}
+                            onSelect={() => {
+                              setSelectedEvent(ev);
+                              setEventComboOpen(false);
+                            }}
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-4 w-4",
+                                selectedEvent?.id === ev.id ? "opacity-100" : "opacity-0",
+                              )}
+                            />
+                            <span className="truncate">{ev.title}</span>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
             
             <div className="space-y-2">

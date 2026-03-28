@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/useAuth";
-import { Menu, User, LogOut, ScanLine, Search } from "lucide-react";
+import { Menu, User, LogOut, ScanLine, Search, FileUp } from "lucide-react";
 
 export default function Navigation() {
   const [, setLocation] = useLocation();
@@ -87,6 +87,14 @@ export default function Navigation() {
                         <ScanLine className="h-4 w-4 mr-1" />
                         Verificar QR
                       </button>
+                      <button
+                        onClick={() => setLocation("/enviar-template")}
+                        className="text-white hover:bg-white/10 px-3 py-2 rounded-md text-sm font-medium flex items-center transition-colors"
+                        data-testid="nav-enviar-template"
+                      >
+                        <FileUp className="h-4 w-4 mr-1" />
+                        Enviar template
+                      </button>
                       {user.email === "caueroriz@gmail.com" && (
                         <button
                           onClick={() => setLocation("/cortesia-admin")}
@@ -149,6 +157,13 @@ export default function Navigation() {
                           <ScanLine className="h-4 w-4 mr-2" />
                           Verificar QR
                         </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => setLocation("/enviar-template")}
+                          data-testid="menu-enviar-template-desktop"
+                        >
+                          <FileUp className="h-4 w-4 mr-2" />
+                          Enviar template
+                        </DropdownMenuItem>
                         {user.email === "caueroriz@gmail.com" && (
                           <DropdownMenuItem
                             onClick={() => setLocation("/cortesia-admin")}
@@ -201,6 +216,13 @@ export default function Navigation() {
                       >
                         <ScanLine className="h-4 w-4 mr-2" />
                         Verificar QR
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => setLocation("/enviar-template")}
+                        data-testid="menu-enviar-template"
+                      >
+                        <FileUp className="h-4 w-4 mr-2" />
+                        Enviar template
                       </DropdownMenuItem>
                       {user.email === "caueroriz@gmail.com" && (
                         <DropdownMenuItem

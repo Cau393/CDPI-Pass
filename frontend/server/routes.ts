@@ -2,26 +2,52 @@ import axios from "axios";
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { randomUUID } from "crypto";
+import { promisify } from "util";
 import { storage } from "./storage";
+import { db } from "./db";
 import { z } from "zod";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
+import PizZip from "pizzip";
+import Docxtemplater from "docxtemplater";
+import libre from "libreoffice-convert";
 import { 
   insertUserSchema, 
   loginSchema, 
   insertOrderSchema,
   courtesyRedemptionSchema,
-  type User 
+  type User,
+  events,
+  orders,
+  certificates,
 } from "@shared/schema";
 import { validateCpf, validateEmail, formatCpf, formatPhone } from "./utils/validation";
 import { emailService } from "./services/emailService";
 import { asaasService } from "./services/asaasService";
 import { qrCodeService } from "./services/qrCodeService";
+import { s3Service } from "./services/s3Service";
 import { requireEmailVerification } from "./middleware/auth"; 
 import multer from 'multer';
 import csv from 'csv-parser';
 import { parse } from 'csv-parse/sync';
 import { Readable } from 'stream';
+
+const libreConvert = promisify(libre.convert);
+
+const generateCertificateNpsSchema = z.object({
+  overallRating: z.number().int().min(1).max(10),
+  wouldRecommend: z.boolean(),
+  highlights: z.string().max(2000).optional().default(""),
+  improvements: z.string().max(2000).optional().default(""),
+});
+
+const generateCertificateBodySchema = z.object({
+  eventId: z.string().uuid({ message: "eventId inválido" }),
+  fullName: z.string().min(1, "Nome é obrigatório").max(120, "Nome deve ter no máximo 120 caracteres"),
+  npsResponses: generateCertificateNpsSchema,
+});
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -366,6 +392,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
 });
 
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 25 * 1024 * 1024 },
+  });
+
   // Events routes
   app.get("/api/events", async (req, res) => {
     try {
@@ -392,6 +423,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Erro interno do servidor" });
     }
   });
+
+  app.get("/api/admin/events", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const allEvents = await storage.getAllEventsForAdmin();
+      res.json(allEvents);
+    } catch (error) {
+      console.error("Get admin events error:", error);
+      res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+
+  const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+  app.post(
+    "/api/events/:id/certificate-template",
+    authenticateToken,
+    upload.single("file"),
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+        }
+        const { id } = req.params;
+        const file = req.file as { buffer: Buffer; originalname?: string; mimetype: string } | undefined;
+        if (!file?.buffer) {
+          return res.status(400).json({ message: "Envie um arquivo .docx" });
+        }
+        const extOk = file.originalname?.toLowerCase().endsWith(".docx") ?? false;
+        const mimeOk = file.mimetype === DOCX_MIME;
+        if (!extOk && !mimeOk) {
+          return res.status(400).json({ message: "Apenas arquivos .docx são permitidos" });
+        }
+
+        const event = await storage.getEvent(id);
+        if (!event) {
+          return res.status(404).json({ message: "Evento não encontrado" });
+        }
+
+        const key = `certificate-templates/${id}/${randomUUID()}.docx`;
+        const certificateTemplateUrl = await s3Service.uploadBuffer(
+          file.buffer,
+          key,
+          DOCX_MIME,
+        );
+
+        const updated = await storage.updateEvent(id, { certificateTemplateUrl });
+        if (!updated) {
+          return res.status(500).json({ message: "Erro ao salvar URL do template" });
+        }
+
+        res.status(201).json({ event: updated, certificateTemplateUrl });
+      } catch (error) {
+        console.error("POST certificate-template error:", error);
+        res.status(500).json({ message: "Erro ao enviar template" });
+      }
+    },
+  );
 
   // Orders routes
   app.post("/api/orders", authenticateToken, async (req: any, res) => {
@@ -575,7 +666,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Check payment status with Asaas
-      const payment = await asaasService.getPayment(order.asaasPaymentId);
+      const payment = await asaasService.getPayment(
+        order.asaasPaymentId,
+        order.id
+      );
       
       console.log(`Manual check - Payment status for order ${id}:`, payment.status);
 
@@ -1321,8 +1415,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  const upload = multer({ storage: multer.memoryStorage() });
-
   function detectDelimiter(csvBuffer: Buffer): string {
   const sample = csvBuffer.toString('utf-8').split('\n')[0]; // Get first line
   
@@ -1376,6 +1468,197 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error queuing CSV job:', error);
       res.status(500).json({ message: 'Erro ao enfileirar o processamento.' });
+    }
+  });
+
+  /**
+   * Certificates: PDF generation uses `libreoffice-convert`, which shells out to LibreOffice.
+   * The server host must have LibreOffice installed (e.g. in Docker:
+   * RUN apt-get update && apt-get install -y libreoffice --no-install-recommends).
+   */
+  const certificateTemplateReady = and(
+    isNotNull(events.certificateTemplateUrl),
+    sql`trim(${events.certificateTemplateUrl}) <> ''`,
+  );
+
+  app.get("/api/users/me/certificates", authenticateToken, async (req: any, res) => {
+    try {
+      const pageSize = 15;
+      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+      const offset = (page - 1) * pageSize;
+      const userId = req.user.id as string;
+
+      const [{ c: total }] = await db
+        .select({
+          c: sql<number>`count(distinct ${events.id})::int`,
+        })
+        .from(events)
+        .innerJoin(
+          orders,
+          and(
+            eq(orders.eventId, events.id),
+            eq(orders.userId, userId),
+            eq(orders.qrCodeUsed, true),
+          ),
+        )
+        .where(certificateTemplateReady);
+
+      const rows = await db
+        .select({
+          eventId: events.id,
+          eventName: events.title,
+          eventDate: events.date,
+          certificateUrl: sql<string | null>`max(${certificates.certificateUrl})`,
+        })
+        .from(events)
+        .innerJoin(
+          orders,
+          and(
+            eq(orders.eventId, events.id),
+            eq(orders.userId, userId),
+            eq(orders.qrCodeUsed, true),
+          ),
+        )
+        .leftJoin(
+          certificates,
+          and(eq(certificates.eventId, events.id), eq(certificates.userId, userId)),
+        )
+        .where(certificateTemplateReady)
+        .groupBy(events.id, events.title, events.date)
+        .orderBy(desc(events.date))
+        .limit(pageSize)
+        .offset(offset);
+
+      const totalPages = total > 0 ? Math.ceil(total / pageSize) : 0;
+
+      res.json({
+        data: rows.map((row) => ({
+          eventId: row.eventId,
+          eventName: row.eventName,
+          eventDate:
+            row.eventDate instanceof Date
+              ? row.eventDate.toISOString()
+              : new Date(row.eventDate as string).toISOString(),
+          certificateUrl: row.certificateUrl,
+        })),
+        pagination: {
+          page,
+          pageSize,
+          total,
+          totalPages,
+        },
+      });
+    } catch (error) {
+      console.error("GET /api/users/me/certificates:", error);
+      res.status(500).json({ message: "Erro ao listar certificados" });
+    }
+  });
+
+  app.post("/api/certificates/generate", authenticateToken, async (req: any, res) => {
+    const userId = req.user.id as string;
+
+    const parsed = generateCertificateBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Dados inválidos",
+        issues: parsed.error.flatten(),
+      });
+    }
+
+    const { eventId, fullName, npsResponses } = parsed.data;
+
+    try {
+      const [existing] = await db
+        .select({ id: certificates.id })
+        .from(certificates)
+        .where(and(eq(certificates.userId, userId), eq(certificates.eventId, eventId)))
+        .limit(1);
+      if (existing) {
+        return res.status(409).json({ error: "Certificate already generated" });
+      }
+
+      const [eventRow] = await db.select().from(events).where(eq(events.id, eventId)).limit(1);
+      if (!eventRow) {
+        return res.status(400).json({ message: "Evento não encontrado" });
+      }
+
+      const templateUrl = eventRow.certificateTemplateUrl?.trim();
+      if (!templateUrl) {
+        return res.status(400).json({ message: "Evento sem template de certificado" });
+      }
+
+      const [eligible] = await db
+        .select({ id: events.id })
+        .from(events)
+        .innerJoin(
+          orders,
+          and(
+            eq(orders.eventId, events.id),
+            eq(orders.userId, userId),
+            eq(orders.qrCodeUsed, true),
+          ),
+        )
+        .where(and(eq(events.id, eventId), certificateTemplateReady))
+        .limit(1);
+
+      if (!eligible) {
+        return res.status(400).json({ message: "Você não está elegível para certificado neste evento" });
+      }
+
+      const templateResp = await axios.get<ArrayBuffer>(templateUrl, {
+        responseType: "arraybuffer",
+        timeout: 60000,
+        maxContentLength: 50 * 1024 * 1024,
+        maxBodyLength: 50 * 1024 * 1024,
+      });
+      const templateBuffer = Buffer.from(templateResp.data);
+
+      const zip = new PizZip(templateBuffer);
+      const doc = new Docxtemplater(zip, {
+        paragraphLoop: true,
+        linebreaks: true,
+      });
+      doc.render({ nome: fullName });
+      const filledBuffer = doc.getZip().generate({
+        type: "nodebuffer",
+        compression: "DEFLATE",
+      }) as Buffer;
+
+      let pdfBuffer: Buffer;
+      try {
+        pdfBuffer = (await libreConvert(filledBuffer, ".pdf", undefined)) as Buffer;
+      } catch (convErr: any) {
+        console.error("LibreOffice convert:", convErr);
+        return res.status(500).json({
+          error: "PDF generation failed",
+          detail: convErr?.message ?? String(convErr),
+        });
+      }
+
+      const key = `certificates/${userId}/${eventId}/${randomUUID()}.pdf`;
+      const certificateUrl = await s3Service.uploadBuffer(pdfBuffer, key, "application/pdf");
+
+      await db.insert(certificates).values({
+        userId,
+        eventId,
+        certificateUrl,
+        fullName,
+        npsResponses: {
+          overallRating: npsResponses.overallRating,
+          wouldRecommend: npsResponses.wouldRecommend,
+          highlights: npsResponses.highlights ?? "",
+          improvements: npsResponses.improvements ?? "",
+        },
+      });
+
+      return res.status(201).json({ certificateUrl });
+    } catch (error: any) {
+      const code = error?.code ?? error?.cause?.code;
+      if (code === "23505") {
+        return res.status(409).json({ error: "Certificate already generated" });
+      }
+      console.error("POST /api/certificates/generate:", error);
+      return res.status(500).json({ message: "Erro ao gerar certificado" });
     }
   });
 

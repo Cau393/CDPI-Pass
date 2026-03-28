@@ -23,7 +23,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Download, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, Shield, AlertTriangle, RefreshCw, Mail, ChevronLeft, ChevronRight } from "lucide-react";
+import { Download, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, Shield, AlertTriangle, RefreshCw, Mail, ChevronLeft, ChevronRight, Award } from "lucide-react";
+import { CertificatesTab } from "@/components/CertificatesTab";
 import type { User, Order, CourtesyLink } from "@shared/schema";
 import {
   Pagination,
@@ -367,10 +368,14 @@ const handleCancelOrder = (orderId: string) => {
         {/* Profile Content */}
         <div className="lg:col-span-3">
           <Tabs defaultValue="orders" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="orders" className="flex items-center gap-2" data-testid="tab-orders">
                 <Ticket className="h-4 w-4" />
                 Meus Ingressos
+              </TabsTrigger>
+              <TabsTrigger value="certificates" className="flex items-center gap-2" data-testid="tab-certificates">
+                <Award className="h-4 w-4" />
+                Certificates
               </TabsTrigger>
               <TabsTrigger value="profile" className="flex items-center gap-2" data-testid="tab-profile">
                 <UserIcon className="h-4 w-4" />
@@ -566,6 +571,10 @@ const handleCancelOrder = (orderId: string) => {
                   )}
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            <TabsContent value="certificates">
+              <CertificatesTab />
             </TabsContent>
 
             {/* Profile Tab */}

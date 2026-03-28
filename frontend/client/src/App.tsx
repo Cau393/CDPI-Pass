@@ -21,6 +21,7 @@ import NotFound from "@/pages/not-found";
 import Navigation from "@/components/Navigation";
 import AdminRoute from "@/components/AdminRoute";
 import CourtesyMassSendingPage from "@/pages/CourtesyMassSendingPage";
+import CertificateTemplateAdminPage from "@/pages/CertificateTemplateAdminPage";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -49,6 +50,11 @@ function Router() {
         <Route path="/verificar">
           <AdminRoute>
             <QRScannerPage />
+          </AdminRoute>
+        </Route>
+        <Route path="/enviar-template">
+          <AdminRoute>
+            <CertificateTemplateAdminPage />
           </AdminRoute>
         </Route>
         <Route path="/admin-test" component={AdminTestPage} />
