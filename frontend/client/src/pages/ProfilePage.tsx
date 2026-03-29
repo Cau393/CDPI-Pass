@@ -375,7 +375,7 @@ const handleCancelOrder = (orderId: string) => {
               </TabsTrigger>
               <TabsTrigger value="certificates" className="flex items-center gap-2" data-testid="tab-certificates">
                 <Award className="h-4 w-4" />
-                Certificates
+                Certificados
               </TabsTrigger>
               <TabsTrigger value="profile" className="flex items-center gap-2" data-testid="tab-profile">
                 <UserIcon className="h-4 w-4" />

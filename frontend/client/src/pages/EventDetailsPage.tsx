@@ -83,31 +83,23 @@ export default function EventDetailsPage() {
     setIsPaymentModalOpen(true);
   };
 
+  const EVENT_TZ = "America/Sao_Paulo";
+
   const formatDate = (date: Date | string) =>
     new Date(date).toLocaleDateString("pt-BR", {
+      timeZone: EVENT_TZ,
       weekday: "long",
       year: "numeric",
       month: "long",
       day: "numeric",
     });
 
-  const formatTime = (date: Date | string) => {
-    const dateObj = new Date(date);
-    const timeStr =
-      typeof date === "string"
-        ? date.split("T")[1] || date.split(" ")[1]
-        : null;
-
-    if (timeStr) {
-      const [hours, minutes] = timeStr.split(":");
-      return `${hours}:${minutes}`;
-    }
-
-    return dateObj.toLocaleTimeString("pt-BR", {
+  const formatTime = (date: Date | string) =>
+    new Date(date).toLocaleTimeString("pt-BR", {
+      timeZone: EVENT_TZ,
       hour: "2-digit",
       minute: "2-digit",
     });
-  };
 
   const formatCurrency = (value: number | string) => {
     const numValue = typeof value === "string" ? parseFloat(value) : value;

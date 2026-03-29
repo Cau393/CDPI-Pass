@@ -48,8 +48,10 @@ export const events = pgTable("events", {
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-  /** S3 URL of the .docx template. Placeholder `{nome}` uses docxtemplater default delimiters (single curly braces), not `{{nome}}`. */
+  /** S3 URL of the .docx certificate template (filled to PDF by AWS Lambda). */
   certificateTemplateUrl: text("certificate_template_url"),
+  /** Custom HTML for courtesy mass-send emails; placeholders {nome}, {evento}, {data}, {link}. */
+  courtesyTemplate: text("courtesy_template"),
 });
 
 // Generated certificates (one per user per event)

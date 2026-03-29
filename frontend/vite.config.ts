@@ -3,10 +3,17 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
+/** Suppress dev-only noise: aborted fetches/HMR still reject with AbortError; overlay is misleading. */
+function showRuntimeErrorInOverlay(error: Error): boolean {
+  if (error.name === "AbortError") return false;
+  if (error.message === "The operation was aborted.") return false;
+  return true;
+}
+
 export default defineConfig({
   plugins: [
     react(),
-    runtimeErrorOverlay(),
+    runtimeErrorOverlay({ filter: showRuntimeErrorInOverlay }),
     ...(process.env.NODE_ENV !== "production" &&
     process.env.REPL_ID !== undefined
       ? [

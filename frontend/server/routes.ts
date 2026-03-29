@@ -3,38 +3,37 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { randomUUID } from "crypto";
-import { promisify } from "util";
 import { storage } from "./storage";
 import { db } from "./db";
 import { z } from "zod";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
-import PizZip from "pizzip";
-import Docxtemplater from "docxtemplater";
-import libre from "libreoffice-convert";
+import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { 
   insertUserSchema, 
   loginSchema, 
   insertOrderSchema,
   courtesyRedemptionSchema,
   type User,
+  type Event,
   events,
   orders,
   certificates,
+  users,
 } from "@shared/schema";
 import { validateCpf, validateEmail, formatCpf, formatPhone } from "./utils/validation";
+import { parseBrazilEventLocalDateTime } from "./utils/eventDateTime";
+import { sanitizeCourtesyTemplateHtml } from "./utils/courtesyTemplateSanitize";
 import { emailService } from "./services/emailService";
 import { asaasService } from "./services/asaasService";
 import { qrCodeService } from "./services/qrCodeService";
 import { s3Service } from "./services/s3Service";
+import { invokeGenerateCertificatePdf } from "./services/certificateLambdaService";
 import { requireEmailVerification } from "./middleware/auth"; 
 import multer from 'multer';
 import csv from 'csv-parser';
 import { parse } from 'csv-parse/sync';
 import { Readable } from 'stream';
-
-const libreConvert = promisify(libre.convert);
 
 const generateCertificateNpsSchema = z.object({
   overallRating: z.number().int().min(1).max(10),
@@ -397,6 +396,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     limits: { fileSize: 25 * 1024 * 1024 },
   });
 
+  const uploadCoverImage = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+      if (allowed.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error("Only JPEG, PNG, and WebP images are allowed"));
+      }
+    },
+  });
+
   // Events routes
   app.get("/api/events", async (req, res) => {
     try {
@@ -429,11 +441,462 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user.isAdmin) {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
       }
+
+      const q = req.query as Record<string, string | undefined>;
+      const hasPage = q.page !== undefined && q.page !== "";
+      const hasLimit = q.limit !== undefined && q.limit !== "";
+
+      if (hasPage || hasLimit) {
+        const page = Math.max(1, Number.parseInt(q.page ?? "1", 10) || 1);
+        const limit = Math.min(100, Math.max(1, Number.parseInt(q.limit ?? "10", 10) || 10));
+        const { events: pageEvents, total } = await storage.getAllEventsForAdminPaginated(page, limit);
+        return res.json({ events: pageEvents, total, page, limit });
+      }
+
       const allEvents = await storage.getAllEventsForAdmin();
       res.json(allEvents);
     } catch (error) {
       console.error("Get admin events error:", error);
       res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+
+  app.post(
+    "/api/admin/events",
+    authenticateToken,
+    (req, res, next) => {
+      uploadCoverImage.single("coverImage")(req, res, (err: unknown) => {
+        if (err instanceof multer.MulterError) {
+          if (err.code === "LIMIT_FILE_SIZE") {
+            return res.status(400).json({ error: "Image must be smaller than 5MB" });
+          }
+          return res.status(400).json({ error: err.message });
+        }
+        if (err) {
+          const msg = err instanceof Error ? err.message : "Invalid file upload";
+          return res.status(400).json({ error: msg });
+        }
+        next();
+      });
+    },
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+        }
+
+        const file = req.file as { buffer: Buffer; mimetype: string } | undefined;
+        if (!file?.buffer) {
+          return res.status(400).json({ error: "Cover image is required" });
+        }
+
+        const { title, description, date, location, price } = req.body as Record<
+          string,
+          string | undefined
+        >;
+
+        const textFields = { title, description, date, location, price } as const;
+        for (const key of Object.keys(textFields) as (keyof typeof textFields)[]) {
+          const v = textFields[key];
+          if (typeof v !== "string" || !v.trim()) {
+            return res.status(400).json({ error: `${key} is required` });
+          }
+        }
+
+        const dateObj = parseBrazilEventLocalDateTime(String(date));
+        if (Number.isNaN(dateObj.getTime())) {
+          return res.status(400).json({ error: "date must be a valid date" });
+        }
+
+        const normalizedPrice = String(price).trim().replace(",", ".");
+        const priceNum = Number(normalizedPrice);
+        if (!Number.isFinite(priceNum) || priceNum < 0) {
+          return res.status(400).json({ error: "price must be a valid non-negative number" });
+        }
+
+        const mimeToExt: Record<string, string> = {
+          "image/jpeg": "jpeg",
+          "image/jpg": "jpg",
+          "image/png": "png",
+          "image/webp": "webp",
+        };
+        const ext = mimeToExt[file.mimetype];
+        if (!ext) {
+          return res.status(400).json({ error: "Invalid image type" });
+        }
+
+        const key = `events/covers/${randomUUID()}.${ext}`;
+        let imageUrl: string;
+        try {
+          // Event cover uses s3Service.uploadBuffer (same as certificate template / QR uploads).
+          imageUrl = await s3Service.uploadBuffer(file.buffer, key, file.mimetype);
+        } catch (uploadErr: unknown) {
+          const detail = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
+          return res.status(500).json({
+            error: "Failed to upload cover image",
+            detail,
+          });
+        }
+
+        const [newEvent] = await db
+          .insert(events)
+          .values({
+            title: title!.trim(),
+            description: description!.trim(),
+            date: dateObj,
+            location: location!.trim(),
+            price: normalizedPrice,
+            imageUrl,
+          })
+          .returning();
+
+        return res.status(201).json(newEvent);
+      } catch (error: any) {
+        const code = error?.code ?? error?.cause?.code;
+        if (code === "23505") {
+          return res.status(409).json({ error: "An event with this name already exists" });
+        }
+        console.error("POST /api/admin/events:", error);
+        return res.status(500).json({ error: "Failed to create event" });
+      }
+    },
+  );
+
+  app.get("/api/admin/events/:eventId", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsed = z.string().uuid().safeParse(req.params.eventId);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid event id" });
+      }
+      const event = await storage.getEvent(parsed.data);
+      if (!event) {
+        return res.status(404).json({ error: "Event not found" });
+      }
+      res.json(event);
+    } catch (error) {
+      console.error("GET /api/admin/events/:eventId:", error);
+      res.status(500).json({ error: "Failed to load event" });
+    }
+  });
+
+  app.patch("/api/admin/events/:eventId/courtesy-template", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsedId = z.string().uuid().safeParse(req.params.eventId);
+      if (!parsedId.success) {
+        return res.status(400).json({ error: "Invalid event id" });
+      }
+      const eventId = parsedId.data;
+
+      const body = req.body as { template?: unknown };
+      if (typeof body.template !== "string") {
+        return res.status(400).json({ error: "template must be a string" });
+      }
+      if (body.template.length > 50_000) {
+        return res.status(400).json({ error: "template exceeds maximum length" });
+      }
+
+      const existing = await storage.getEvent(eventId);
+      if (!existing) {
+        return res.status(404).json({ error: "Event not found" });
+      }
+
+      const sanitized = sanitizeCourtesyTemplateHtml(body.template);
+      const trimmed = sanitized.trim();
+      const isEmpty =
+        trimmed === "" || trimmed === "<p></p>" || sanitized.replace(/\s/g, "") === "<p></p>";
+      const toStore: string | null = isEmpty ? null : sanitized;
+
+      const updated = await storage.updateEvent(eventId, { courtesyTemplate: toStore });
+      if (!updated) {
+        return res.status(404).json({ error: "Event not found" });
+      }
+
+      return res.status(200).json({
+        success: true,
+        eventId,
+        templateLength: toStore?.length ?? 0,
+      });
+    } catch (error) {
+      console.error("PATCH /api/admin/events/:eventId/courtesy-template:", error);
+      return res.status(500).json({ error: "Failed to save template" });
+    }
+  });
+
+  app.patch(
+    "/api/admin/events/:eventId",
+    authenticateToken,
+    (req, res, next) => {
+      uploadCoverImage.single("coverImage")(req, res, (err: unknown) => {
+        if (err instanceof multer.MulterError) {
+          if (err.code === "LIMIT_FILE_SIZE") {
+            return res.status(400).json({ error: "Image must be smaller than 5MB" });
+          }
+          return res.status(400).json({ error: err.message });
+        }
+        if (err) {
+          const msg = err instanceof Error ? err.message : "Invalid file upload";
+          return res.status(400).json({ error: msg });
+        }
+        next();
+      });
+    },
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+        }
+        const parsed = z.string().uuid().safeParse(req.params.eventId);
+        if (!parsed.success) {
+          return res.status(400).json({ error: "Invalid event id" });
+        }
+        const eventId = parsed.data;
+
+        const existing = await storage.getEvent(eventId);
+        if (!existing) {
+          return res.status(404).json({ error: "Event not found" });
+        }
+
+        const body = req.body as Record<string, string | undefined>;
+        const payload: Partial<{
+          title: string;
+          description: string;
+          date: Date;
+          location: string;
+          price: string;
+          imageUrl: string;
+        }> = {};
+
+        if (Object.prototype.hasOwnProperty.call(body, "title")) {
+          const v = body.title;
+          if (typeof v !== "string" || !v.trim()) {
+            return res.status(400).json({ error: "title must be a non-empty string" });
+          }
+          const t = v.trim();
+          if (t !== existing.title) payload.title = t;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(body, "description")) {
+          const v = body.description;
+          if (typeof v !== "string" || !v.trim()) {
+            return res.status(400).json({ error: "description must be a non-empty string" });
+          }
+          const t = v.trim();
+          if (t !== existing.description) payload.description = t;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(body, "location")) {
+          const v = body.location;
+          if (typeof v !== "string" || !v.trim()) {
+            return res.status(400).json({ error: "location must be a non-empty string" });
+          }
+          const t = v.trim();
+          if (t !== existing.location) payload.location = t;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(body, "date")) {
+          const v = body.date;
+          if (typeof v !== "string" || !v.trim()) {
+            return res.status(400).json({ error: "date must be a non-empty string" });
+          }
+          const dateObj = parseBrazilEventLocalDateTime(v);
+          if (Number.isNaN(dateObj.getTime())) {
+            return res.status(400).json({ error: "date must be a valid date" });
+          }
+
+          const prev = existing.date instanceof Date ? existing.date : new Date(existing.date as string);
+          if (dateObj.getTime() !== prev.getTime()) {
+            payload.date = dateObj;
+          }
+        }
+
+        if (Object.prototype.hasOwnProperty.call(body, "price")) {
+          const v = body.price;
+          if (typeof v !== "string" || !v.trim()) {
+            return res.status(400).json({ error: "price must be a non-empty string" });
+          }
+          const normalizedPrice = String(v).trim().replace(",", ".");
+          const priceNum = Number(normalizedPrice);
+          if (!Number.isFinite(priceNum) || priceNum < 0) {
+            return res.status(400).json({ error: "price must be a valid non-negative number" });
+          }
+          const prevNum = Number(String(existing.price).replace(",", "."));
+          if (!Number.isFinite(prevNum) || priceNum !== prevNum) {
+            payload.price = normalizedPrice;
+          }
+        }
+
+        const file = req.file as { buffer: Buffer; mimetype: string } | undefined;
+        if (file?.buffer) {
+          const mimeToExt: Record<string, string> = {
+            "image/jpeg": "jpeg",
+            "image/jpg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp",
+          };
+          const ext = mimeToExt[file.mimetype];
+          if (!ext) {
+            return res.status(400).json({ error: "Invalid image type" });
+          }
+          const key = `events/covers/${randomUUID()}.${ext}`;
+          try {
+            const imageUrl = await s3Service.uploadBuffer(file.buffer, key, file.mimetype);
+            if (imageUrl !== existing.imageUrl) {
+              payload.imageUrl = imageUrl;
+            }
+          } catch (uploadErr: unknown) {
+            const detail = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
+            return res.status(500).json({
+              error: "Failed to upload cover image",
+              detail,
+            });
+          }
+        }
+
+        if (Object.keys(payload).length === 0) {
+          return res.status(200).json(existing);
+        }
+
+        const updated = await storage.updateEvent(eventId, payload as Partial<Event>);
+        if (!updated) {
+          return res.status(404).json({ error: "Event not found" });
+        }
+        return res.status(200).json(updated);
+      } catch (error: any) {
+        const code = error?.code ?? error?.cause?.code;
+        if (code === "23505") {
+          return res.status(409).json({ error: "An event with this name already exists" });
+        }
+        console.error("PATCH /api/admin/events/:eventId:", error);
+        return res.status(500).json({ error: "Failed to update event" });
+      }
+    },
+  );
+
+  app.delete("/api/admin/events/:eventId", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsed = z.string().uuid().safeParse(req.params.eventId);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid event id" });
+      }
+      const eventId = parsed.data;
+      const existing = await storage.getEvent(eventId);
+      if (!existing) {
+        return res.status(404).json({ error: "Event not found" });
+      }
+      const ok = await storage.deleteEvent(eventId);
+      if (!ok) {
+        return res.status(500).json({ error: "Failed to delete event" });
+      }
+      return res.status(204).send();
+    } catch (error) {
+      console.error("DELETE /api/admin/events/:eventId:", error);
+      res.status(500).json({ error: "Failed to delete event" });
+    }
+  });
+
+  app.get("/api/admin/events/:eventId/participants", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsed = z.string().uuid().safeParse(req.params.eventId);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "eventId inválido" });
+      }
+      const eventId = parsed.data;
+
+      const rows = await db
+        .select({
+          userId: users.id,
+          name: users.name,
+          cpf: users.cpf,
+          email: users.email,
+          phone: users.phone,
+          ticketId: orders.id,
+          qrCodeUsed: orders.qrCodeUsed,
+          qrCodeUsedAt: orders.qrCodeUsedAt,
+        })
+        .from(orders)
+        .innerJoin(users, eq(orders.userId, users.id))
+        .where(and(eq(orders.eventId, eventId), eq(orders.status, "paid")))
+        .orderBy(asc(users.name));
+
+      const data = rows.map((r) => ({
+        userId: r.userId,
+        name: r.name,
+        cpf: r.cpf,
+        email: r.email,
+        phone: r.phone,
+        ticketId: r.ticketId,
+        checkedIn: r.qrCodeUsed === true,
+        checkedInAt: r.qrCodeUsedAt
+          ? r.qrCodeUsedAt instanceof Date
+            ? r.qrCodeUsedAt.toISOString()
+            : new Date(r.qrCodeUsedAt as string).toISOString()
+          : null,
+      }));
+
+      res.json({ data, total: data.length });
+    } catch (error) {
+      console.error("GET /api/admin/events/:eventId/participants:", error);
+      res.status(500).json({ message: "Erro ao listar participantes" });
+    }
+  });
+
+  app.post("/api/admin/tickets/:ticketId/check-in", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsed = z.string().uuid().safeParse(req.params.ticketId);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "ticketId inválido" });
+      }
+      const ticketId = parsed.data;
+
+      const order = await storage.getOrder(ticketId);
+      if (!order) {
+        return res.status(404).json({ error: "Ticket not found" });
+      }
+
+      if (order.status !== "paid") {
+        return res.status(400).json({ error: "Ticket not valid for check-in" });
+      }
+
+      const maxUses = order.maxUses ?? 1;
+      const used = order.amntUsed ?? 0;
+      if (used >= maxUses) {
+        return res.status(409).json({
+          error: "Already checked in",
+          checkedInAt: order.qrCodeUsedAt
+            ? order.qrCodeUsedAt instanceof Date
+              ? order.qrCodeUsedAt.toISOString()
+              : new Date(order.qrCodeUsedAt as string).toISOString()
+            : null,
+        });
+      }
+
+      // Mirrors /api/verify-ticket DB update; manual admin override.
+      const now = new Date();
+      await storage.updateOrder(ticketId, {
+        qrCodeUsed: true,
+        qrCodeUsedAt: now,
+        amntUsed: used + 1,
+      });
+
+      res.json({ success: true, checkedInAt: now.toISOString() });
+    } catch (error) {
+      console.error("POST /api/admin/tickets/:ticketId/check-in:", error);
+      res.status(500).json({ message: "Erro ao registrar presença" });
     }
   });
 
@@ -1472,9 +1935,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   /**
-   * Certificates: PDF generation uses `libreoffice-convert`, which shells out to LibreOffice.
-   * The server host must have LibreOffice installed (e.g. in Docker:
-   * RUN apt-get update && apt-get install -y libreoffice --no-install-recommends).
+   * Certificates: PDF generation is delegated to AWS Lambda (`AWS_LAMBDA_ARN`, synchronous Invoke).
+   * The IAM principal running this server needs `lambda:InvokeFunction` on that ARN.
+   * Payload fields: templateS3Url, nomeCompleto, userId, eventId, outputBucket (`AWS_S3_BUCKET_NAME`).
    */
   const certificateTemplateReady = and(
     isNotNull(events.certificateTemplateUrl),
@@ -1605,38 +2068,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Você não está elegível para certificado neste evento" });
       }
 
-      const templateResp = await axios.get<ArrayBuffer>(templateUrl, {
-        responseType: "arraybuffer",
-        timeout: 60000,
-        maxContentLength: 50 * 1024 * 1024,
-        maxBodyLength: 50 * 1024 * 1024,
-      });
-      const templateBuffer = Buffer.from(templateResp.data);
-
-      const zip = new PizZip(templateBuffer);
-      const doc = new Docxtemplater(zip, {
-        paragraphLoop: true,
-        linebreaks: true,
-      });
-      doc.render({ nome: fullName });
-      const filledBuffer = doc.getZip().generate({
-        type: "nodebuffer",
-        compression: "DEFLATE",
-      }) as Buffer;
-
-      let pdfBuffer: Buffer;
-      try {
-        pdfBuffer = (await libreConvert(filledBuffer, ".pdf", undefined)) as Buffer;
-      } catch (convErr: any) {
-        console.error("LibreOffice convert:", convErr);
-        return res.status(500).json({
-          error: "PDF generation failed",
-          detail: convErr?.message ?? String(convErr),
-        });
+      const outputBucket = process.env.AWS_S3_BUCKET_NAME?.trim();
+      if (!outputBucket) {
+        console.error("POST /api/certificates/generate: AWS_S3_BUCKET_NAME is missing");
+        return res.status(500).json({ message: "Configuração de armazenamento ausente" });
       }
 
-      const key = `certificates/${userId}/${eventId}/${randomUUID()}.pdf`;
-      const certificateUrl = await s3Service.uploadBuffer(pdfBuffer, key, "application/pdf");
+      let certificateUrl: string;
+      try {
+        certificateUrl = await invokeGenerateCertificatePdf({
+          templateS3Url: templateUrl,
+          nomeCompleto: fullName,
+          userId,
+          eventId,
+          outputBucket,
+        });
+      } catch (lambdaErr: unknown) {
+        console.error("Certificate Lambda:", lambdaErr);
+        const msg = lambdaErr instanceof Error ? lambdaErr.message : String(lambdaErr);
+        const errName =
+          lambdaErr && typeof lambdaErr === "object" && lambdaErr !== null && "name" in lambdaErr
+            ? String((lambdaErr as { name: string }).name)
+            : "";
+        const isIamInvokeDenied =
+          errName === "AccessDeniedException" ||
+          /not authorized to perform:\s*lambda:InvokeFunction/i.test(msg);
+        if (isIamInvokeDenied) {
+          return res.status(503).json({
+            error: "PDF generation failed",
+            detail:
+              "Permissão AWS ausente: a identidade IAM das credenciais deste servidor (ex.: usuário da variável AWS_ACCESS_KEY_ID) precisa da ação lambda:InvokeFunction no recurso configurado em AWS_LAMBDA_ARN. No IAM, anexe uma política que permita invoke nessa função.",
+          });
+        }
+        const isConfig = /AWS_LAMBDA_ARN|not configured/i.test(msg);
+        return res.status(isConfig ? 500 : 502).json({
+          error: "PDF generation failed",
+          detail: msg,
+        });
+      }
 
       await db.insert(certificates).values({
         userId,

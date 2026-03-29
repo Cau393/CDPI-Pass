@@ -22,6 +22,12 @@ import Navigation from "@/components/Navigation";
 import AdminRoute from "@/components/AdminRoute";
 import CourtesyMassSendingPage from "@/pages/CourtesyMassSendingPage";
 import CertificateTemplateAdminPage from "@/pages/CertificateTemplateAdminPage";
+import AdminShell from "@/components/AdminShell";
+import AdminParticipantsPage from "@/pages/AdminParticipantsPage";
+import AdminCourtesyTemplatePage from "@/pages/AdminCourtesyTemplatePage";
+import AdminCreateEventPage from "@/pages/AdminCreateEventPage";
+import AdminEventsListPage from "@/pages/AdminEventsListPage";
+import AdminEditEventPage from "@/pages/AdminEditEventPage";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -49,24 +55,67 @@ function Router() {
         <Route path="/event/:id" component={EventDetailsPage} />
         <Route path="/verificar">
           <AdminRoute>
-            <QRScannerPage />
+            <AdminShell>
+              <QRScannerPage />
+            </AdminShell>
           </AdminRoute>
         </Route>
         <Route path="/enviar-template">
           <AdminRoute>
-            <CertificateTemplateAdminPage />
+            <AdminShell>
+              <CertificateTemplateAdminPage />
+            </AdminShell>
           </AdminRoute>
         </Route>
         <Route path="/admin-test" component={AdminTestPage} />
         <Route path="/cortesia" component={CourtesyRedeemPage} />
         <Route path="/cortesia-admin">
           <AdminRoute>
-            <CourtesyAdminPage />
+            <AdminShell>
+              <CourtesyAdminPage />
+            </AdminShell>
           </AdminRoute>
         </Route>
         <Route path="/cortesia-envio-em-massa">
           <AdminRoute>
-            <CourtesyMassSendingPage />
+            <AdminShell>
+              <CourtesyMassSendingPage />
+            </AdminShell>
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/participants">
+          <AdminRoute>
+            <AdminShell>
+              <AdminParticipantsPage />
+            </AdminShell>
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/courtesy-template">
+          <AdminRoute>
+            <AdminShell>
+              <AdminCourtesyTemplatePage />
+            </AdminShell>
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/events/new">
+          <AdminRoute>
+            <AdminShell>
+              <AdminCreateEventPage />
+            </AdminShell>
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/events/:id">
+          <AdminRoute>
+            <AdminShell>
+              <AdminEditEventPage />
+            </AdminShell>
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/events">
+          <AdminRoute>
+            <AdminShell>
+              <AdminEventsListPage />
+            </AdminShell>
           </AdminRoute>
         </Route>
         <Route component={NotFound} />

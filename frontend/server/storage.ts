@@ -2,6 +2,7 @@ import {
   users,
   events,
   orders,
+  certificates,
   emailQueue,
   courtesyLinks,
   courtesyAttendees,
@@ -36,9 +37,16 @@ export interface IStorage {
   getEvents(): Promise<Event[]>;
   /** All events (active and inactive), for admin tooling. */
   getAllEventsForAdmin(): Promise<Event[]>;
+  /** Paginated list for admin (newest by date first). */
+  getAllEventsForAdminPaginated(
+    page: number,
+    limit: number,
+  ): Promise<{ events: Event[]; total: number }>;
   getEvent(id: string): Promise<Event | undefined>;
   createEvent(event: InsertEvent): Promise<Event>;
   updateEvent(id: string, updates: Partial<Event>): Promise<Event | undefined>;
+  /** Deletes event and dependent orders, courtesy links, and certificates. */
+  deleteEvent(id: string): Promise<boolean>;
 
   // Order operations
   getOrder(id: string): Promise<Order | undefined>;
@@ -134,6 +142,27 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(events).orderBy(asc(events.date));
   }
 
+  async getAllEventsForAdminPaginated(
+    page: number,
+    limit: number,
+  ): Promise<{ events: Event[]; total: number }> {
+    const safePage = Math.max(1, Math.floor(page));
+    const safeLimit = Math.min(100, Math.max(1, Math.floor(limit)));
+    const offset = (safePage - 1) * safeLimit;
+
+    const [countRow] = await db.select({ n: count() }).from(events);
+    const total = Number(countRow?.n ?? 0);
+
+    const list = await db
+      .select()
+      .from(events)
+      .orderBy(desc(events.date))
+      .limit(safeLimit)
+      .offset(offset);
+
+    return { events: list, total };
+  }
+
   async getEvent(id: string): Promise<Event | undefined> {
     const [event] = await db.select().from(events).where(eq(events.id, id));
     return event;
@@ -158,6 +187,16 @@ export class DatabaseStorage implements IStorage {
       .where(eq(events.id, id))
       .returning();
     return event;
+  }
+
+  async deleteEvent(id: string): Promise<boolean> {
+    return await db.transaction(async (tx) => {
+      await tx.delete(orders).where(eq(orders.eventId, id));
+      await tx.delete(courtesyLinks).where(eq(courtesyLinks.eventId, id));
+      await tx.delete(certificates).where(eq(certificates.eventId, id));
+      const result = await tx.delete(events).where(eq(events.id, id));
+      return (result.rowCount ?? 0) > 0;
+    });
   }
 
   // Order operations

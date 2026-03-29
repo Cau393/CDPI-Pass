@@ -1,6 +1,8 @@
+import type { Event } from '@shared/schema';
 import { emailService } from '../services/emailService';
 import { storage } from '../storage';
 import { parse } from 'csv-parse/sync';
+import { renderTemplate } from '../utils/templateRenderer';
 
 interface EmailJob {
   id: string;
@@ -166,6 +168,23 @@ class EmailWorker {
 
       console.log(`Job ${job.id}: Found ${results.length} rows to process.`);
 
+      const eventCache = new Map<string, Event | undefined>();
+
+      const getCachedEvent = async (eventId: string): Promise<Event | undefined> => {
+        if (eventCache.has(eventId)) {
+          return eventCache.get(eventId);
+        }
+        const ev = await storage.getEvent(eventId);
+        eventCache.set(eventId, ev);
+        return ev;
+      };
+
+      const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      });
+
       // 4. Loop through rows and queue emails
       for (const row of results) {
         // Normalize field names by trimming them
@@ -181,7 +200,7 @@ class EmailWorker {
           continue;
         }
 
-        const event = await storage.getEvent(event_id);
+        const event = await getCachedEvent(event_id);
         if (event) {
           const code = `CDPI${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
           const link = await storage.createCourtesyLink({
@@ -194,16 +213,38 @@ class EmailWorker {
             recipientName: name,
           });
 
-          // This will queue the email, which our *other* function
-          // (processEmailQueue) will pick up on a future cycle.
-          await emailService.sendCourtesyMassEmail(
-            email,
-            name,
-            event.title,
-            link.code,
-            event.date,
-            attachments
-          );
+          const eventDate =
+            event.date instanceof Date ? event.date : new Date(event.date as string | number);
+
+          if (event.courtesyTemplate?.trim()) {
+            const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${link.code}`;
+            const variables: Record<string, string> = {
+              nome: String(name),
+              evento: event.title,
+              data: Number.isNaN(eventDate.getTime()) ? "" : dateFormatter.format(eventDate),
+              link: redeemUrl,
+            };
+            const customMessageBoxHtml = renderTemplate(event.courtesyTemplate, variables);
+
+            await emailService.sendCourtesyMassEmail(
+              email,
+              name,
+              event.title,
+              link.code,
+              event.date,
+              attachments,
+              customMessageBoxHtml,
+            );
+          } else {
+            await emailService.sendCourtesyMassEmail(
+              email,
+              name,
+              event.title,
+              link.code,
+              event.date,
+              attachments,
+            );
+          }
         } else {
           console.warn(`Job ${job.id}: Event not found for ID ${event_id}`);
         }

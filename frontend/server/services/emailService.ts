@@ -13,6 +13,18 @@ if (process.env.SENDGRID_API_KEY) {
 
 const FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || "relacionamento.mkt@cdpipharma.com.br";
 
+/** Rough HTML to plain text for multipart/alternative body (no external deps). */
+function courtesyMessageHtmlToPlainText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 interface TicketEmailData {
   userName: string;
   eventTitle: string;
@@ -273,31 +285,35 @@ class EmailService {
     return this.sendEmail(email, "Redefinição de Senha - CDPI Pass", html, text);
   }
 
+  /**
+   * Sends the standard courtesy mass email layout. Header, CTA, notice box, and footer are fixed.
+   * @param customMessageBoxHtml - If set (already-interpolated HTML), replaces only the dynamic paragraphs
+   * inside `.message-box` before the static "Para resgatar..." line. Use placeholders resolved upstream.
+   */
   async sendCourtesyMassEmail(
     email: string,
     name: string,
     eventName: string,
     courtesyCode: string,
     eventDate: Date,
-    attachments?: Array<{ filename: string; content: string; type: string }>
+    attachments?: Array<{ filename: string; content: string; type: string }>,
+    customMessageBoxHtml?: string,
   ): Promise<boolean> {
     const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${courtesyCode}`;
     const subject = `Sua cortesia para o evento ${eventName}`;
 
-    const formattedEventDate = new Date(eventDate).toLocaleDateString('pt-BR', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
+    const defaultMessageInner = `
+              <p style="font-size: 18px;">Olá, <strong>${name}</strong>!</p>
+              <p>Você recebeu uma cortesia para o <strong>${eventName}</strong> nas datas <strong>quarta-feira e quinta-feira, 04 e 05 de março de 2026!</strong>!</p>
+              <p style="font-style: italic; color: #333;">
+                Um evento que tem como objetivo aprofundar a discussão sobre os critérios técnicos e regulatórios para comprovação de eficácia e segurança de medicamentos de liberação prolongada, considerando os parâmetros farmacocinéticos exigidos atualmente e a aplicação prática dos guias internacionais utilizados como referência regulatória.
+              </p>
+    `;
 
-    const redeemByDate = new Date(eventDate);
-    redeemByDate.setDate(redeemByDate.getDate() - 2);
-    const formattedRedeemByDate = redeemByDate.toLocaleDateString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric'
-    });
+    const messageInner =
+      customMessageBoxHtml !== undefined && customMessageBoxHtml.trim() !== ""
+        ? customMessageBoxHtml
+        : defaultMessageInner;
 
     const html = `
       <!DOCTYPE html>
@@ -339,11 +355,7 @@ class EmailService {
           </div>
           <div class="content">
             <div class="message-box">
-              <p style="font-size: 18px;">Olá, <strong>${name}</strong>!</p>
-              <p>Você recebeu uma cortesia para o <strong>${eventName}</strong> nas datas <strong>quarta-feira e quinta-feira, 04 e 05 de março de 2026!</strong>!</p>
-              <p style="font-style: italic; color: #333;">
-                Um evento que tem como objetivo aprofundar a discussão sobre os critérios técnicos e regulatórios para comprovação de eficácia e segurança de medicamentos de liberação prolongada, considerando os parâmetros farmacocinéticos exigidos atualmente e a aplicação prática dos guias internacionais utilizados como referência regulatória.
-              </p>
+              ${messageInner}
               <p>Para resgatar seu ingresso, clique no botão abaixo:</p>
             </div>
             
@@ -366,21 +378,32 @@ class EmailService {
       </html>
     `;
 
-    const text = `
+    const defaultTextBody = `
       Olá, ${name}!
 
       Você recebeu uma cortesia para o ${eventName} nas datas quarta-feira e quinta-feira, 04 e 05 de março de 2026!
 
       Um evento que tem como objetivo aprofundar a discussão sobre os critérios técnicos e regulatórios para comprovação de eficácia e segurança de medicamentos de liberação prolongada, considerando os parâmetros farmacocinéticos exigidos atualmente e a aplicação prática dos guias internacionais utilizados como referência regulatória.
-
-      Para resgatar seu ingresso, acesse o seguinte link:
-      ${redeemUrl}
-
-      ⚠️ É imprescindível fazer o resgate da sua cortesia até o prazo de <strong>48 horas</strong> após o recebimento dessa confirmação de inscrição para garantir a sua vaga e participar do evento.
-
-      Atenciosamente,
-      Equipe CDPI Pass
     `;
+
+    const textMessagePart =
+      customMessageBoxHtml !== undefined && customMessageBoxHtml.trim() !== ""
+        ? courtesyMessageHtmlToPlainText(customMessageBoxHtml)
+        : defaultTextBody.trim();
+
+    const text = `
+${textMessagePart}
+
+Para resgatar seu ingresso, acesse o seguinte link:
+${redeemUrl}
+
+Código: ${courtesyCode}
+
+⚠️ É imprescindível fazer o resgate da sua cortesia até o prazo de 48 horas após o recebimento dessa confirmação de inscrição para garantir a sua vaga e participar do evento.
+
+Atenciosamente,
+Equipe CDPI Pass
+`.trim();
 
     return this.sendEmail(email, subject, html, text, attachments);
   }
