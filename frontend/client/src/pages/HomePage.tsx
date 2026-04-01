@@ -277,10 +277,32 @@ export default function HomePage() {
           Sobre o Evento
         </h2>
         <p className="text-gray-600 mb-6 leading-relaxed">
-          O Workshop 360° na Indústria Farmacêutica é a mais nova iniciativa do CDPI voltada à capacitação prática e estratégica de profissionais do setor. 
+        Este evento nasce com um propósito claro: provocar uma mudança de mentalidade.
         </p>
         <p className="text-gray-600 mb-6 leading-relaxed">
-          Em suas edições, o evento traz uma visão completa do ciclo de vida do produto farma abordando as principais áreas que sustentam a indústria: Regulatório, Qualidade, Desenvolvimento Analítico, Produção e P&D.
+        A indústria já entendeu como ganhar velocidade.
+        Mas velocidade, sozinha, não sustenta mais vantagem.
+        </p>
+        <p className="text-gray-600 mb-6 leading-relaxed">
+        O próximo nível é outro.
+        É transformar eficiência em valor.
+        </p>
+        <p className="text-gray-600 mb-6 leading-relaxed">
+        Aqui, a conversa não gira só em torno de tecnologia ou automação.
+        Gira em torno do que realmente diferencia no cenário atual.
+        </p>
+        <p className="text-gray-600 mb-6 leading-relaxed">
+        Como transformar eficiência em percepção.
+        Entrega em experiência.
+        Operação em posicionamento.
+        </p>
+        <p className="text-gray-600 mb-6 leading-relaxed">
+        Mais do que conteúdo, este encontro reúne algumas das principais lideranças da indústria farmacêutica.
+        </p>
+        <p className="text-gray-600 mb-6 leading-relaxed">
+        Para conectar ideias.
+        Trocar experiências reais.
+        E discutir o que, de fato, vai definir os próximos movimentos do setor.
         </p>
       </div>
 
@@ -304,24 +326,6 @@ export default function HomePage() {
           </h2>
           
           <div className="space-y-4">
-            <div className="border rounded-lg">
-              <button
-                onClick={() => setExpandedFAQ(expandedFAQ === 'workshop' ? null : 'workshop')}
-                className="w-full px-6 py-4 text-left flex items-center justify-between hover:bg-gray-50 transition-colors"
-              >
-                <span className="font-semibold text-gray-900">O que é o WorkShop 360º?</span>
-                {expandedFAQ === 'workshop' ? 
-                  <ChevronUp className="h-5 w-5 text-gray-500" /> : 
-                  <ChevronDown className="h-5 w-5 text-gray-500" />
-                }
-              </button>
-              {expandedFAQ === 'workshop' && (
-                <div className="px-6 pb-4 text-gray-600">
-                  <p>O Workshop 360º é um evento completo que aborda todos os aspectos da indústria farmacêutica, desde pesquisa e desenvolvimento até regulamentação e comercialização.</p>
-                </div>
-              )}
-            </div>
-
             <div className="border rounded-lg">
               <button
                 onClick={() => setExpandedFAQ(expandedFAQ === 'garantir' ? null : 'garantir')}

@@ -77,7 +77,7 @@ export default function Navigation() {
                   >
                     Área de acesso
                   </button>
-                  {user?.isAdmin && user.email === "caueroriz@gmail.com" && (
+                  {user?.isAdmin && (
                     <button
                       onClick={() => setLocation("/cortesia-admin")}
                       className="text-white hover:bg-white/10 px-3 py-2 rounded-md text-sm font-medium transition-colors"
@@ -128,7 +128,7 @@ export default function Navigation() {
                       <User className="h-4 w-4 mr-2" />
                       Meu Perfil
                     </DropdownMenuItem>
-                    {user?.isAdmin && user.email === "caueroriz@gmail.com" && (
+                    {user?.isAdmin && (
                       <DropdownMenuItem
                         onClick={() => setLocation("/cortesia-admin")}
                         data-testid="menu-courtesy-admin-desktop"
@@ -170,7 +170,7 @@ export default function Navigation() {
                     <User className="h-4 w-4 mr-2" />
                     Meu Perfil
                   </DropdownMenuItem>
-                  {user?.isAdmin && user.email === "caueroriz@gmail.com" && (
+                  {user?.isAdmin && (
                     <DropdownMenuItem
                       onClick={() => setLocation("/cortesia-admin")}
                       data-testid="menu-courtesy-admin"
