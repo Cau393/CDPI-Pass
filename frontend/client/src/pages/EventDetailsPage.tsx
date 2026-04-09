@@ -66,7 +66,8 @@ export default function EventDetailsPage() {
         description: "Faça login ou cadastre-se para comprar ingressos",
         variant: "destructive",
       });
-      setLocation("/login");
+      const next = `${window.location.pathname}${window.location.search}`;
+      setLocation(`/login?next=${encodeURIComponent(next)}`);
       return;
     }
 

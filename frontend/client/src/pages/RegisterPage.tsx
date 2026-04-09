@@ -1,7 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertUserSchema, type InsertUser } from "@shared/schema";
 import { z } from "zod";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 
 const registerFormSchema = insertUserSchema.extend({
   birthDate: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, "Data deve estar no formato dd/mm/aaaa"),
@@ -31,6 +31,8 @@ type RegisterFormData = z.infer<typeof registerFormSchema>;
 
 export default function RegisterPage() {
   const [, setLocation] = useLocation();
+  const search = useSearch();
+  const nextRaw = useMemo(() => new URLSearchParams(search).get("next"), [search]);
   const { toast } = useToast();
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [verificationLink, setVerificationLink] = useState<string | null>(null);
@@ -65,8 +67,10 @@ export default function RegisterPage() {
       title: "Conta criada com sucesso!",
       description: "Enviamos um código para o seu e-mail.",
     });
-    // Redirect to the verification page, passing the email as a URL parameter
-    setLocation(`/verify-email?email=${data.email}`);
+    const emailQ = `email=${encodeURIComponent(data.email)}`;
+    const nextQ =
+      nextRaw != null && nextRaw !== "" ? `&next=${encodeURIComponent(nextRaw)}` : "";
+    setLocation(`/verify-email?${emailQ}${nextQ}`);
     }
   },
     onError: (error: Error) => {
@@ -330,8 +334,12 @@ export default function RegisterPage() {
             
             <div className="text-center">
               <span className="text-gray-600">Já tem conta? </span>
-              <a 
-                href="/login" 
+              <a
+                href={
+                  nextRaw != null && nextRaw !== ""
+                    ? `/login?next=${encodeURIComponent(nextRaw)}`
+                    : "/login"
+                }
                 className="text-primary hover:text-secondary font-medium"
                 data-testid="link-login"
               >

@@ -1,8 +1,9 @@
-import { useState, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
+import { getValidatedNextPath } from "@/lib/authRedirect";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +15,8 @@ import { loginSchema, type LoginRequest } from "@shared/schema";
 
 export default function LoginPage() {
   const [, setLocation] = useLocation();
+  const search = useSearch();
+  const nextRaw = useMemo(() => new URLSearchParams(search).get("next"), [search]);
   const { toast } = useToast();
   const [rememberMe, setRememberMe] = useState(false);
 
@@ -36,10 +39,13 @@ export default function LoginPage() {
 
       if (data.user.emailVerified) {
         toast({ title: "Login realizado com sucesso!" });
-        setLocation("/");
+        setLocation(getValidatedNextPath(nextRaw));
       } else {
         toast({ title: "Verificação necessária", description: "Por favor, verifique seu e-mail." });
-        setLocation(`/verify-email?email=${data.user.email}`);
+        const emailQ = `email=${encodeURIComponent(data.user.email)}`;
+        const nextQ =
+          nextRaw != null && nextRaw !== "" ? `&next=${encodeURIComponent(nextRaw)}` : "";
+        setLocation(`/verify-email?${emailQ}${nextQ}`);
       }
     },
     onError: (error: Error) => {
@@ -51,10 +57,9 @@ export default function LoginPage() {
     },
   });
 
-  // This is the new submission handler
   const handleLogin = (data: LoginRequest) => {
     loginMutation.mutate(data);
-    };
+  };
 
   // The old onSubmit function is no longer needed.
 
@@ -140,8 +145,12 @@ export default function LoginPage() {
             
             <div className="text-center">
               <span className="text-gray-600">Não tem conta? </span>
-              <a 
-                href="/register" 
+              <a
+                href={
+                  nextRaw != null && nextRaw !== ""
+                    ? `/register?next=${encodeURIComponent(nextRaw)}`
+                    : "/register"
+                }
                 className="text-primary hover:text-secondary font-medium"
                 data-testid="link-register"
               >

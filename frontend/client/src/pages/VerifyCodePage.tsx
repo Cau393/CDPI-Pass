@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
-import { useLocation } from "wouter";
+import { useState, useEffect, useMemo } from "react";
+import { useLocation, useSearch } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getValidatedNextPath } from "@/lib/authRedirect";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,8 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export default function VerifyCodePage() {
-    const [location, setLocation] = useLocation();
-    const [email] = useState(new URLSearchParams(window.location.search).get("email") || "");
+    const [, setLocation] = useLocation();
+    const search = useSearch();
+    const email = useMemo(() => new URLSearchParams(search).get("email") || "", [search]);
+    const nextRaw = useMemo(() => new URLSearchParams(search).get("next"), [search]);
     const [code, setCode] = useState("");
     const { toast } = useToast();
     const [cooldown, setCooldown] = useState(30);
@@ -23,12 +26,19 @@ export default function VerifyCodePage() {
     }, [cooldown]);
 
     const verifyMutation = useMutation({
-        mutationFn: () => apiRequest("POST", "/api/auth/verify-code", { email, code }),
-        onSuccess: (data: any) => {
+        mutationFn: async () => {
+            const res = await apiRequest("POST", "/api/auth/verify-code", { email, code });
+            return res.json() as Promise<{ token: string }>;
+        },
+        onSuccess: (data: { token?: string }) => {
+            if (!data?.token) {
+                toast({ title: "Erro", description: "Resposta inválida do servidor.", variant: "destructive" });
+                return;
+            }
             localStorage.setItem("token", data.token);
             queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
             toast({ title: "E-mail verificado com sucesso!" });
-            setLocation("/");
+            setLocation(getValidatedNextPath(nextRaw));
         },
         onError: (error: Error) => toast({ title: "Erro", description: error.message, variant: "destructive" }),
     });

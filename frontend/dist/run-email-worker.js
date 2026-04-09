@@ -14,6 +14,8 @@ import jwt from "jsonwebtoken";
 // shared/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
+  certificates: () => certificates,
+  certificatesRelations: () => certificatesRelations,
   courtesyAttendees: () => courtesyAttendees,
   courtesyLinks: () => courtesyLinks,
   courtesyLinksRelations: () => courtesyLinksRelations,
@@ -43,7 +45,10 @@ import {
   timestamp,
   decimal,
   boolean,
-  integer
+  integer,
+  serial,
+  jsonb,
+  unique
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -76,8 +81,25 @@ var events = pgTable("events", {
   currentAttendees: integer("current_attendees").default(0),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow()
+  updatedAt: timestamp("updated_at").defaultNow(),
+  /** S3 URL of the .docx certificate template (filled to PDF by AWS Lambda). */
+  certificateTemplateUrl: text("certificate_template_url"),
+  /** Custom HTML for courtesy mass-send emails; placeholders {nome}, {evento}, {data}, {link}. */
+  courtesyTemplate: text("courtesy_template")
 });
+var certificates = pgTable(
+  "certificates",
+  {
+    id: serial("id").primaryKey(),
+    userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+    certificateUrl: text("certificate_url").notNull(),
+    fullName: text("full_name").notNull(),
+    npsResponses: jsonb("nps_responses").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull()
+  },
+  (t) => [unique("certificates_user_id_event_id_unique").on(t.userId, t.eventId)]
+);
 var courtesyLinks = pgTable("courtesy_links", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   code: varchar("code", { length: 100 }).notNull().unique(),
@@ -152,11 +174,23 @@ var massSendJobs = pgTable("mass_send_jobs", {
 });
 var usersRelations = relations(users, ({ many }) => ({
   orders: many(orders),
-  courtesyLinks: many(courtesyLinks)
+  courtesyLinks: many(courtesyLinks),
+  certificates: many(certificates)
 }));
 var eventsRelations = relations(events, ({ many }) => ({
   orders: many(orders),
-  courtesyLinks: many(courtesyLinks)
+  courtesyLinks: many(courtesyLinks),
+  certificates: many(certificates)
+}));
+var certificatesRelations = relations(certificates, ({ one }) => ({
+  user: one(users, {
+    fields: [certificates.userId],
+    references: [users.id]
+  }),
+  event: one(events, {
+    fields: [certificates.eventId],
+    references: [events.id]
+  })
 }));
 var ordersRelations = relations(orders, ({ one }) => ({
   user: one(users, {
@@ -315,6 +349,18 @@ var DatabaseStorage = class {
     startOfToday.setHours(0, 0, 0, 0);
     return await db.select().from(events).where(eq(events.isActive, true)).orderBy(asc(events.date));
   }
+  async getAllEventsForAdmin() {
+    return await db.select().from(events).orderBy(asc(events.date));
+  }
+  async getAllEventsForAdminPaginated(page, limit) {
+    const safePage = Math.max(1, Math.floor(page));
+    const safeLimit = Math.min(100, Math.max(1, Math.floor(limit)));
+    const offset = (safePage - 1) * safeLimit;
+    const [countRow] = await db.select({ n: count() }).from(events);
+    const total = Number(countRow?.n ?? 0);
+    const list = await db.select().from(events).orderBy(desc(events.date)).limit(safeLimit).offset(offset);
+    return { events: list, total };
+  }
   async getEvent(id) {
     const [event] = await db.select().from(events).where(eq(events.id, id));
     return event;
@@ -330,6 +376,15 @@ var DatabaseStorage = class {
   async updateEvent(id, updates) {
     const [event] = await db.update(events).set({ ...updates, updatedAt: /* @__PURE__ */ new Date() }).where(eq(events.id, id)).returning();
     return event;
+  }
+  async deleteEvent(id) {
+    return await db.transaction(async (tx) => {
+      await tx.delete(orders).where(eq(orders.eventId, id));
+      await tx.delete(courtesyLinks).where(eq(courtesyLinks.eventId, id));
+      await tx.delete(certificates).where(eq(certificates.eventId, id));
+      const result = await tx.delete(events).where(eq(events.id, id));
+      return (result.rowCount ?? 0) > 0;
+    });
   }
   // Order operations
   async getOrder(id) {
@@ -500,6 +555,9 @@ if (process.env.SENDGRID_API_KEY) {
   mailService.setApiKey(process.env.SENDGRID_API_KEY);
 }
 var FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || "relacionamento.mkt@cdpipharma.com.br";
+function courtesyMessageHtmlToPlainText(html) {
+  return html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n\n").replace(/<\/li>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+}
 var EmailService = class {
   async sendEmail(to, subject, html, text2, attachments) {
     if (!process.env.SENDGRID_API_KEY) {
@@ -656,6 +714,26 @@ var EmailService = class {
     `;
     return this.sendEmail(email, `Seu ingresso para ${data.eventTitle} - CDPI Pass`, html, text2);
   }
+  /**
+   * E-mail simples com o link de checkout (cartão): sem template de cobrança Asaas;
+   * apenas o link gerado pelo nosso fluxo.
+   */
+  async sendCardPaymentLinkEmail(email, data) {
+    const html = `
+      <p>Ol\xE1, <strong>${data.userName}</strong>,</p>
+      <p>Para pagar com cart\xE3o o ingresso <strong>${data.eventTitle}</strong>, use o link abaixo:</p>
+      <p><a href="${data.paymentUrl}">${data.paymentUrl}</a></p>
+      <p>Ap\xF3s a confirma\xE7\xE3o do pagamento, voc\xEA receber\xE1 o QR Code do ingresso por e-mail.</p>
+      <p style="color:#666;font-size:12px;">CDPI Pass</p>
+    `;
+    const text2 = `Ol\xE1, ${data.userName}. Link para pagamento com cart\xE3o (${data.eventTitle}): ${data.paymentUrl}`;
+    return this.sendEmail(
+      email,
+      `Link de pagamento \u2014 ${data.eventTitle} \u2014 CDPI Pass`,
+      html,
+      text2
+    );
+  }
   async processEmailQueue() {
     if (!process.env.SENDGRID_API_KEY) {
       console.log("SendGrid not configured, skipping email queue processing");
@@ -695,22 +773,22 @@ var EmailService = class {
     const text2 = `Acesse este link para redefinir sua senha: ${resetLink}`;
     return this.sendEmail(email, "Redefini\xE7\xE3o de Senha - CDPI Pass", html, text2);
   }
-  async sendCourtesyMassEmail(email, name, eventName, courtesyCode, eventDate, attachments) {
+  /**
+   * Sends the standard courtesy mass email layout. Header, CTA, notice box, and footer are fixed.
+   * @param customMessageBoxHtml - If set (already-interpolated HTML), replaces only the dynamic paragraphs
+   * inside `.message-box` before the static "Para resgatar..." line. Use placeholders resolved upstream.
+   */
+  async sendCourtesyMassEmail(email, name, eventName, courtesyCode, eventDate, attachments, customMessageBoxHtml) {
     const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${courtesyCode}`;
     const subject = `Sua cortesia para o evento ${eventName}`;
-    const formattedEventDate = new Date(eventDate).toLocaleDateString("pt-BR", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric"
-    });
-    const redeemByDate = new Date(eventDate);
-    redeemByDate.setDate(redeemByDate.getDate() - 2);
-    const formattedRedeemByDate = redeemByDate.toLocaleDateString("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric"
-    });
+    const defaultMessageInner = `
+              <p style="font-size: 18px;">Ol\xE1, <strong>${name}</strong>!</p>
+              <p>Voc\xEA recebeu uma cortesia para o <strong>${eventName}</strong> nas datas <strong>quarta-feira e quinta-feira, 04 e 05 de mar\xE7o de 2026!</strong>!</p>
+              <p style="font-style: italic; color: #333;">
+                Um evento que tem como objetivo aprofundar a discuss\xE3o sobre os crit\xE9rios t\xE9cnicos e regulat\xF3rios para comprova\xE7\xE3o de efic\xE1cia e seguran\xE7a de medicamentos de libera\xE7\xE3o prolongada, considerando os par\xE2metros farmacocin\xE9ticos exigidos atualmente e a aplica\xE7\xE3o pr\xE1tica dos guias internacionais utilizados como refer\xEAncia regulat\xF3ria.
+              </p>
+    `;
+    const messageInner = customMessageBoxHtml !== void 0 && customMessageBoxHtml.trim() !== "" ? customMessageBoxHtml : defaultMessageInner;
     const html = `
       <!DOCTYPE html>
       <html>
@@ -751,11 +829,7 @@ var EmailService = class {
           </div>
           <div class="content">
             <div class="message-box">
-              <p style="font-size: 18px;">Ol\xE1, <strong>${name}</strong>!</p>
-              <p>Voc\xEA recebeu uma cortesia para o <strong>${eventName}</strong> nas datas <strong>quarta-feira e quinta-feira, 04 e 05 de mar\xE7o de 2026!</strong>!</p>
-              <p style="font-style: italic; color: #333;">
-                Um evento que tem como objetivo aprofundar a discuss\xE3o sobre os crit\xE9rios t\xE9cnicos e regulat\xF3rios para comprova\xE7\xE3o de efic\xE1cia e seguran\xE7a de medicamentos de libera\xE7\xE3o prolongada, considerando os par\xE2metros farmacocin\xE9ticos exigidos atualmente e a aplica\xE7\xE3o pr\xE1tica dos guias internacionais utilizados como refer\xEAncia regulat\xF3ria.
-              </p>
+              ${messageInner}
               <p>Para resgatar seu ingresso, clique no bot\xE3o abaixo:</p>
             </div>
             
@@ -777,21 +851,27 @@ var EmailService = class {
       </body>
       </html>
     `;
-    const text2 = `
+    const defaultTextBody = `
       Ol\xE1, ${name}!
 
       Voc\xEA recebeu uma cortesia para o ${eventName} nas datas quarta-feira e quinta-feira, 04 e 05 de mar\xE7o de 2026!
 
       Um evento que tem como objetivo aprofundar a discuss\xE3o sobre os crit\xE9rios t\xE9cnicos e regulat\xF3rios para comprova\xE7\xE3o de efic\xE1cia e seguran\xE7a de medicamentos de libera\xE7\xE3o prolongada, considerando os par\xE2metros farmacocin\xE9ticos exigidos atualmente e a aplica\xE7\xE3o pr\xE1tica dos guias internacionais utilizados como refer\xEAncia regulat\xF3ria.
-
-      Para resgatar seu ingresso, acesse o seguinte link:
-      ${redeemUrl}
-
-      \u26A0\uFE0F \xC9 imprescind\xEDvel fazer o resgate da sua cortesia at\xE9 o prazo de <strong>48 horas</strong> ap\xF3s o recebimento dessa confirma\xE7\xE3o de inscri\xE7\xE3o para garantir a sua vaga e participar do evento.
-
-      Atenciosamente,
-      Equipe CDPI Pass
     `;
+    const textMessagePart = customMessageBoxHtml !== void 0 && customMessageBoxHtml.trim() !== "" ? courtesyMessageHtmlToPlainText(customMessageBoxHtml) : defaultTextBody.trim();
+    const text2 = `
+${textMessagePart}
+
+Para resgatar seu ingresso, acesse o seguinte link:
+${redeemUrl}
+
+C\xF3digo: ${courtesyCode}
+
+\u26A0\uFE0F \xC9 imprescind\xEDvel fazer o resgate da sua cortesia at\xE9 o prazo de 48 horas ap\xF3s o recebimento dessa confirma\xE7\xE3o de inscri\xE7\xE3o para garantir a sua vaga e participar do evento.
+
+Atenciosamente,
+Equipe CDPI Pass
+`.trim();
     return this.sendEmail(email, subject, html, text2, attachments);
   }
   async _sendEmailFromQueue(to, subject, html, text2, attachments) {
@@ -822,6 +902,16 @@ var emailService = new EmailService();
 
 // server/workers/emailWorker.ts
 import { parse } from "csv-parse/sync";
+
+// server/utils/templateRenderer.ts
+function renderTemplate(html, variables) {
+  return Object.entries(variables).reduce((result, [key, value]) => {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return result.replace(new RegExp(`\\{${escaped}\\}`, "g"), value);
+  }, html);
+}
+
+// server/workers/emailWorker.ts
 var EmailWorker = class {
   isRunning = false;
   processInterval = null;
@@ -935,6 +1025,20 @@ var EmailWorker = class {
       });
       const attachments = job.attachmentData ? [JSON.parse(job.attachmentData)] : void 0;
       console.log(`Job ${job.id}: Found ${results.length} rows to process.`);
+      const eventCache = /* @__PURE__ */ new Map();
+      const getCachedEvent = async (eventId) => {
+        if (eventCache.has(eventId)) {
+          return eventCache.get(eventId);
+        }
+        const ev = await storage.getEvent(eventId);
+        eventCache.set(eventId, ev);
+        return ev;
+      };
+      const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric"
+      });
       for (const row of results) {
         const normalizedRow = Object.keys(row).reduce((acc, key) => {
           acc[key.trim()] = row[key];
@@ -945,7 +1049,7 @@ var EmailWorker = class {
           console.warn(`Job ${job.id}: Skipping row due to missing data:`, normalizedRow);
           continue;
         }
-        const event = await storage.getEvent(event_id);
+        const event = await getCachedEvent(event_id);
         if (event) {
           const code = `CDPI${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
           const link = await storage.createCourtesyLink({
@@ -957,14 +1061,35 @@ var EmailWorker = class {
             recipientEmail: email,
             recipientName: name
           });
-          await emailService.sendCourtesyMassEmail(
-            email,
-            name,
-            event.title,
-            link.code,
-            event.date,
-            attachments
-          );
+          const eventDate = event.date instanceof Date ? event.date : new Date(event.date);
+          if (event.courtesyTemplate?.trim()) {
+            const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${link.code}`;
+            const variables = {
+              nome: String(name),
+              evento: event.title,
+              data: Number.isNaN(eventDate.getTime()) ? "" : dateFormatter.format(eventDate),
+              link: redeemUrl
+            };
+            const customMessageBoxHtml = renderTemplate(event.courtesyTemplate, variables);
+            await emailService.sendCourtesyMassEmail(
+              email,
+              name,
+              event.title,
+              link.code,
+              event.date,
+              attachments,
+              customMessageBoxHtml
+            );
+          } else {
+            await emailService.sendCourtesyMassEmail(
+              email,
+              name,
+              event.title,
+              link.code,
+              event.date,
+              attachments
+            );
+          }
         } else {
           console.warn(`Job ${job.id}: Event not found for ID ${event_id}`);
         }
