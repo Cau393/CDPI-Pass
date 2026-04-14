@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import {
   CalendarDays,
   CalendarPlus,
+  DollarSign,
   FileText,
   FileUp,
   LogOut,
@@ -105,6 +106,12 @@ export default function AdminSidebar() {
               icon={Users}
               label="Participantes"
               tooltip="Participantes"
+            />
+            <NavItem
+              href="/admin/comercial/vendas"
+              icon={DollarSign}
+              label="Vendas Comercial"
+              tooltip="Vendas do Comercial"
             />
             <NavItem
               href="/admin/events"

@@ -28,6 +28,7 @@ import AdminCourtesyTemplatePage from "@/pages/AdminCourtesyTemplatePage";
 import AdminCreateEventPage from "@/pages/AdminCreateEventPage";
 import AdminEventsListPage from "@/pages/AdminEventsListPage";
 import AdminEditEventPage from "@/pages/AdminEditEventPage";
+import AdminCommercialSalesPage from "@/pages/AdminCommercialSalesPage";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -94,6 +95,13 @@ function Router() {
           <AdminRoute>
             <AdminShell>
               <AdminCourtesyTemplatePage />
+            </AdminShell>
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/comercial/vendas">
+          <AdminRoute>
+            <AdminShell>
+              <AdminCommercialSalesPage />
             </AdminShell>
           </AdminRoute>
         </Route>

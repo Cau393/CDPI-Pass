@@ -8,7 +8,8 @@ import { db } from "./db";
 import { z } from "zod";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { 
   insertUserSchema, 
   loginSchema, 
@@ -20,10 +21,13 @@ import {
   orders,
   certificates,
   users,
+  courtesyLinks,
+  courtesyAttendees,
 } from "@shared/schema";
 import { validateCpf, validateEmail, formatCpf, formatPhone } from "./utils/validation";
 import { parseBrazilEventLocalDateTime } from "./utils/eventDateTime";
 import { sanitizeCourtesyTemplateHtml } from "./utils/courtesyTemplateSanitize";
+import { mapCommercialSales } from "./utils/commercialSalesMapper";
 import { emailService } from "./services/emailService";
 import { asaasService } from "./services/asaasService";
 import { qrCodeService } from "./services/qrCodeService";
@@ -849,6 +853,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("GET /api/admin/events/:eventId/participants:", error);
       res.status(500).json({ message: "Erro ao listar participantes" });
+    }
+  });
+
+  app.get("/api/admin/events/:eventId/commercial-sales", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ error: "Unauthorized" });
+      }
+
+      const parsed = z.string().uuid().safeParse(req.params.eventId);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "eventId inválido" });
+      }
+      const eventId = parsed.data;
+
+      const event = await storage.getEvent(eventId);
+      if (!event) {
+        return res.status(404).json({ error: "Event not found" });
+      }
+
+      const sellers = alias(users, "sellers");
+
+      const rows = await db
+        .select({
+          id: orders.id,
+          status: orders.status,
+          buyerName: users.name,
+          cpf: orders.cpf,
+          buyerEmail: users.email,
+          buyerPhone: users.phone,
+          courtesyAttendeeId: orders.courtesyAttendeeId,
+          attendeeName: courtesyAttendees.name,
+          attendeeCpf: courtesyAttendees.cpf,
+          attendeeEmail: courtesyAttendees.email,
+          attendeePhone: courtesyAttendees.phone,
+          sellerName: sellers.name,
+          courtesyLinkId: orders.courtesyLinkId,
+          createdAt: orders.createdAt,
+        })
+        .from(orders)
+        .innerJoin(users, eq(orders.userId, users.id))
+        .leftJoin(courtesyAttendees, eq(orders.courtesyAttendeeId, courtesyAttendees.id))
+        .leftJoin(courtesyLinks, eq(orders.courtesyLinkId, courtesyLinks.id))
+        .leftJoin(sellers, eq(courtesyLinks.createdBy, sellers.id))
+        .where(and(
+          eq(orders.eventId, eventId),
+          inArray(orders.status, ["pending", "paid"]),
+        ))
+        .orderBy(desc(orders.createdAt));
+
+      const data = mapCommercialSales(rows);
+      res.json(data);
+    } catch (error) {
+      console.error("GET /api/admin/events/:eventId/commercial-sales:", error);
+      res.status(500).json({ error: "Erro ao carregar dados de vendas" });
     }
   });
 
