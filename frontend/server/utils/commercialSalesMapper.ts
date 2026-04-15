@@ -19,10 +19,18 @@ export interface CommercialSaleOutput {
   id: string;
   vendedor: string;
   status: "pago" | "pendente";
+  /** DB status for admin actions (e.g. cancel). */
+  orderDbStatus: "pending" | "paid" | "courtesy";
   nome: string;
   cpf: string;
   email: string;
   telefone: string;
+}
+
+function orderStatusRank(s: string): number {
+  if (s === "paid") return 2;
+  if (s === "courtesy") return 1;
+  return 0;
 }
 
 /**
@@ -38,7 +46,7 @@ export function mapCommercialSales(
   for (const row of rows) {
     const key = row.cpf;
     const existing = seen.get(key);
-    if (!existing || (row.status === "paid" && existing.status !== "paid")) {
+    if (!existing || orderStatusRank(row.status) > orderStatusRank(existing.status)) {
       seen.set(key, row);
     }
   }
@@ -46,13 +54,15 @@ export function mapCommercialSales(
   return Array.from(seen.values()).map((row) => {
     const hasLink = !!row.courtesyLinkId;
     const isCourtesyAttendee = !!row.courtesyAttendeeId;
+    const isPaidLike = row.status === "paid" || row.status === "courtesy";
 
     return {
       id: row.id,
       vendedor: hasLink
         ? (row.sellerName ?? "Usuário Removido")
         : "N/A",
-      status: row.status === "paid" ? "pago" as const : "pendente" as const,
+      status: isPaidLike ? ("pago" as const) : ("pendente" as const),
+      orderDbStatus: row.status as "pending" | "paid" | "courtesy",
       nome: isCourtesyAttendee
         ? (row.attendeeName ?? row.buyerName)
         : row.buyerName,

@@ -28,6 +28,7 @@ import { validateCpf, validateEmail, formatCpf, formatPhone } from "./utils/vali
 import { parseBrazilEventLocalDateTime } from "./utils/eventDateTime";
 import { sanitizeCourtesyTemplateHtml } from "./utils/courtesyTemplateSanitize";
 import { mapCommercialSales } from "./utils/commercialSalesMapper";
+import { buildCancellationEmailHtml } from "./utils/cancellationEmailTemplate";
 import { emailService } from "./services/emailService";
 import { asaasService } from "./services/asaasService";
 import { qrCodeService } from "./services/qrCodeService";
@@ -826,28 +827,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
           email: users.email,
           phone: users.phone,
           ticketId: orders.id,
+          orderStatus: orders.status,
+          amntUsed: orders.amntUsed,
+          maxUses: orders.maxUses,
           qrCodeUsed: orders.qrCodeUsed,
           qrCodeUsedAt: orders.qrCodeUsedAt,
         })
         .from(orders)
         .innerJoin(users, eq(orders.userId, users.id))
-        .where(and(eq(orders.eventId, eventId), eq(orders.status, "paid")))
+        .where(
+          and(
+            eq(orders.eventId, eventId),
+            inArray(orders.status, ["paid", "courtesy"]),
+          ),
+        )
         .orderBy(asc(users.name));
 
-      const data = rows.map((r) => ({
-        userId: r.userId,
-        name: r.name,
-        cpf: r.cpf,
-        email: r.email,
-        phone: r.phone,
-        ticketId: r.ticketId,
-        checkedIn: r.qrCodeUsed === true,
-        checkedInAt: r.qrCodeUsedAt
-          ? r.qrCodeUsedAt instanceof Date
-            ? r.qrCodeUsedAt.toISOString()
-            : new Date(r.qrCodeUsedAt as string).toISOString()
-          : null,
-      }));
+      const data = rows.map((r) => {
+        const used = r.amntUsed ?? 0;
+        const maxU = r.maxUses ?? 1;
+        return {
+          userId: r.userId,
+          name: r.name,
+          cpf: r.cpf,
+          email: r.email,
+          phone: r.phone,
+          ticketId: r.ticketId,
+          orderStatus: r.orderStatus,
+          amntUsed: used,
+          maxUses: maxU,
+          checkedIn: used > 0,
+          checkedInAt: r.qrCodeUsedAt
+            ? r.qrCodeUsedAt instanceof Date
+              ? r.qrCodeUsedAt.toISOString()
+              : new Date(r.qrCodeUsedAt as string).toISOString()
+            : null,
+        };
+      });
 
       res.json({ data, total: data.length });
     } catch (error) {
@@ -899,7 +915,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .leftJoin(sellers, eq(courtesyLinks.createdBy, sellers.id))
         .where(and(
           eq(orders.eventId, eventId),
-          inArray(orders.status, ["pending", "paid"]),
+          inArray(orders.status, ["pending", "paid", "courtesy"]),
         ))
         .orderBy(desc(orders.createdAt));
 
@@ -927,7 +943,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Ticket not found" });
       }
 
-      if (order.status !== "paid") {
+      if (order.status === "cancelled") {
+        return res.status(400).json({
+          error: "Ingresso Cancelado",
+          message: "Ingresso Cancelado",
+        });
+      }
+
+      if (order.status !== "paid" && order.status !== "courtesy") {
         return res.status(400).json({ error: "Ticket not valid for check-in" });
       }
 
@@ -946,16 +969,137 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Mirrors /api/verify-ticket DB update; manual admin override.
       const now = new Date();
+      const newUsed = used + 1;
       await storage.updateOrder(ticketId, {
         qrCodeUsed: true,
         qrCodeUsedAt: now,
-        amntUsed: used + 1,
+        amntUsed: newUsed,
       });
 
-      res.json({ success: true, checkedInAt: now.toISOString() });
+      res.json({
+        success: true,
+        checkedInAt: now.toISOString(),
+        amntUsed: newUsed,
+        maxUses,
+        checkedIn: newUsed > 0,
+      });
     } catch (error) {
       console.error("POST /api/admin/tickets/:ticketId/check-in:", error);
       res.status(500).json({ message: "Erro ao registrar presença" });
+    }
+  });
+
+  app.post("/api/admin/orders/:id/cancel", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({
+          success: false,
+          message: "Acesso negado. Apenas administradores.",
+        });
+      }
+      const parsed = z.string().uuid().safeParse(req.params.id);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, message: "orderId inválido" });
+      }
+      const orderId = parsed.data;
+
+      const result = await storage.cancelOrderAndInvalidateQr(orderId);
+      if (!result.ok) {
+        if (result.code === "not_found") {
+          return res.status(404).json({
+            success: false,
+            message: "Pedido não encontrado.",
+          });
+        }
+        if (result.code === "already_cancelled") {
+          return res.status(409).json({
+            success: false,
+            message: "Este ingresso já está cancelado.",
+          });
+        }
+        if (result.code === "invalid_status") {
+          return res.status(400).json({
+            success: false,
+            message: `Não é possível cancelar um pedido com status: ${result.status}`,
+          });
+        }
+        return res.status(400).json({ success: false, message: "Não foi possível cancelar o pedido." });
+      }
+
+      const buyer = await storage.getUser(result.order.userId);
+      const event = await storage.getEvent(result.order.eventId);
+      if (buyer?.email) {
+        const html = buildCancellationEmailHtml(
+          buyer.name ?? "Participante",
+          event?.title ?? "Evento",
+        );
+        const text = [
+          `Olá, ${buyer.name ?? "Participante"},`,
+          "",
+          `Sua inscrição no evento ${event?.title ?? "Evento"} foi cancelada pela organização.`,
+          "O QR Code do ingresso foi invalidado.",
+          "",
+          "Equipe CDPI Pass",
+        ].join("\n");
+        await storage.addEmailToQueue({
+          to: buyer.email,
+          subject: "Cancelamento de inscrição — CDPI Pass",
+          html,
+          text,
+          attachments: null,
+        });
+      }
+
+      res.json({
+        success: true,
+        message:
+          "Inscrição cancelada com sucesso. O QR Code foi invalidado e um e-mail foi enfileirado.",
+      });
+    } catch (error) {
+      console.error("POST /api/admin/orders/:id/cancel:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro interno ao cancelar inscrição",
+      });
+    }
+  });
+
+  app.post("/api/admin/orders/:id/undo-check-in", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsed = z.string().uuid().safeParse(req.params.id);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "orderId inválido" });
+      }
+      const orderId = parsed.data;
+
+      const updated = await storage.undoOrderCheckIn(orderId);
+      const amntUsed = updated.amntUsed ?? 0;
+      const maxUses = updated.maxUses ?? 1;
+      res.json({
+        success: true,
+        message: "Presença desmarcada com sucesso.",
+        data: {
+          checkedIn: amntUsed > 0,
+          amntUsed,
+          maxUses,
+        },
+      });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Erro ao desmarcar presença";
+      console.error("POST /api/admin/orders/:id/undo-check-in:", error);
+      if (msg === "Pedido não encontrado") {
+        return res.status(400).json({ error: msg });
+      }
+      if (
+        msg === "Não é possível alterar presença de ingresso cancelado" ||
+        msg === "Este ingresso não possui check-in para ser desmarcado"
+      ) {
+        return res.status(400).json({ error: msg });
+      }
+      res.status(400).json({ error: msg });
     }
   });
 
@@ -1280,35 +1424,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Asaas webhook for payment notifications
-  // Reset ticket - Admin only
-  app.post("/api/reset-ticket/:orderId", authenticateToken, async (req: any, res) => {
-    try {
-      const userId = req.user.id;
-      const user = await storage.getUser(userId);
-      
-      // Check if user is admin
-      if (!user?.isAdmin) {
-        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
-      }
-      
-      const { orderId } = req.params;
-      const order = await storage.getOrder(orderId);
-      
-      if (!order) {
-        return res.status(404).json({ message: "Pedido não encontrado" });
-      }
-
-      await storage.updateOrder(orderId, { 
-        qrCodeUsed: false,
-        qrCodeUsedAt: null
-      });
-
-      res.json({ message: "Ticket resetado" });
-    } catch (error) {
-      console.error("Reset ticket error:", error);
-      res.status(500).json({ message: "Erro ao resetar ticket" });
-    }
-  });
 
   // Verify ticket endpoint - Admin only
   app.post("/api/verify-ticket", authenticateToken, async (req: any, res) => {
@@ -1353,6 +1468,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      if (order.status === "cancelled") {
+        return res.status(400).json({
+          success: false,
+          message: "Ingresso Cancelado",
+          error: "Ingresso Cancelado",
+        });
+      }
+
       // Check if ticket was already used more than it should
       if (order.amntUsed >= order.maxUses) {
         return res.status(400).json({ 
@@ -1361,11 +1484,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Check if order is paid
-      if (order.status !== 'paid') {
-        return res.status(400).json({ 
-          success: false, 
-          message: "Pagamento não confirmado" 
+      if (order.status !== "paid" && order.status !== "courtesy") {
+        return res.status(400).json({
+          success: false,
+          message: "Pagamento não confirmado.",
+          error: "Pagamento não confirmado.",
         });
       }
 

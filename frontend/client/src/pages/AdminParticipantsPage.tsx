@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Search, UserCheck } from "lucide-react";
+import { Loader2, Search, UserCheck, UserMinus, UserX } from "lucide-react";
 import EventSelector from "@/components/admin/EventSelector";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,17 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import type { Event } from "@shared/schema";
@@ -31,6 +42,9 @@ interface Participant {
   email: string;
   phone: string;
   ticketId: string;
+  orderStatus: string;
+  amntUsed: number;
+  maxUses: number;
   checkedIn: boolean;
   checkedInAt: string | null;
 }
@@ -72,6 +86,8 @@ export default function AdminParticipantsPage() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [checkingTicketId, setCheckingTicketId] = useState<string | null>(null);
+  const [undoingTicketId, setUndoingTicketId] = useState<string | null>(null);
+  const [cancellingTicketId, setCancellingTicketId] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
@@ -123,6 +139,10 @@ export default function AdminParticipantsPage() {
       if (res.status === 409) {
         const at =
           typeof body.checkedInAt === "string" ? body.checkedInAt : null;
+        const maxU =
+          typeof body.maxUses === "number" ? body.maxUses : undefined;
+        const used =
+          typeof body.amntUsed === "number" ? body.amntUsed : undefined;
         queryClient.setQueryData<ParticipantsResponse | undefined>(
           ["/api/admin/events", selectedEvent?.id, "participants"],
           (prev) => {
@@ -131,7 +151,13 @@ export default function AdminParticipantsPage() {
               ...prev,
               data: prev.data.map((row) =>
                 row.ticketId === ticketId
-                  ? { ...row, checkedIn: true, checkedInAt: at }
+                  ? {
+                      ...row,
+                      checkedIn: true,
+                      checkedInAt: at,
+                      ...(maxU !== undefined ? { maxUses: maxU } : {}),
+                      ...(used !== undefined ? { amntUsed: used } : {}),
+                    }
                   : row,
               ),
             };
@@ -152,6 +178,12 @@ export default function AdminParticipantsPage() {
 
       const checkedInAt =
         typeof body.checkedInAt === "string" ? body.checkedInAt : null;
+      const amntUsed =
+        typeof body.amntUsed === "number" ? body.amntUsed : undefined;
+      const maxUses =
+        typeof body.maxUses === "number" ? body.maxUses : undefined;
+      const checkedIn =
+        typeof body.checkedIn === "boolean" ? body.checkedIn : true;
 
       queryClient.setQueryData<ParticipantsResponse | undefined>(
         ["/api/admin/events", selectedEvent?.id, "participants"],
@@ -161,7 +193,13 @@ export default function AdminParticipantsPage() {
             ...prev,
             data: prev.data.map((row) =>
               row.ticketId === ticketId
-                ? { ...row, checkedIn: true, checkedInAt }
+                ? {
+                    ...row,
+                    checkedIn,
+                    checkedInAt,
+                    ...(amntUsed !== undefined ? { amntUsed } : {}),
+                    ...(maxUses !== undefined ? { maxUses } : {}),
+                  }
                 : row,
             ),
           };
@@ -180,6 +218,111 @@ export default function AdminParticipantsPage() {
       });
     } finally {
       setCheckingTicketId(null);
+    }
+  };
+
+  const handleUndoCheckIn = async (ticketId: string, participantName: string) => {
+    setUndoingTicketId(ticketId);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/admin/orders/${ticketId}/undo-check-in`, {
+        method: "POST",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        credentials: "include",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof body.error === "string"
+            ? body.error
+            : typeof body.message === "string"
+              ? body.message
+              : "Falha ao desmarcar presença",
+        );
+      }
+      const data = body.data as
+        | { checkedIn: boolean; amntUsed: number; maxUses: number }
+        | undefined;
+      if (!data) {
+        await queryClient.invalidateQueries({
+          queryKey: ["/api/admin/events", selectedEvent?.id, "participants"],
+        });
+      } else {
+        queryClient.setQueryData<ParticipantsResponse | undefined>(
+          ["/api/admin/events", selectedEvent?.id, "participants"],
+          (prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              data: prev.data.map((row) =>
+                row.ticketId === ticketId
+                  ? {
+                      ...row,
+                      amntUsed: data.amntUsed,
+                      maxUses: data.maxUses,
+                      checkedIn: data.checkedIn,
+                      checkedInAt: data.checkedIn ? row.checkedInAt : null,
+                    }
+                  : row,
+              ),
+            };
+          },
+        );
+      }
+      toast({
+        title: "Presença desmarcada",
+        description: `${participantName}: check-in revertido.`,
+      });
+    } catch (e) {
+      toast({
+        title: "Erro",
+        description:
+          e instanceof Error
+            ? e.message
+            : "Não foi possível desmarcar presença. Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setUndoingTicketId(null);
+    }
+  };
+
+  const handleCancelOrder = async (ticketId: string, participantName: string) => {
+    setCancellingTicketId(ticketId);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/admin/orders/${ticketId}/cancel`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        credentials: "include",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.message || "Falha ao cancelar o pedido");
+      }
+      await queryClient.invalidateQueries({
+        queryKey: ["/api/admin/events", selectedEvent?.id, "participants"],
+      });
+      toast({
+        title: "Cancelamento concluído",
+        description:
+          typeof body.message === "string"
+            ? body.message
+            : `A inscrição de ${participantName} foi cancelada. O QR Code foi invalidado.`,
+      });
+    } catch {
+      toast({
+        title: "Erro no cancelamento",
+        description: "Não foi possível cancelar a inscrição.",
+        variant: "destructive",
+      });
+    } finally {
+      setCancellingTicketId(null);
     }
   };
 
@@ -270,50 +413,136 @@ export default function AdminParticipantsPage() {
                       <TableCell>{p.email}</TableCell>
                       <TableCell>{p.phone}</TableCell>
                       <TableCell>
-                        {p.checkedIn ? (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Badge className="bg-green-600 hover:bg-green-600">
-                                Presente
-                              </Badge>
-                            </TooltipTrigger>
-                            {p.checkedInAt && (
-                              <TooltipContent>
-                                {formatCheckedInAt(p.checkedInAt)}
-                              </TooltipContent>
-                            )}
-                          </Tooltip>
-                        ) : (
-                          <Badge variant="secondary">Não registrado</Badge>
-                        )}
+                        <div className="flex flex-col gap-1">
+                          {p.orderStatus === "courtesy" && (
+                            <Badge variant="outline" className="w-fit text-xs">
+                              Cortesia
+                            </Badge>
+                          )}
+                          {p.checkedIn ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge className="bg-green-600 hover:bg-green-600">
+                                  Presente
+                                </Badge>
+                              </TooltipTrigger>
+                              {p.checkedInAt && (
+                                <TooltipContent>
+                                  {formatCheckedInAt(p.checkedInAt)}
+                                </TooltipContent>
+                              )}
+                            </Tooltip>
+                          ) : (
+                            <Badge variant="secondary">Não registrado</Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        {p.checkedIn ? (
-                          <span className="text-sm italic text-muted-foreground">
-                            Confirmado
-                          </span>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={checkingTicketId === p.ticketId}
-                            onClick={() =>
-                              void handleCheckIn(p.ticketId, p.name)
-                            }
-                          >
-                            {checkingTicketId === p.ticketId ? (
-                              <>
-                                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                                Registrando...
-                              </>
-                            ) : (
-                              <>
-                                <UserCheck className="mr-2 h-3 w-3" />
-                                Confirmar presença
-                              </>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          {p.orderStatus !== "cancelled" &&
+                            p.amntUsed < p.maxUses && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={checkingTicketId === p.ticketId}
+                                onClick={() =>
+                                  void handleCheckIn(p.ticketId, p.name)
+                                }
+                              >
+                                {checkingTicketId === p.ticketId ? (
+                                  <>
+                                    <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                    Registrando...
+                                  </>
+                                ) : (
+                                  <>
+                                    <UserCheck className="mr-2 h-3 w-3" />
+                                    Confirmar presença
+                                  </>
+                                )}
+                              </Button>
                             )}
-                          </Button>
-                        )}
+                          {p.orderStatus !== "cancelled" && p.amntUsed > 0 && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={undoingTicketId === p.ticketId}
+                              onClick={() =>
+                                void handleUndoCheckIn(p.ticketId, p.name)
+                              }
+                            >
+                              {undoingTicketId === p.ticketId ? (
+                                <>
+                                  <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                  Desmarcando...
+                                </>
+                              ) : (
+                                <>
+                                  <UserMinus className="mr-2 h-3 w-3" />
+                                  Desmarcar presença
+                                </>
+                              )}
+                            </Button>
+                          )}
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                disabled={
+                                  p.amntUsed !== 0 ||
+                                  p.orderStatus === "cancelled" ||
+                                  cancellingTicketId === p.ticketId
+                                }
+                              >
+                                {cancellingTicketId === p.ticketId ? (
+                                  <>
+                                    <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                    Cancelando...
+                                  </>
+                                ) : (
+                                  <>
+                                    <UserX className="mr-2 h-3 w-3" />
+                                    Cancelar inscrição
+                                  </>
+                                )}
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>
+                                  Confirmar cancelamento?
+                                </AlertDialogTitle>
+                                <AlertDialogDescription className="space-y-2 text-left">
+                                  <span>
+                                    Isso cancela a inscrição de{" "}
+                                    <strong>{p.name}</strong>. O QR Code será
+                                    invalidado e um e-mail será enviado ao
+                                    participante.
+                                  </span>
+                                  <span className="block text-sm text-muted-foreground">
+                                    O estorno financeiro (Asaas), se aplicável,
+                                    deve ser feito manualmente.
+                                  </span>
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Voltar</AlertDialogCancel>
+                                <AlertDialogAction
+                                  className="bg-red-600 hover:bg-red-700"
+                                  onClick={() =>
+                                    void handleCancelOrder(
+                                      p.ticketId,
+                                      p.name,
+                                    )
+                                  }
+                                >
+                                  Confirmar cancelamento
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))

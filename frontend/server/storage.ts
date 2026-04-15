@@ -22,6 +22,14 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, sql, asc, count, and } from "drizzle-orm";
+import { s3Service } from "./services/s3Service";
+import { buildUndoCheckInPatch } from "./utils/undoCheckInUpdate";
+
+export type CancelOrderResult =
+  | { ok: true; order: Order }
+  | { ok: false; code: "not_found" }
+  | { ok: false; code: "already_cancelled"; order: Order }
+  | { ok: false; code: "invalid_status"; status: string };
 
 export interface IStorage {
   // User operations
@@ -68,6 +76,12 @@ export interface IStorage {
   getCourtesyLinksByCreator(userId: string, page: number, limit: number): Promise<{ links: CourtesyLink[]; total: number }>;
   updateCourtesyLink(id: string, updates: Partial<CourtesyLink>): Promise<CourtesyLink | undefined>;
   incrementCourtesyLinkUsage(id: string): Promise<void>;
+
+  /** Cancels order, clears QR fields, deletes S3 object when present. */
+  cancelOrderAndInvalidateQr(orderId: string): Promise<CancelOrderResult>;
+
+  /** Reverts one check-in (decrement amntUsed, sync qr flags). */
+  undoOrderCheckIn(orderId: string): Promise<Order>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -411,6 +425,70 @@ export class DatabaseStorage implements IStorage {
         updatedAt: new Date()
       })
       .where(eq(courtesyLinks.id, id));
+  }
+
+  async cancelOrderAndInvalidateQr(orderId: string): Promise<CancelOrderResult> {
+    const order = await this.getOrder(orderId);
+    if (!order) {
+      return { ok: false, code: "not_found" };
+    }
+    if (order.status === "cancelled") {
+      return { ok: false, code: "already_cancelled", order };
+    }
+    if (order.status !== "pending" && order.status !== "paid" && order.status !== "courtesy") {
+      return { ok: false, code: "invalid_status", status: order.status };
+    }
+
+    if (order.qr_code_s3_url) {
+      try {
+        const key = s3Service.extractKeyFromUrl(order.qr_code_s3_url);
+        await s3Service.deleteFile(key);
+      } catch (s3Error) {
+        console.error(`Erro ao deletar QR Code do S3 (Order ${orderId}):`, s3Error);
+      }
+    }
+
+    const [updated] = await db
+      .update(orders)
+      .set({
+        status: "cancelled",
+        qrCodeData: null,
+        qr_code_s3_url: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+      .returning();
+
+    if (!updated) {
+      return { ok: false, code: "not_found" };
+    }
+    return { ok: true, order: updated };
+  }
+
+  async undoOrderCheckIn(orderId: string): Promise<Order> {
+    const order = await this.getOrder(orderId);
+    if (!order) {
+      throw new Error("Pedido não encontrado");
+    }
+    if (order.status === "cancelled") {
+      throw new Error("Não é possível alterar presença de ingresso cancelado");
+    }
+    if ((order.amntUsed ?? 0) === 0) {
+      throw new Error("Este ingresso não possui check-in para ser desmarcado");
+    }
+    const patch = buildUndoCheckInPatch(order);
+    const [updated] = await db
+      .update(orders)
+      .set({
+        ...patch,
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+      .returning();
+    if (!updated) {
+      throw new Error("Pedido não encontrado");
+    }
+    return updated;
   }
 
   async addMassSendJobToQueue(jobData: {

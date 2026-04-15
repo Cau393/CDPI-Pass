@@ -466,29 +466,32 @@ const handleCancelOrder = (orderId: string) => {
                                       <Download className="h-4 w-4 mr-2" />
                                       Baixar QR Code
                                     </Button>
-                                    {order.qrCodeUsed && currentUser?.isAdmin && (
+                                    {(order.amntUsed ?? 0) > 0 && currentUser?.isAdmin && (
                                       <Button
                                         variant="outline"
                                         size="sm"
                                         onClick={async () => {
                                           try {
-                                            await apiRequest("POST", `/api/reset-ticket/${order.id}`);
+                                            await apiRequest(
+                                              "POST",
+                                              `/api/admin/orders/${order.id}/undo-check-in`,
+                                            );
                                             toast({
-                                              title: "Ticket resetado",
-                                              description: "Ingresso pode ser verificado novamente",
+                                              title: "Presença desmarcada",
+                                              description: "Check-in revertido com sucesso.",
                                             });
                                             refetchOrders();
                                           } catch (error) {
                                             toast({
                                               title: "Erro",
-                                              description: "Erro ao resetar ticket",
+                                              description: "Erro ao desmarcar presença",
                                               variant: "destructive",
                                             });
                                           }
                                         }}
                                         data-testid={`button-reset-${order.id}`}
                                       >
-                                        Resetar Ingresso
+                                        Desmarcar presença
                                       </Button>
                                     )}
                                   </div>

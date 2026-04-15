@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2, Search, UserX } from "lucide-react";
 import EventSelector from "@/components/admin/EventSelector";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,18 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import type { Event } from "@shared/schema";
@@ -22,6 +34,7 @@ interface CommercialSale {
   id: string;
   vendedor: string;
   status: "pago" | "pendente";
+  orderDbStatus: "pending" | "paid" | "courtesy";
   nome: string;
   cpf: string;
   email: string;
@@ -50,9 +63,13 @@ function saleMatchesQuery(sale: CommercialSale, query: string): boolean {
 
 export default function AdminCommercialSalesPage() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
@@ -86,6 +103,43 @@ export default function AdminCommercialSalesPage() {
       });
     }
   }, [isError, toast]);
+
+  const handleCancelOrder = async (orderId: string, participantName: string) => {
+    setCancellingOrderId(orderId);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/admin/orders/${orderId}/cancel`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        credentials: "include",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.message || "Falha ao cancelar o pedido");
+      }
+      await queryClient.invalidateQueries({
+        queryKey: ["/api/admin/events", selectedEvent?.id, "commercial-sales"],
+      });
+      toast({
+        title: "Cancelamento concluído",
+        description:
+          typeof body.message === "string"
+            ? body.message
+            : `Pedido de ${participantName} cancelado.`,
+      });
+    } catch {
+      toast({
+        title: "Erro no cancelamento",
+        description: "Não foi possível cancelar o pedido.",
+        variant: "destructive",
+      });
+    } finally {
+      setCancellingOrderId(null);
+    }
+  };
 
   const allSales = sales ?? [];
 
@@ -154,13 +208,14 @@ export default function AdminCommercialSalesPage() {
                   <TableHead>CPF</TableHead>
                   <TableHead>E-mail</TableHead>
                   <TableHead>Telefone</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 6 }).map((__, j) => (
+                      {Array.from({ length: 7 }).map((__, j) => (
                         <TableCell key={j}>
                           <Skeleton className="h-4 w-full" />
                         </TableCell>
@@ -170,7 +225,7 @@ export default function AdminCommercialSalesPage() {
                 ) : filteredSales.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={6}
+                      colSpan={7}
                       className="h-24 text-center text-muted-foreground"
                     >
                       {debouncedSearch.trim()
@@ -199,6 +254,57 @@ export default function AdminCommercialSalesPage() {
                       <TableCell>{sale.cpf}</TableCell>
                       <TableCell>{sale.email}</TableCell>
                       <TableCell>{sale.telefone}</TableCell>
+                      <TableCell className="text-right">
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={cancellingOrderId === sale.id}
+                            >
+                              {cancellingOrderId === sale.id ? (
+                                <>
+                                  <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                  Cancelando...
+                                </>
+                              ) : (
+                                <>
+                                  <UserX className="mr-2 h-3 w-3" />
+                                  Cancelar
+                                </>
+                              )}
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>
+                                Confirmar cancelamento?
+                              </AlertDialogTitle>
+                              <AlertDialogDescription className="space-y-2 text-left">
+                                <span>
+                                  Cancelar o pedido de{" "}
+                                  <strong>{sale.nome}</strong>? O QR Code será
+                                  invalidado e um e-mail será enfileirado.
+                                </span>
+                                <span className="block text-sm text-muted-foreground">
+                                  Estorno Asaas, se houver, é manual.
+                                </span>
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Voltar</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-red-600 hover:bg-red-700"
+                                onClick={() =>
+                                  void handleCancelOrder(sale.id, sale.nome)
+                                }
+                              >
+                                Confirmar cancelamento
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </TableCell>
                     </TableRow>
                   ))
                 )}
