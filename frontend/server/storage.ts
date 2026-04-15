@@ -24,6 +24,7 @@ import { db } from "./db";
 import { eq, desc, sql, asc, count, and } from "drizzle-orm";
 import { s3Service } from "./services/s3Service";
 import { buildUndoCheckInPatch } from "./utils/undoCheckInUpdate";
+import { validateCourtesyTicketCountUpdate } from "./utils/courtesyTicketCountUpdate";
 
 export type CancelOrderResult =
   | { ok: true; order: Order }
@@ -75,6 +76,8 @@ export interface IStorage {
   getCourtesyLinkByCode(code: string): Promise<CourtesyLink | undefined>;
   getCourtesyLinksByCreator(userId: string, page: number, limit: number): Promise<{ links: CourtesyLink[]; total: number }>;
   updateCourtesyLink(id: string, updates: Partial<CourtesyLink>): Promise<CourtesyLink | undefined>;
+  /** Validates ticketCount vs usedCount and updates; throws if link missing or invalid. */
+  updateCourtesyLinkTicketCount(id: string, ticketCount: number): Promise<CourtesyLink>;
   incrementCourtesyLinkUsage(id: string): Promise<void>;
 
   /** Cancels order, clears QR fields, deletes S3 object when present. */
@@ -415,6 +418,29 @@ export class DatabaseStorage implements IStorage {
       .where(eq(courtesyLinks.id, id))
       .returning();
     return link;
+  }
+
+  async updateCourtesyLinkTicketCount(id: string, ticketCount: number): Promise<CourtesyLink> {
+    const [link] = await db.select().from(courtesyLinks).where(eq(courtesyLinks.id, id));
+    if (!link) {
+      throw new Error("LINK_NOT_FOUND");
+    }
+    const errMsg = validateCourtesyTicketCountUpdate({
+      usedCount: link.usedCount ?? 0,
+      nextTicketCount: ticketCount,
+    });
+    if (errMsg) {
+      throw new Error(errMsg);
+    }
+    const [updated] = await db
+      .update(courtesyLinks)
+      .set({ ticketCount, updatedAt: new Date() })
+      .where(eq(courtesyLinks.id, id))
+      .returning();
+    if (!updated) {
+      throw new Error("LINK_NOT_FOUND");
+    }
+    return updated;
   }
 
   async incrementCourtesyLinkUsage(id: string): Promise<void> {

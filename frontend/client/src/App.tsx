@@ -29,6 +29,7 @@ import AdminCreateEventPage from "@/pages/AdminCreateEventPage";
 import AdminEventsListPage from "@/pages/AdminEventsListPage";
 import AdminEditEventPage from "@/pages/AdminEditEventPage";
 import AdminCommercialSalesPage from "@/pages/AdminCommercialSalesPage";
+import AdminCourtesyQuotaPage from "@/pages/AdminCourtesyQuotaPage";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -74,6 +75,13 @@ function Router() {
           <AdminRoute>
             <AdminShell>
               <CourtesyAdminPage />
+            </AdminShell>
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/courtesy-quota">
+          <AdminRoute>
+            <AdminShell>
+              <AdminCourtesyQuotaPage />
             </AdminShell>
           </AdminRoute>
         </Route>

@@ -927,6 +927,95 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get(
+    "/api/admin/courtesy-links/by-code/:code",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+        }
+        let raw = req.params.code ?? "";
+        try {
+          raw = decodeURIComponent(raw);
+        } catch {
+          return res.status(400).json({ error: "Código inválido" });
+        }
+        const code = raw.trim();
+        if (!code) {
+          return res.status(400).json({ error: "Código inválido" });
+        }
+
+        const link = await storage.getCourtesyLinkByCode(code);
+        if (!link) {
+          return res.status(404).json({ error: "Link de cortesia não encontrado" });
+        }
+
+        const event = await storage.getEvent(link.eventId);
+        res.json({
+          link: {
+            id: link.id,
+            code: link.code,
+            eventId: link.eventId,
+            ticketCount: link.ticketCount,
+            usedCount: link.usedCount ?? 0,
+            isActive: link.isActive,
+          },
+          eventTitle: event?.title ?? null,
+        });
+      } catch (error) {
+        console.error("GET /api/admin/courtesy-links/by-code/:code:", error);
+        res.status(500).json({ error: "Erro ao buscar link de cortesia" });
+      }
+    },
+  );
+
+  app.patch("/api/admin/courtesy-links/:id", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const idParsed = z.string().uuid().safeParse(req.params.id);
+      if (!idParsed.success) {
+        return res.status(400).json({ error: "id inválido" });
+      }
+
+      const bodyParsed = z
+        .object({ ticketCount: z.coerce.number() })
+        .safeParse(req.body);
+      if (!bodyParsed.success) {
+        return res.status(400).json({ error: "Payload inválido: informe ticketCount" });
+      }
+      const ticketCount = bodyParsed.data.ticketCount;
+      if (!Number.isInteger(ticketCount)) {
+        return res.status(400).json({ error: "Informe um limite inteiro válido." });
+      }
+
+      try {
+        const updated = await storage.updateCourtesyLinkTicketCount(idParsed.data, ticketCount);
+        res.json({
+          link: {
+            id: updated.id,
+            code: updated.code,
+            eventId: updated.eventId,
+            ticketCount: updated.ticketCount,
+            usedCount: updated.usedCount ?? 0,
+            isActive: updated.isActive,
+          },
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Erro ao atualizar";
+        if (msg === "LINK_NOT_FOUND") {
+          return res.status(404).json({ error: "Link de cortesia não encontrado" });
+        }
+        return res.status(400).json({ error: msg });
+      }
+    } catch (error) {
+      console.error("PATCH /api/admin/courtesy-links/:id:", error);
+      res.status(500).json({ error: "Erro ao atualizar link de cortesia" });
+    }
+  });
+
   app.post("/api/admin/tickets/:ticketId/check-in", authenticateToken, async (req: any, res) => {
     try {
       if (!req.user.isAdmin) {

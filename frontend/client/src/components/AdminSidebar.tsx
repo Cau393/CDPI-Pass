@@ -18,6 +18,7 @@ import {
   DollarSign,
   FileText,
   FileUp,
+  Hash,
   LogOut,
   Mail,
   ScanLine,
@@ -88,6 +89,12 @@ export default function AdminSidebar() {
               icon={Ticket}
               label="Cortesias"
               tooltip="Cortesias"
+            />
+            <NavItem
+              href="/admin/courtesy-quota"
+              icon={Hash}
+              label="Limite por código"
+              tooltip="Editar limite de cortesia por código"
             />
             <NavItem
               href="/cortesia-envio-em-massa"
