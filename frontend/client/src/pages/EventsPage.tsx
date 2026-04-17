@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Calendar, MapPin, Search } from "lucide-react";
 import type { Event } from "@shared/schema";
+import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
+import { eventDescriptionPlainText } from "@/lib/eventDescriptionHtml";
 
 export default function EventsPage() {
   const [, setLocation] = useLocation();
@@ -20,9 +22,10 @@ export default function EventsPage() {
     ?.filter(event => new Date(event.date) > new Date())
     ?.filter((event) => {
       const search = searchTerm.toLowerCase();
+      const descPlain = eventDescriptionPlainText(event.description ?? "").toLowerCase();
       return (
         event.title.toLowerCase().includes(search) ||
-        event.description.toLowerCase().includes(search) ||
+        descPlain.includes(search) ||
         event.location.toLowerCase().includes(search)
       );
     })
@@ -95,9 +98,9 @@ export default function EventsPage() {
                   <h3 className="text-xl font-bold text-gray-900 mb-2">
                     {event.title}
                   </h3>
-                  <p className="text-gray-600 text-sm mb-3 line-clamp-2">
-                    {event.description}
-                  </p>
+                  <div className="mb-3 line-clamp-2 overflow-hidden text-sm text-gray-600">
+                    <EventDescriptionDisplay html={event.description} />
+                  </div>
                   <div className="space-y-2 mb-4">
                     <div className="flex items-center text-gray-500 text-sm">
                       <Calendar className="h-4 w-4 mr-2 text-primary" />

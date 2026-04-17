@@ -1,5 +1,6 @@
 import * as z from "zod";
 import { format, isValid, parse } from "date-fns";
+import { hasMeaningfulEventDescription } from "@/lib/eventDescriptionHtml";
 
 /** Stored in the form and sent to the API: local `yyyy-MM-dd'T'HH:mm` (no timezone suffix). */
 export const API_LOCAL_DATETIME_FMT = "yyyy-MM-dd'T'HH:mm" as const;
@@ -70,7 +71,9 @@ const coverFileListSchema = z
 
 export const createEventSchema = z.object({
   title: z.string().min(1, "Title is required"),
-  description: z.string().min(1, "Description is required"),
+  description: z
+    .string()
+    .refine(hasMeaningfulEventDescription, "Description is required"),
   date: z
     .string()
     .min(1, "Data é obrigatória")
@@ -106,7 +109,9 @@ export const createEventSchema = z.object({
 
 export const editEventSchema = z.object({
   title: z.string().min(1, "Title is required"),
-  description: z.string().min(1, "Description is required"),
+  description: z
+    .string()
+    .refine(hasMeaningfulEventDescription, "Description is required"),
   date: z
     .string()
     .min(1, "Data é obrigatória")

@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
 import type { Event } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
 
 export default function HomePage() {
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
@@ -125,9 +126,9 @@ export default function HomePage() {
                       <h2 className="text-3xl font-bold text-gray-900 mb-2">
                         {mainEvent.title}
                       </h2>
-                      <p className="text-gray-600 mb-6 line-clamp-[10] whitespace-pre-line">
-                        {mainEvent.description}
-                      </p>
+                      <div className="mb-6 line-clamp-[10] overflow-hidden text-gray-600">
+                        <EventDescriptionDisplay html={mainEvent.description} />
+                      </div>
                       
                       <div className="space-y-3 mb-6">
                         <div className="flex items-center text-gray-600">

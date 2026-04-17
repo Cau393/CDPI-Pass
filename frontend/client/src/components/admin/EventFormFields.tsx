@@ -26,8 +26,8 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import EventDescriptionEditor from "@/components/admin/EventDescriptionEditor";
 import {
   dateToApiLocalString,
   HOUR_OPTIONS,
@@ -41,7 +41,7 @@ type EventFormShape = {
   date: string;
   location: string;
   price: string;
-  coverImage?: FileList | undefined;
+  coverImage?: FileList;
 };
 
 interface EventFormFieldsProps<T extends FieldValues & EventFormShape> {
@@ -240,17 +240,23 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
       <FormField
         control={control}
         name={"description" as Path<T>}
-        render={({ field }) => (
+        render={({ field, fieldState }) => (
           <FormItem>
             <FormLabel>Descrição</FormLabel>
             <FormControl>
-              <Textarea
-                rows={3}
-                placeholder="O que os participantes devem saber"
-                {...field}
+              <EventDescriptionEditor
+                id={field.name}
                 value={field.value ?? ""}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                disabled={form.formState.disabled}
+                aria-invalid={fieldState.invalid}
               />
             </FormControl>
+            <FormDescription>
+              Use <strong>Negrito</strong>, <em>Itálico</em> e <span className="underline">Sublinhado</span> na
+              barra acima. Selecione o texto e clique no estilo para aplicar ou remover.
+            </FormDescription>
             <FormMessage />
           </FormItem>
         )}

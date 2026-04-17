@@ -47,6 +47,10 @@ import {
   type EditEventFormValues,
 } from "@/lib/eventForm";
 import type { Event } from "@shared/schema";
+import {
+  normalizeDescriptionForEditor,
+  sanitizeEventDescriptionHtml,
+} from "@/lib/eventDescriptionHtml";
 
 function buildPatchFormData(
   values: EditEventFormValues,
@@ -54,7 +58,9 @@ function buildPatchFormData(
 ): FormData {
   const fd = new FormData();
   if (dirty.title) fd.append("title", values.title.trim());
-  if (dirty.description) fd.append("description", values.description.trim());
+  if (dirty.description) {
+    fd.append("description", sanitizeEventDescriptionHtml(values.description));
+  }
   if (dirty.date) fd.append("date", values.date.trim());
   if (dirty.location) fd.append("location", values.location.trim());
   if (dirty.price) fd.append("price", brazilianPriceToApiString(values.price));
@@ -99,9 +105,12 @@ export default function AdminEditEventPage() {
 
   useEffect(() => {
     if (!event) return;
+    const normalizedDescription = normalizeDescriptionForEditor(
+      event.description ?? "",
+    );
     form.reset({
       title: event.title,
-      description: event.description,
+      description: normalizedDescription,
       date: eventDateToFormString(event.date),
       location: event.location,
       price: apiPriceToBrazilianDisplay(event.price),
@@ -150,7 +159,7 @@ export default function AdminEditEventPage() {
       });
       form.reset({
         title: updated.title,
-        description: updated.description,
+        description: normalizeDescriptionForEditor(updated.description ?? ""),
         date: eventDateToFormString(updated.date),
         location: updated.location,
         price: apiPriceToBrazilianDisplay(updated.price),

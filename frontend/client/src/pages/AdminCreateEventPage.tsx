@@ -32,6 +32,7 @@ import {
   type CreateEventFormValues,
 } from "@/lib/eventForm";
 import type { Event } from "@shared/schema";
+import { sanitizeEventDescriptionHtml } from "@/lib/eventDescriptionHtml";
 
 export default function AdminCreateEventPage() {
   const { toast } = useToast();
@@ -65,7 +66,7 @@ export default function AdminCreateEventPage() {
   const onSubmit = async (values: CreateEventFormValues) => {
     const formData = new FormData();
     formData.append("title", values.title.trim());
-    formData.append("description", values.description.trim());
+    formData.append("description", sanitizeEventDescriptionHtml(values.description));
     formData.append("date", values.date.trim());
     formData.append("location", values.location.trim());
     formData.append("price", brazilianPriceToApiString(values.price));

@@ -20,6 +20,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { Event } from "@shared/schema";
+import { eventDescriptionPlainText } from "@/lib/eventDescriptionHtml";
 
 const PAGE_SIZE = 10;
 
@@ -35,9 +36,12 @@ export default function AdminEventsListPage() {
     const search = searchTerm.toLowerCase();
     const filtered = search
       ? allEvents.filter((event) => {
+          const descPlain = eventDescriptionPlainText(
+            String(event.description ?? ""),
+          ).toLowerCase();
           return (
             event.title.toLowerCase().includes(search) ||
-            String(event.description ?? "").toLowerCase().includes(search) ||
+            descPlain.includes(search) ||
             String(event.location ?? "").toLowerCase().includes(search)
           );
         })

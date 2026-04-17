@@ -9,6 +9,8 @@ import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
 import type { Event } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+import { cn } from "@/lib/utils";
+import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
 
 // ✅ Extend Event to include promoCode
 interface EventWithPromo extends Event {
@@ -206,11 +208,16 @@ export default function EventDetailsPage() {
           </div>
 
           {/* Description */}
-          <div className="mb-8">
+          <div className="mb-10">
             <h2 className="text-xl font-semibold mb-4">Sobre o evento</h2>
-            <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">
-              {event.description}
-            </p>
+            <EventDescriptionDisplay
+              html={event.description}
+              className={cn(
+                "text-gray-700 whitespace-pre-line",
+                "[&_p]:text-[17px] [&_p]:my-0.5 [&_p]:leading-[1.3] [&_p:first-child]:mt-0 [&_p:last-child]:mb-0",
+                "[&_br]:block [&_br]:mb-[0.65em]",
+              )}
+            />
           </div>
 
           {/* Price and Buy Button */}

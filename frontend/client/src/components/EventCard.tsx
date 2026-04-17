@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Calendar, MapPin } from "lucide-react";
 import { useLocation } from "wouter";
 import type { Event } from "@shared/schema";
+import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
 
 interface EventCardProps {
   event: Event;
@@ -54,9 +55,12 @@ export default function EventCard({ event, onBuyTicket }: EventCardProps) {
           {event.title}
         </h3>
         
-        <p className="text-gray-600 text-sm mb-4 line-clamp-3" data-testid={`text-event-description-${event.id}`}>
-          {event.description}
-        </p>
+        <div
+          className="mb-4 line-clamp-3 overflow-hidden text-sm text-gray-600"
+          data-testid={`text-event-description-${event.id}`}
+        >
+          <EventDescriptionDisplay html={event.description} />
+        </div>
         
         <div className="flex items-center justify-between">
           <div className="text-2xl font-bold text-primary" data-testid={`text-event-price-${event.id}`}>
