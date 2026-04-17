@@ -915,7 +915,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .leftJoin(sellers, eq(courtesyLinks.createdBy, sellers.id))
         .where(and(
           eq(orders.eventId, eventId),
-          inArray(orders.status, ["pending", "paid", "courtesy"]),
+          // Sales only: courtesy ingressos listam em /participants, não aqui
+          inArray(orders.status, ["pending", "paid"]),
         ))
         .orderBy(desc(orders.createdAt));
 

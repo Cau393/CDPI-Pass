@@ -34,7 +34,7 @@ interface CommercialSale {
   id: string;
   vendedor: string;
   status: "pago" | "pendente";
-  orderDbStatus: "pending" | "paid" | "courtesy";
+  orderDbStatus: "pending" | "paid";
   nome: string;
   cpf: string;
   email: string;

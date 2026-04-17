@@ -98,17 +98,17 @@ export default function HomePage() {
                   data-testid={`card-main-event-${mainEvent.id}`}
                 >
 
-                  <div className="flex flex-col lg:flex-row">
-                    {/* Event Image */}
-                    <div className="lg:w-2/5">
+                  <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,52%)_minmax(0,48%)] lg:items-stretch min-h-0">
+                    {/* Event Image — wider column + grid row stretch = full height next to text; object-fill fills box */}
+                    <div className="relative w-full min-h-[260px] overflow-hidden bg-gray-50 lg:min-h-0">
                       {mainEvent.imageUrl ? (
-                        <img 
-                          src={mainEvent.imageUrl} 
+                        <img
+                          src={mainEvent.imageUrl}
                           alt={mainEvent.title}
-                          className="w-full h-full object-cover"
+                          className="absolute inset-0 h-full w-full object-fill"
                         />
                       ) : (
-                        <div className="h-full bg-gradient-to-br from-primary to-secondary p-8 flex items-center justify-center">
+                        <div className="absolute inset-0 bg-gradient-to-br from-primary to-secondary p-8 flex items-center justify-center">
                           <div className="text-center text-white">
                             <div className="w-48 h-48 bg-white/20 rounded-full mx-auto mb-4 flex items-center justify-center">
                               <span className="text-6xl">📅</span>
@@ -119,13 +119,13 @@ export default function HomePage() {
                         </div>
                       )}
                     </div>
-                    
+
                     {/* Event Details */}
-                    <div className="lg:w-3/5 p-8">
+                    <div className="min-w-0 p-8">
                       <h2 className="text-3xl font-bold text-gray-900 mb-2">
                         {mainEvent.title}
                       </h2>
-                      <p className="text-gray-600 mb-6">
+                      <p className="text-gray-600 mb-6 line-clamp-[10] whitespace-pre-line">
                         {mainEvent.description}
                       </p>
                       
@@ -144,9 +144,9 @@ export default function HomePage() {
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-3xl font-bold text-primary">
+                      <div className="flex items-center justify-between gap-6">
+                        <div className="min-w-0 shrink">
+                          <p className="text-2xl font-bold text-primary tabular-nums">
                             R$ {displayPriceForEvent(mainEvent).toFixed(2)}
                           </p>
                           <p className="text-xs text-gray-500">+ taxa de conveniência</p>
@@ -156,7 +156,7 @@ export default function HomePage() {
                             e.stopPropagation();
                             handleBuyTicket(mainEvent);
                           }}
-                          className="bg-green-500 hover:bg-green-600 text-white px-6 py-3"
+                          className="shrink-0 bg-green-500 hover:bg-green-600 text-white px-6 py-3"
                           data-testid="button-buy-main"
                         >
                           Comprar Ingresso
