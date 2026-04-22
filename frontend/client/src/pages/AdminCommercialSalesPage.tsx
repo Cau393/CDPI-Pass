@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Search, UserX } from "lucide-react";
+import { CheckCircle2, Loader2, Search, UserX } from "lucide-react";
 import EventSelector from "@/components/admin/EventSelector";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -34,7 +34,8 @@ interface CommercialSale {
   id: string;
   vendedor: string;
   status: "pago" | "pendente";
-  orderDbStatus: "pending" | "paid";
+  orderDbStatus: "pending" | "paid" | "courtesy";
+  paymentMethod: string;
   nome: string;
   cpf: string;
   email: string;
@@ -70,6 +71,9 @@ export default function AdminCommercialSalesPage() {
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(
     null,
   );
+  const [markingPaidOrderId, setMarkingPaidOrderId] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
@@ -103,6 +107,46 @@ export default function AdminCommercialSalesPage() {
       });
     }
   }, [isError, toast]);
+
+  const handleMarkPaidExternal = async (orderId: string, participantName: string) => {
+    setMarkingPaidOrderId(orderId);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/admin/orders/${orderId}/mark-paid-external`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        credentials: "include",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof body.message === "string" ? body.message : "Falha ao confirmar pagamento",
+        );
+      }
+      await queryClient.invalidateQueries({
+        queryKey: ["/api/admin/events", selectedEvent?.id, "commercial-sales"],
+      });
+      toast({
+        title: "Pagamento confirmado",
+        description:
+          typeof body.message === "string"
+            ? body.message
+            : `O pedido de ${participantName} foi marcado como pago (meios externos).`,
+      });
+    } catch (e) {
+      toast({
+        title: "Erro ao confirmar",
+        description:
+          e instanceof Error ? e.message : "Não foi possível confirmar o pagamento.",
+        variant: "destructive",
+      });
+    } finally {
+      setMarkingPaidOrderId(null);
+    }
+  };
 
   const handleCancelOrder = async (orderId: string, participantName: string) => {
     setCancellingOrderId(orderId);
@@ -255,55 +299,121 @@ export default function AdminCommercialSalesPage() {
                       <TableCell>{sale.email}</TableCell>
                       <TableCell>{sale.telefone}</TableCell>
                       <TableCell className="text-right">
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              disabled={cancellingOrderId === sale.id}
-                            >
-                              {cancellingOrderId === sale.id ? (
-                                <>
-                                  <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                                  Cancelando...
-                                </>
-                              ) : (
-                                <>
-                                  <UserX className="mr-2 h-3 w-3" />
-                                  Cancelar
-                                </>
-                              )}
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>
-                                Confirmar cancelamento?
-                              </AlertDialogTitle>
-                              <AlertDialogDescription className="space-y-2 text-left">
-                                <span>
-                                  Cancelar o pedido de{" "}
-                                  <strong>{sale.nome}</strong>? O QR Code será
-                                  invalidado e um e-mail será enfileirado.
-                                </span>
-                                <span className="block text-sm text-muted-foreground">
-                                  Estorno Asaas, se houver, é manual.
-                                </span>
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Voltar</AlertDialogCancel>
-                              <AlertDialogAction
-                                className="bg-red-600 hover:bg-red-700"
-                                onClick={() =>
-                                  void handleCancelOrder(sale.id, sale.nome)
-                                }
-                              >
-                                Confirmar cancelamento
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
+                        {sale.orderDbStatus === "pending" ? (
+                          <div className="flex flex-col items-end gap-2">
+                            {sale.paymentMethod === "credit_card" && (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    disabled={markingPaidOrderId === sale.id}
+                                  >
+                                    {markingPaidOrderId === sale.id ? (
+                                      <>
+                                        <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                        Confirmando...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <CheckCircle2 className="mr-2 h-3 w-3" />
+                                        Pago por meios externos
+                                      </>
+                                    )}
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>
+                                      Confirmar pagamento externo?
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription className="space-y-2 text-left">
+                                      <span>
+                                        Registrar como pago o pedido de{" "}
+                                        <strong>{sale.nome}</strong> (cartão
+                                        pago fora do link Asaas)? Será
+                                        disparado o mesmo fluxo de confirmação:
+                                        e-mail com QR Code, atualização de vagas
+                                        e notificações internas.
+                                      </span>
+                                      <span className="block text-sm text-muted-foreground">
+                                        Não há validação de cobrança no Asaas;
+                                        use somente se o pagamento foi realmente
+                                        recebido.
+                                      </span>
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Voltar</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() =>
+                                        void handleMarkPaidExternal(
+                                          sale.id,
+                                          sale.nome,
+                                        )
+                                      }
+                                    >
+                                      Confirmar
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            )}
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  disabled={cancellingOrderId === sale.id}
+                                >
+                                  {cancellingOrderId === sale.id ? (
+                                    <>
+                                      <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                      Cancelando...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <UserX className="mr-2 h-3 w-3" />
+                                      Cancelar
+                                    </>
+                                  )}
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>
+                                    Confirmar cancelamento?
+                                  </AlertDialogTitle>
+                                  <AlertDialogDescription className="space-y-2 text-left">
+                                    <span>
+                                      Cancelar o pedido de{" "}
+                                      <strong>{sale.nome}</strong>? O QR Code
+                                      será invalidado e um e-mail será
+                                      enfileirado.
+                                    </span>
+                                    <span className="block text-sm text-muted-foreground">
+                                      Estorno Asaas, se houver, é manual.
+                                    </span>
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Voltar</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    className="bg-red-600 hover:bg-red-700"
+                                    onClick={() =>
+                                      void handleCancelOrder(
+                                        sale.id,
+                                        sale.nome,
+                                      )
+                                    }
+                                  >
+                                    Confirmar cancelamento
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))

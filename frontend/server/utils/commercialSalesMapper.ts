@@ -1,6 +1,7 @@
 export interface CommercialSaleRow {
   id: string;
   status: string;
+  paymentMethod: string;
   buyerName: string;
   cpf: string;
   buyerEmail: string;
@@ -25,33 +26,19 @@ export interface CommercialSaleOutput {
   cpf: string;
   email: string;
   telefone: string;
-}
-
-function orderStatusRank(s: string): number {
-  if (s === "paid") return 2;
-  if (s === "courtesy") return 1;
-  return 0;
+  paymentMethod: string;
 }
 
 /**
- * Deduplicates order rows by CPF keeping the most relevant entry
- * (paid takes precedence, then most recent) and maps DB rows to
- * the flat API output contract.
+ * Maps commercial sales DB rows 1:1 to the flat API output contract.
+ * Each order (pending or paid) is an independent sale, so no dedup
+ * by CPF is applied — the same buyer may legitimately have multiple
+ * orders for the same event (separate checkouts, separate attempts).
  */
 export function mapCommercialSales(
   rows: CommercialSaleRow[],
 ): CommercialSaleOutput[] {
-  const seen = new Map<string, CommercialSaleRow>();
-
-  for (const row of rows) {
-    const key = row.cpf;
-    const existing = seen.get(key);
-    if (!existing || orderStatusRank(row.status) > orderStatusRank(existing.status)) {
-      seen.set(key, row);
-    }
-  }
-
-  return Array.from(seen.values()).map((row) => {
+  return rows.map((row) => {
     const hasLink = !!row.courtesyLinkId;
     const isCourtesyAttendee = !!row.courtesyAttendeeId;
     const isPaidLike = row.status === "paid" || row.status === "courtesy";
@@ -63,6 +50,7 @@ export function mapCommercialSales(
         : "N/A",
       status: isPaidLike ? ("pago" as const) : ("pendente" as const),
       orderDbStatus: row.status as "pending" | "paid" | "courtesy",
+      paymentMethod: row.paymentMethod,
       nome: isCourtesyAttendee
         ? (row.attendeeName ?? row.buyerName)
         : row.buyerName,

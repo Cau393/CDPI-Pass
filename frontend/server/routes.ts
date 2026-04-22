@@ -1,4 +1,3 @@
-import axios from "axios";
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import type { Express } from "express";
 import { createServer, type Server } from "http";
@@ -29,6 +28,7 @@ import { parseBrazilEventLocalDateTime } from "./utils/eventDateTime";
 import { sanitizeCourtesyTemplateHtml } from "./utils/courtesyTemplateSanitize";
 import { mapCommercialSales } from "./utils/commercialSalesMapper";
 import { buildCancellationEmailHtml } from "./utils/cancellationEmailTemplate";
+import { finalizeOrderPaidLikeWebhook } from "./utils/finalizeOrderPaidLikeWebhook";
 import { emailService } from "./services/emailService";
 import { asaasService } from "./services/asaasService";
 import { qrCodeService } from "./services/qrCodeService";
@@ -895,6 +895,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .select({
           id: orders.id,
           status: orders.status,
+          paymentMethod: orders.paymentMethod,
           buyerName: users.name,
           cpf: orders.cpf,
           buyerEmail: users.email,
@@ -1153,6 +1154,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   });
+
+  app.post(
+    "/api/admin/orders/:id/mark-paid-external",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({
+            success: false,
+            message: "Acesso negado. Apenas administradores.",
+          });
+        }
+        const parsed = z.string().uuid().safeParse(req.params.id);
+        if (!parsed.success) {
+          return res
+            .status(400)
+            .json({ success: false, message: "orderId inválido" });
+        }
+        const orderId = parsed.data;
+        const order = await storage.getOrder(orderId);
+        if (!order) {
+          return res.status(404).json({
+            success: false,
+            message: "Pedido não encontrado.",
+          });
+        }
+        if (order.paymentMethod !== "credit_card") {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Ação disponível somente para pedidos criados com cartão de crédito.",
+          });
+        }
+        const result = await finalizeOrderPaidLikeWebhook(order, {
+          billingType: "CREDIT_CARD",
+          value: Number.parseFloat(String(order.amount)),
+        });
+        if (!result.ok) {
+          if (result.code === "already_paid") {
+            return res.status(409).json({
+              success: false,
+              message: "Este pedido já está pago.",
+            });
+          }
+          return res.status(400).json({
+            success: false,
+            message: `Não é possível confirmar pagamento: status do pedido inválido (${order.status}).`,
+          });
+        }
+        res.json({
+          success: true,
+          message:
+            "Pagamento registrado. O participante receberá o e-mail de confirmação com o QR Code.",
+        });
+      } catch (error) {
+        console.error("POST /api/admin/orders/:id/mark-paid-external:", error);
+        res.status(500).json({
+          success: false,
+          message: "Erro interno ao confirmar pagamento",
+        });
+      }
+    },
+  );
 
   app.post("/api/admin/orders/:id/undo-check-in", authenticateToken, async (req: any, res) => {
     try {
@@ -1624,67 +1688,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Handle different payment events
       if (eventType === "PAYMENT_CONFIRMED" || eventType === "PAYMENT_RECEIVED") {
-        const order = payment.externalReference 
-            ? await storage.getOrder(payment.externalReference)
-            : await storage.getOrderByAsaasPaymentId(payment.id);
-        
-        if (order && order.status !== "paid") {
-          // Update order status
-          await storage.updateOrder(order.id, { status: "paid" });
-          
-          // Get event and user details
-          const event = await storage.getEvent(order.eventId);
-          const user = await storage.getUser(order.userId);
+        const order = payment.externalReference
+          ? await storage.getOrder(payment.externalReference)
+          : await storage.getOrderByAsaasPaymentId(payment.id);
 
-          if (order.courtesyLinkId) {
-          await storage.incrementCourtesyLinkUsage(order.courtesyLinkId);
-          }
-          
-          if (event && user) {
-            // Increment event attendees
-            await storage.updateEvent(event.id, {
-              currentAttendees: (event.currentAttendees || 0) + 1,
-            });
-
-            // === 🔄 Forward structured data to Make.com ===
-          const makeWebhookUrl = "https://hook.us2.make.com/wrlqnqumlmgvfjicglpdrc3gv8lkbqce"; // replace this
-          (async () => {
-            try {
-              await axios.post(makeWebhookUrl, {
-                user: {
-                  name: user.name,
-                  email: user.email,
-                },
-                event: {
-                  title: event.title,
-                  date: event.date,
-                  location: event.location,
-                },
-                order: {
-                  id: order.id,
-                  amount: order.amount || payment?.value || null,
-                  status: "paid",
-                  paymentMethod: payment?.billingType || "unknown",
-                },
-              });
-              console.log("✅ Forwarded structured data to Make.com successfully");
-            } catch (err) {
-              console.error("❌ Failed to forward data to Make.com:", err);
-            }
-          })();
-          // ==================================================
-
-            // Send confirmation email with QR code ticket
-            await emailService.sendTicketEmail(user!.email, {
-              userName: user!.name,
-              eventTitle: event.title,
-              eventDate: event.date,
-              eventLocation: event.location,
-              qrCodeData: order.qrCodeData || '',
-              orderId: order.id,
-              qrCodeS3Url: order.qr_code_s3_url || '',
-            });
-          }
+        if (order) {
+          await finalizeOrderPaidLikeWebhook(order, {
+            billingType: payment?.billingType || "unknown",
+            value: payment?.value ?? null,
+          });
         }
       } else if (eventType === "PAYMENT_OVERDUE" || eventType === "PAYMENT_DELETED") {
         const order = await storage.getOrderByAsaasPaymentId(payment.id);
