@@ -7,7 +7,7 @@ import { db } from "./db";
 import { z } from "zod";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { 
   insertUserSchema, 
@@ -27,6 +27,11 @@ import { validateCpf, validateEmail, formatCpf, formatPhone } from "./utils/vali
 import { parseBrazilEventLocalDateTime } from "./utils/eventDateTime";
 import { sanitizeCourtesyTemplateHtml } from "./utils/courtesyTemplateSanitize";
 import { mapCommercialSales } from "./utils/commercialSalesMapper";
+import {
+  buildMassSendRecipientIlikePattern,
+  mapMassSendRecipientFromLink,
+  mapRedemptionRowFromOrder,
+} from "./utils/massSendCourtesyQueries";
 import { buildCancellationEmailHtml } from "./utils/cancellationEmailTemplate";
 import { finalizeOrderPaidLikeWebhook } from "./utils/finalizeOrderPaidLikeWebhook";
 import { emailService } from "./services/emailService";
@@ -871,6 +876,172 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Erro ao listar participantes" });
     }
   });
+
+  app.get(
+    "/api/admin/events/:eventId/mass-send-recipients",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({
+            success: false,
+            message: "Acesso negado. Apenas administradores.",
+          });
+        }
+        const parsed = z.string().uuid().safeParse(req.params.eventId);
+        if (!parsed.success) {
+          return res
+            .status(400)
+            .json({ success: false, message: "eventId inválido" });
+        }
+        const eventId = parsed.data;
+        const page = Math.max(1, parseInt(String(req.query.page), 10) || 1);
+        const limit = 50;
+        const offset = (page - 1) * limit;
+        const searchRaw = String(req.query.search ?? "").trim();
+        const search = searchRaw.slice(0, 120);
+        const pattern = buildMassSendRecipientIlikePattern(search);
+
+        const baseWhere = and(
+          eq(courtesyLinks.eventId, eventId),
+          isNotNull(courtesyLinks.recipientEmail),
+          isNotNull(courtesyLinks.recipientName),
+        );
+
+        const whereClause =
+          pattern == null
+            ? baseWhere
+            : and(
+                baseWhere,
+                or(
+                  sql`${courtesyLinks.recipientName}::text ilike ${
+                    pattern
+                  } escape '\\'`,
+                  sql`${courtesyLinks.recipientEmail}::text ilike ${
+                    pattern
+                  } escape '\\'`,
+                )!,
+              );
+
+        const [totalRow] = await db
+          .select({ c: count() })
+          .from(courtesyLinks)
+          .where(whereClause!);
+
+        const total = totalRow?.c ?? 0;
+
+        const links = await db
+          .select()
+          .from(courtesyLinks)
+          .where(whereClause!)
+          .orderBy(desc(courtesyLinks.createdAt))
+          .limit(limit)
+          .offset(offset);
+
+        const data = links.map((link) => mapMassSendRecipientFromLink(link));
+        return res.json({ data, total });
+      } catch (error) {
+        console.error("GET /api/admin/events/:eventId/mass-send-recipients:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Erro interno ao carregar envios de cortesia",
+        });
+      }
+    },
+  );
+
+  app.get(
+    "/api/admin/courtesy-links/:linkId/redemptions",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({
+            success: false,
+            message: "Acesso negado. Apenas administradores.",
+          });
+        }
+        const parsed = z.string().uuid().safeParse(req.params.linkId);
+        if (!parsed.success) {
+          return res
+            .status(400)
+            .json({ success: false, message: "linkId inválido" });
+        }
+        const linkId = parsed.data;
+
+        const [link] = await db
+          .select()
+          .from(courtesyLinks)
+          .where(eq(courtesyLinks.id, linkId));
+
+        if (!link) {
+          return res.status(404).json({
+            success: false,
+            message: "Link de cortesia não encontrado",
+          });
+        }
+
+        const event = await storage.getEvent(link.eventId);
+        const eventTitle = event?.title ?? "—";
+
+        const buyer = alias(users, "courtesy_buyer");
+
+        const rows = await db
+          .select({
+            orderId: orders.id,
+            orderStatus: orders.status,
+            amntUsed: orders.amntUsed,
+            maxUses: orders.maxUses,
+            qrCodeUsedAt: orders.qrCodeUsedAt,
+            orderCreatedAt: orders.createdAt,
+            attName: courtesyAttendees.name,
+            attEmail: courtesyAttendees.email,
+            attCpf: courtesyAttendees.cpf,
+            attPhone: courtesyAttendees.phone,
+            uName: buyer.name,
+            uEmail: buyer.email,
+            uCpf: buyer.cpf,
+            uPhone: buyer.phone,
+          })
+          .from(orders)
+          .innerJoin(buyer, eq(orders.userId, buyer.id))
+          .leftJoin(
+            courtesyAttendees,
+            eq(orders.courtesyAttendeeId, courtesyAttendees.id),
+          )
+          .where(
+            and(
+              eq(orders.courtesyLinkId, linkId),
+              ne(orders.status, "cancelled"),
+            ),
+          )
+          .orderBy(desc(orders.createdAt));
+
+        const data = rows.map((r) => mapRedemptionRowFromOrder(r));
+
+        return res.json({
+          link: {
+            id: link.id,
+            code: link.code,
+            eventId: link.eventId,
+            eventTitle,
+            recipientName: link.recipientName,
+            recipientEmail: link.recipientEmail,
+            ticketCount: link.ticketCount,
+            usedCount: link.usedCount ?? 0,
+          },
+          data,
+          total: data.length,
+        });
+      } catch (error) {
+        console.error("GET /api/admin/courtesy-links/:linkId/redemptions:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Erro interno ao carregar resgates",
+        });
+      }
+    },
+  );
 
   app.get("/api/admin/events/:eventId/commercial-sales", authenticateToken, async (req: any, res) => {
     try {
