@@ -152,6 +152,42 @@ export const massSendJobs = pgTable('mass_send_jobs', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/** One row per event: toggle automatic Zebra print queue on check-in. */
+export const eventPrintSettings = pgTable("event_print_settings", {
+  eventId: varchar("event_id")
+    .primaryKey()
+    .references(() => events.id, { onDelete: "cascade" }),
+  isEnabled: boolean("is_enabled").default(false).notNull(),
+  updatedBy: varchar("updated_by").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** Badge print jobs (queued by server, consumed by a WebUSB terminal). */
+export const printJobs = pgTable("print_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventId: varchar("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  orderId: varchar("order_id")
+    .notNull()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  displayName: varchar("display_name", { length: 255 }).notNull(),
+  status: text("status", {
+    enum: ["pending", "processing", "completed", "failed"],
+  })
+    .default("pending")
+    .notNull(),
+  /** Print attempts (incremented on each failure; max 3). */
+  attempts: integer("attempts").default(0).notNull(),
+  lockedBySocketId: varchar("locked_by_socket_id", { length: 64 }),
+  lastErrorCode: varchar("last_error_code", { length: 50 }),
+  lastErrorMessage: text("last_error_message"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   orders: many(orders),
@@ -205,6 +241,17 @@ export const courtesyLinksRelations = relations(courtesyLinks, ({ one, many }) =
     references: [users.id],
   }),
   orders: many(orders),
+}));
+
+export const eventPrintSettingsRelations = relations(eventPrintSettings, ({ one }) => ({
+  event: one(events, {
+    fields: [eventPrintSettings.eventId],
+    references: [events.id],
+  }),
+  updatedByUser: one(users, {
+    fields: [eventPrintSettings.updatedBy],
+    references: [users.id],
+  }),
 }));
 
 // Insert schemas
@@ -280,6 +327,8 @@ export type InsertCourtesyLink = z.infer<typeof insertCourtesyLinkSchema>;
 export type CourtesyAttendee = typeof courtesyAttendees.$inferSelect;
 export type InsertCourtesyAttendee = z.infer<typeof insertCourtesyAttendeeSchema>;
 export type Certificate = typeof certificates.$inferSelect;
+export type EventPrintSettings = typeof eventPrintSettings.$inferSelect;
+export type PrintJob = typeof printJobs.$inferSelect;
 
 // Login schema
 export const loginSchema = z.object({

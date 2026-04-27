@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Link, useLocation, useParams } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Loader2, Save, Trash2 } from "lucide-react";
 import {
   Breadcrumb,
@@ -35,6 +35,8 @@ import {
 import { Form } from "@/components/ui/form";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import EventFormFields from "@/components/admin/EventFormFields";
@@ -89,6 +91,44 @@ export default function AdminEditEventPage() {
     queryFn: async (): Promise<Event> => {
       const res = await apiRequest("GET", `/api/admin/events/${id}`);
       return res.json() as Promise<Event>;
+    },
+  });
+
+  const { data: printSettings, isLoading: printSettingsLoading } = useQuery<{
+    isEnabled: boolean;
+  }>({
+    queryKey: ["/api/admin/events", id, "print-settings"],
+    enabled: Boolean(id),
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/admin/events/${id}/print-settings`);
+      return res.json() as Promise<{ isEnabled: boolean }>;
+    },
+  });
+
+  const updatePrintSettings = useMutation({
+    mutationFn: async (isEnabled: boolean) => {
+      const res = await apiRequest("PATCH", `/api/admin/events/${id}/print-settings`, {
+        isEnabled,
+      });
+      return res.json() as Promise<{ isEnabled: boolean }>;
+    },
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({
+        queryKey: ["/api/admin/events", id, "print-settings"],
+      });
+      toast({
+        title: "Impressão",
+        description: data.isEnabled
+          ? "Impressão automática ativada para este evento."
+          : "Impressão automática desativada para este evento.",
+      });
+    },
+    onError: (err) => {
+      toast({
+        title: "Erro ao salvar",
+        description: parseApiErrorMessage(err),
+        variant: "destructive",
+      });
     },
   });
 
@@ -245,11 +285,38 @@ export default function AdminEditEventPage() {
         </BreadcrumbList>
       </Breadcrumb>
 
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Editar evento</h1>
           <p className="text-sm text-muted-foreground">{event.title}</p>
         </div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch sm:gap-3">
+          <Card className="w-full min-w-0 sm:min-w-[280px]">
+            <CardHeader className="space-y-3 py-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="print-auto-switch" className="text-base">
+                    Impressão no credenciamento
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Enfileirar etiqueta após check-in (terminal WebUSB)
+                  </p>
+                </div>
+                {printSettingsLoading || !id ? (
+                  <Skeleton className="h-6 w-11 shrink-0 rounded-full" />
+                ) : (
+                  <Switch
+                    id="print-auto-switch"
+                    checked={printSettings?.isEnabled ?? false}
+                    disabled={updatePrintSettings.isPending}
+                    onCheckedChange={(c) => {
+                      updatePrintSettings.mutate(c);
+                    }}
+                  />
+                )}
+              </div>
+            </CardHeader>
+          </Card>
         <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
           <AlertDialogTrigger asChild>
             <Button type="button" variant="destructive" size="sm">
@@ -280,6 +347,7 @@ export default function AdminEditEventPage() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+        </div>
       </div>
 
       <Card className="mx-auto max-w-2xl">

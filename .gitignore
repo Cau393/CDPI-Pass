@@ -1,3 +1,5 @@
 node_modules
 IMAGE_DIMENSIONS.md
 .env
+frontend/.rtk
+frontend/CLAUDE.md

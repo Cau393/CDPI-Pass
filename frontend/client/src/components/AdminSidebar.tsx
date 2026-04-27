@@ -21,6 +21,7 @@ import {
   Hash,
   LogOut,
   Mail,
+  Printer,
   ScanLine,
   Ticket,
   Users,
@@ -77,6 +78,12 @@ export default function AdminSidebar() {
               icon={ScanLine}
               label="Verificar QR"
               tooltip="Verificar QR"
+            />
+            <NavItem
+              href="/admin/print-terminal"
+              icon={Printer}
+              label="Terminal de impressão"
+              tooltip="Terminal Zebra WebUSB"
             />
             <NavItem
               href="/enviar-template"

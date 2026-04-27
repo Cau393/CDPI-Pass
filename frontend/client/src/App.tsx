@@ -30,6 +30,7 @@ import AdminEventsListPage from "@/pages/AdminEventsListPage";
 import AdminEditEventPage from "@/pages/AdminEditEventPage";
 import AdminCommercialSalesPage from "@/pages/AdminCommercialSalesPage";
 import AdminCourtesyQuotaPage from "@/pages/AdminCourtesyQuotaPage";
+import AdminPrintTerminalPage from "@/pages/AdminPrintTerminalPage";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -110,6 +111,13 @@ function Router() {
           <AdminRoute>
             <AdminShell>
               <AdminCommercialSalesPage />
+            </AdminShell>
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/print-terminal">
+          <AdminRoute>
+            <AdminShell>
+              <AdminPrintTerminalPage />
             </AdminShell>
           </AdminRoute>
         </Route>

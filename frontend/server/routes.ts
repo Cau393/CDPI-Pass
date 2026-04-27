@@ -34,6 +34,7 @@ import {
 } from "./utils/massSendCourtesyQueries";
 import { buildCancellationEmailHtml } from "./utils/cancellationEmailTemplate";
 import { finalizeOrderPaidLikeWebhook } from "./utils/finalizeOrderPaidLikeWebhook";
+import { enqueueEventPrintIfEnabled } from "./utils/enqueueEventPrintIfEnabled";
 import { emailService } from "./services/emailService";
 import { asaasService } from "./services/asaasService";
 import { qrCodeService } from "./services/qrCodeService";
@@ -1043,6 +1044,121 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
+  app.get(
+    "/api/admin/events/:eventId/print-settings",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado" });
+        }
+        const parsed = z.string().uuid().safeParse(req.params.eventId);
+        if (!parsed.success) {
+          return res.status(400).json({ message: "eventId inválido" });
+        }
+        const eventId = parsed.data;
+        const ev = await storage.getEvent(eventId);
+        if (!ev) {
+          return res.status(404).json({ message: "Evento não encontrado" });
+        }
+        const s = await storage.getEventPrintSetting(eventId);
+        return res.json({ isEnabled: s.isEnabled, eventId });
+      } catch (e) {
+        console.error("GET /api/admin/events/:eventId/print-settings:", e);
+        return res.status(500).json({ message: "Erro ao carregar configuração" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/admin/events/:eventId/print-settings",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado" });
+        }
+        const parsed = z.string().uuid().safeParse(req.params.eventId);
+        if (!parsed.success) {
+          return res.status(400).json({ message: "eventId inválido" });
+        }
+        const eventId = parsed.data;
+        const ev = await storage.getEvent(eventId);
+        if (!ev) {
+          return res.status(404).json({ message: "Evento não encontrado" });
+        }
+        const body = z
+          .object({ isEnabled: z.boolean() })
+          .safeParse(req.body);
+        if (!body.success) {
+          return res
+            .status(400)
+            .json({ message: "Body inválido: informe { isEnabled: boolean }" });
+        }
+        await storage.upsertEventPrintSetting(
+          eventId,
+          body.data.isEnabled,
+          req.user.id,
+        );
+        return res.json({ isEnabled: body.data.isEnabled, eventId });
+      } catch (e) {
+        console.error("PATCH /api/admin/events/:eventId/print-settings:", e);
+        return res
+          .status(500)
+          .json({ message: "Erro ao salvar configuração de impressão" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/admin/events/:eventId/print-history",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado" });
+        }
+        const parsed = z.string().uuid().safeParse(req.params.eventId);
+        if (!parsed.success) {
+          return res.status(400).json({ message: "eventId inválido" });
+        }
+        const eventId = parsed.data;
+        const ev = await storage.getEvent(eventId);
+        if (!ev) {
+          return res.status(404).json({ message: "Evento não encontrado" });
+        }
+        const limit = Math.min(
+          200,
+          Math.max(1, parseInt(String(req.query.limit), 10) || 100),
+        );
+        const list = await storage.listPrintJobsForEvent(eventId, limit);
+        const data = list.map((j) => ({
+          id: j.id,
+          orderId: j.orderId,
+          displayName: j.displayName,
+          status: j.status,
+          attempts: j.attempts,
+          lastErrorCode: j.lastErrorCode,
+          lastErrorMessage: j.lastErrorMessage,
+          createdAt: j.createdAt
+            ? j.createdAt instanceof Date
+              ? j.createdAt.toISOString()
+              : new Date(String(j.createdAt)).toISOString()
+            : null,
+          completedAt: j.completedAt
+            ? j.completedAt instanceof Date
+              ? j.completedAt.toISOString()
+              : new Date(String(j.completedAt)).toISOString()
+            : null,
+        }));
+        return res.json({ data, total: data.length });
+      } catch (e) {
+        console.error("GET /api/admin/events/:eventId/print-history:", e);
+        return res.status(500).json({ message: "Erro ao carregar histórico" });
+      }
+    },
+  );
+
   app.get("/api/admin/events/:eventId/commercial-sales", authenticateToken, async (req: any, res) => {
     try {
       if (!req.user.isAdmin) {
@@ -1238,12 +1354,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         amntUsed: newUsed,
       });
 
+      const displayName = await enqueueEventPrintIfEnabled(order);
+
       res.json({
         success: true,
         checkedInAt: now.toISOString(),
         amntUsed: newUsed,
         maxUses,
         checkedIn: newUsed > 0,
+        userName: displayName,
       });
     } catch (error) {
       console.error("POST /api/admin/tickets/:ticketId/check-in:", error);
@@ -1824,13 +1943,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         amntUsed: order.amntUsed + 1
       });
 
+      const displayName = await enqueueEventPrintIfEnabled(order);
+
       // Get event info for response
       const event = await storage.getEvent(order.eventId);
 
       res.json({ 
         success: true, 
         message: "Ingresso verificado com sucesso",
-        userName: "Participante Confirmado",
+        userName: displayName,
         eventTitle: event?.title || "Evento"
       });
     } catch (error) {
@@ -2587,5 +2708,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const httpServer = createServer(app);
+  const { initPrintWebSocket } = await import("./print/printCoordinator");
+  initPrintWebSocket(httpServer);
   return httpServer;
 }

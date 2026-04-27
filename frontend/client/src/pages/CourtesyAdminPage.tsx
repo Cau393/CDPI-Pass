@@ -71,11 +71,14 @@ export default function CourtesyAdminPage() {
   }, [events, eventSearch]);
 
   // Fetch courtesy links
-  const { data: links, isLoading: linksLoading } = useQuery({
+  const { data: links, isLoading: linksLoading } = useQuery<{
+    links: CourtesyLink[];
+    totalPages: number;
+  }>({
   queryKey: ["/api/courtesy-links", currentPage],
   queryFn: async () => {
     const response = await apiRequest("GET", `/api/courtesy-links?page=${currentPage}`);
-    return response.json();
+    return response.json() as Promise<{ links: CourtesyLink[]; totalPages: number }>;
   },
   enabled: isAuthenticated,
   staleTime: 0,
@@ -279,7 +282,7 @@ export default function CourtesyAdminPage() {
                         <div className="mb-2">
                           {link.overridePrice ? (
                             <span className="text-sm font-bold text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
-                              Promocional: R$ {parseFloat(link.overridePrice).toFixed(2)}
+                              Promocional: R$ {Number(link.overridePrice).toFixed(2)}
                             </span>
                           ) : (
                             <span className="text-sm font-bold text-green-600 bg-green-100 px-2 py-1 rounded-full">

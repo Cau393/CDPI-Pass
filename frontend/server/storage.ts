@@ -7,6 +7,8 @@ import {
   courtesyLinks,
   courtesyAttendees,
   massSendJobs,
+  eventPrintSettings,
+  printJobs,
   type User,
   type InsertUser,
   type Event,
@@ -19,12 +21,14 @@ import {
   type InsertCourtesyLink,
   type CourtesyAttendee,
   type InsertCourtesyAttendee,
+  type PrintJob,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, sql, asc, count, and } from "drizzle-orm";
 import { s3Service } from "./services/s3Service";
 import { buildUndoCheckInPatch } from "./utils/undoCheckInUpdate";
 import { validateCourtesyTicketCountUpdate } from "./utils/courtesyTicketCountUpdate";
+import { MAX_PRINT_ATTEMPTS, nextStateAfterPrintFailure } from "./utils/printJobPolicy";
 
 export type CancelOrderResult =
   | { ok: true; order: Order }
@@ -85,6 +89,37 @@ export interface IStorage {
 
   /** Reverts one check-in (decrement amntUsed, sync qr flags). */
   undoOrderCheckIn(orderId: string): Promise<Order>;
+
+  getCourtesyAttendeeById(id: string): Promise<CourtesyAttendee | undefined>;
+
+  getEventPrintSetting(eventId: string): Promise<{ isEnabled: boolean }>;
+  upsertEventPrintSetting(
+    eventId: string,
+    isEnabled: boolean,
+    updatedBy: string,
+  ): Promise<void>;
+  createPrintJob(params: {
+    eventId: string;
+    orderId: string;
+    displayName: string;
+  }): Promise<PrintJob>;
+  claimNextPrintJobForEvent(
+    eventId: string,
+    socketId: string,
+  ): Promise<PrintJob | undefined>;
+  completePrintJob(jobId: string, socketId: string): Promise<boolean>;
+  failPrintJob(
+    jobId: string,
+    socketId: string,
+    errorCode: string,
+    message: string,
+  ): Promise<{ ok: boolean; terminalFailure: boolean }>;
+  getPrintJobById(id: string): Promise<PrintJob | undefined>;
+  listPrintJobsForEvent(
+    eventId: string,
+    limit: number,
+  ): Promise<PrintJob[]>;
+  requeueJobOnSocketDisconnect(jobId: string, socketId: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -515,6 +550,210 @@ export class DatabaseStorage implements IStorage {
       throw new Error("Pedido não encontrado");
     }
     return updated;
+  }
+
+  async getCourtesyAttendeeById(
+    id: string,
+  ): Promise<CourtesyAttendee | undefined> {
+    const [a] = await db
+      .select()
+      .from(courtesyAttendees)
+      .where(eq(courtesyAttendees.id, id));
+    return a;
+  }
+
+  async getEventPrintSetting(eventId: string): Promise<{ isEnabled: boolean }> {
+    const [row] = await db
+      .select()
+      .from(eventPrintSettings)
+      .where(eq(eventPrintSettings.eventId, eventId));
+    if (!row) {
+      return { isEnabled: false };
+    }
+    return { isEnabled: row.isEnabled ?? false };
+  }
+
+  async upsertEventPrintSetting(
+    eventId: string,
+    isEnabled: boolean,
+    updatedBy: string,
+  ): Promise<void> {
+    const now = new Date();
+    await db
+      .insert(eventPrintSettings)
+      .values({
+        eventId,
+        isEnabled,
+        updatedBy,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: eventPrintSettings.eventId,
+        set: {
+          isEnabled,
+          updatedBy,
+          updatedAt: now,
+        },
+      });
+  }
+
+  async createPrintJob(params: {
+    eventId: string;
+    orderId: string;
+    displayName: string;
+  }): Promise<PrintJob> {
+    const now = new Date();
+    const [row] = await db
+      .insert(printJobs)
+      .values({
+        eventId: params.eventId,
+        orderId: params.orderId,
+        displayName: params.displayName,
+        status: "pending",
+        attempts: 0,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    if (!row) {
+      throw new Error("PRINT_JOB_INSERT_FAILED");
+    }
+    return row;
+  }
+
+  async claimNextPrintJobForEvent(
+    eventId: string,
+    socketId: string,
+  ): Promise<PrintJob | undefined> {
+    const maxA = MAX_PRINT_ATTEMPTS;
+    const result = (await db.execute(sql`
+      UPDATE print_jobs AS pj
+      SET
+        status = 'processing',
+        locked_by_socket_id = ${socketId},
+        updated_at = NOW()
+      FROM (
+        SELECT pj2.id
+        FROM print_jobs pj2
+        WHERE pj2.status = 'pending'
+          AND pj2.attempts < ${maxA}
+          AND pj2.event_id = ${eventId}
+        ORDER BY pj2.created_at ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+      ) AS sub
+      WHERE pj.id = sub.id
+      RETURNING pj.id,
+        pj.event_id AS "eventId",
+        pj.order_id AS "orderId",
+        pj.display_name AS "displayName",
+        pj.status,
+        pj.attempts,
+        pj.locked_by_socket_id AS "lockedBySocketId",
+        pj.last_error_code AS "lastErrorCode",
+        pj.last_error_message AS "lastErrorMessage",
+        pj.created_at AS "createdAt",
+        pj.updated_at AS "updatedAt",
+        pj.completed_at AS "completedAt"
+    `)) as { rows: PrintJob[] };
+    return result.rows?.[0];
+  }
+
+  async completePrintJob(jobId: string, socketId: string): Promise<boolean> {
+    const [row] = await db
+      .update(printJobs)
+      .set({
+        status: "completed",
+        completedAt: new Date(),
+        lockedBySocketId: null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(printJobs.id, jobId),
+          eq(printJobs.lockedBySocketId, socketId),
+        ),
+      )
+      .returning();
+    return !!row;
+  }
+
+  async failPrintJob(
+    jobId: string,
+    socketId: string,
+    errorCode: string,
+    message: string,
+  ): Promise<{ ok: boolean; terminalFailure: boolean }> {
+    const job = await this.getPrintJobById(jobId);
+    if (!job || job.lockedBySocketId !== socketId) {
+      return { ok: false, terminalFailure: false };
+    }
+    const now = new Date();
+    const nextState = nextStateAfterPrintFailure(job.attempts ?? 0);
+    if (nextState.status === "failed") {
+      await db
+        .update(printJobs)
+        .set({
+          status: "failed",
+          attempts: nextState.attempts,
+          lastErrorCode: errorCode,
+          lastErrorMessage: message,
+          lockedBySocketId: null,
+          updatedAt: now,
+        })
+        .where(eq(printJobs.id, jobId));
+      return { ok: true, terminalFailure: true };
+    }
+    await db
+      .update(printJobs)
+      .set({
+        status: "pending",
+        attempts: nextState.attempts,
+        lastErrorCode: errorCode,
+        lastErrorMessage: message,
+        lockedBySocketId: null,
+        updatedAt: now,
+      })
+      .where(eq(printJobs.id, jobId));
+    return { ok: true, terminalFailure: false };
+  }
+
+  async getPrintJobById(id: string): Promise<PrintJob | undefined> {
+    const [row] = await db.select().from(printJobs).where(eq(printJobs.id, id));
+    return row;
+  }
+
+  async listPrintJobsForEvent(
+    eventId: string,
+    limit: number,
+  ): Promise<PrintJob[]> {
+    return await db
+      .select()
+      .from(printJobs)
+      .where(eq(printJobs.eventId, eventId))
+      .orderBy(desc(printJobs.createdAt))
+      .limit(Math.min(200, Math.max(1, limit)));
+  }
+
+  async requeueJobOnSocketDisconnect(
+    jobId: string,
+    socketId: string,
+  ): Promise<void> {
+    await db
+      .update(printJobs)
+      .set({
+        status: "pending",
+        lockedBySocketId: null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(printJobs.id, jobId),
+          eq(printJobs.lockedBySocketId, socketId),
+          eq(printJobs.status, "processing"),
+        ),
+      );
   }
 
   async addMassSendJobToQueue(jobData: {
