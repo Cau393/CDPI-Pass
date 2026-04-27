@@ -42,7 +42,7 @@ interface Participant {
   email: string;
   phone: string;
   ticketId: string;
-  orderStatus: string;
+  orderStatus: "paid" | "courtesy" | "cancelled";
   amntUsed: number;
   maxUses: number;
   checkedIn: boolean;
@@ -419,6 +419,11 @@ export default function AdminParticipantsPage() {
                               Cortesia
                             </Badge>
                           )}
+                          {p.orderStatus === "paid" && (
+                            <Badge variant="outline" className="w-fit text-xs">
+                              Pago
+                            </Badge>
+                          )}
                           {p.checkedIn ? (
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -433,7 +438,7 @@ export default function AdminParticipantsPage() {
                               )}
                             </Tooltip>
                           ) : (
-                            <Badge variant="secondary">Não registrado</Badge>
+                            <Badge variant="secondary">Aguardando confirmação</Badge>
                           )}
                         </div>
                       </TableCell>

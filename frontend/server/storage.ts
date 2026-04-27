@@ -102,6 +102,7 @@ export interface IStorage {
     eventId: string;
     orderId: string;
     displayName: string;
+    companyLine?: string | null;
   }): Promise<PrintJob>;
   claimNextPrintJobForEvent(
     eventId: string,
@@ -602,6 +603,7 @@ export class DatabaseStorage implements IStorage {
     eventId: string;
     orderId: string;
     displayName: string;
+    companyLine?: string | null;
   }): Promise<PrintJob> {
     const now = new Date();
     const [row] = await db
@@ -610,6 +612,8 @@ export class DatabaseStorage implements IStorage {
         eventId: params.eventId,
         orderId: params.orderId,
         displayName: params.displayName,
+        companyLine:
+          params.companyLine?.trim() ? params.companyLine.trim().slice(0, 255) : null,
         status: "pending",
         attempts: 0,
         createdAt: now,
@@ -648,6 +652,7 @@ export class DatabaseStorage implements IStorage {
         pj.event_id AS "eventId",
         pj.order_id AS "orderId",
         pj.display_name AS "displayName",
+        pj.company_line AS "companyLine",
         pj.status,
         pj.attempts,
         pj.locked_by_socket_id AS "lockedBySocketId",

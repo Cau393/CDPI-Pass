@@ -13,3 +13,11 @@ export function resolveDisplayNameForPrint(
   }
   return (buyer?.name?.trim() || "Participante").slice(0, 255);
 }
+
+/** Second badge line for courtesy attendees (company); omit for paid-only flow. */
+export function resolveCompanyLineForPrint(
+  courtesy: CourtesyAttendee | null | undefined,
+): string | null {
+  const c = courtesy?.partnerCompany?.trim();
+  return c ? c.slice(0, 255) : null;
+}

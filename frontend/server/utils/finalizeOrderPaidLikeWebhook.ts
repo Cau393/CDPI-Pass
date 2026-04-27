@@ -32,7 +32,11 @@ export async function finalizeOrderPaidLikeWebhook(
     return { ok: false, code: "not_pending" };
   }
 
-  await storage.updateOrder(order.id, { status: "paid" });
+  const finalStatus: "paid" | "courtesy" =
+    order.courtesyLinkId != null || order.courtesyAttendeeId != null
+      ? "courtesy"
+      : "paid";
+  await storage.updateOrder(order.id, { status: finalStatus });
 
   if (order.courtesyLinkId) {
     await storage.incrementCourtesyLinkUsage(order.courtesyLinkId);
@@ -61,7 +65,7 @@ export async function finalizeOrderPaidLikeWebhook(
           order: {
             id: order.id,
             amount: order.amount || paymentMeta.value || null,
-            status: "paid" as const,
+            status: finalStatus,
             paymentMethod: paymentMeta.billingType || "unknown",
           },
         });

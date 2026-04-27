@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Printer, Usb, AlertTriangle } from "lucide-react";
 import EventSelector from "@/components/admin/EventSelector";
+import { printBadgeLabel } from "@/lib/badgePrint";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -16,7 +19,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { buildNameLabelZpl } from "@/lib/zebraZpl";
 import {
   connectZebraZD220Like,
   isWebUsbSupported,
@@ -28,6 +30,7 @@ type PrintHistoryRow = {
   id: string;
   orderId: string;
   displayName: string;
+  companyLine: string | null;
   status: string;
   attempts: number;
   lastErrorCode: string | null;
@@ -42,6 +45,7 @@ type WsServerMsg =
       job_id: string;
       ticket_id: string;
       display_name: string;
+      company_line?: string;
     }
   | {
       type: "print_dead_letter";
@@ -51,10 +55,17 @@ type WsServerMsg =
     }
   | { type: "print_queue_notify" };
 
+type PrintTab = "fila" | "manual";
+
+
 export default function AdminPrintTerminalPage() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
+  const [printTab, setPrintTab] = useState<PrintTab>("fila");
+  const [manualName, setManualName] = useState("");
+  const [manualCompany, setManualCompany] = useState("");
+  const [manualPrinting, setManualPrinting] = useState(false);
   const [usbSession, setUsbSession] = useState<ZebraUsbSession | null>(null);
   const usbSessionRef = useRef<ZebraUsbSession | null>(null);
   const [usbBusy, setUsbBusy] = useState(false);
@@ -191,6 +202,7 @@ export default function AdminPrintTerminalPage() {
           const job = data as {
             job_id: string;
             display_name: string;
+            company_line?: string;
           };
           const wsCur = wsRef.current;
           if (!wsCur || wsCur.readyState !== WebSocket.OPEN) {
@@ -211,8 +223,10 @@ export default function AdminPrintTerminalPage() {
             return;
           }
           try {
-            const zpl = buildNameLabelZpl(job.display_name);
-            await session.printZpl(zpl);
+            await printBadgeLabel(session, {
+              name: job.display_name,
+              company: job.company_line,
+            });
             wsCur.send(
               JSON.stringify({
                 type: "print_ack",
@@ -308,7 +322,7 @@ export default function AdminPrintTerminalPage() {
     }
   };
 
-  const handleLocalReprint = async (name: string) => {
+  const handleLocalReprint = async (name: string, companyLine?: string | null) => {
     const session = usbSessionRef.current;
     if (!session) {
       toast({
@@ -319,15 +333,55 @@ export default function AdminPrintTerminalPage() {
       return;
     }
     try {
-      const zpl = buildNameLabelZpl(name);
-      await session.printZpl(zpl);
-      toast({ title: "Reimpressão enviada", description: name });
+      await printBadgeLabel(session, { name, company: companyLine });
+      const n = name.trim();
+      const c = companyLine?.trim();
+      const desc = c ? `${n} — ${c}` : n;
+      toast({ title: "Reimpressão enviada", description: desc });
     } catch (e) {
       toast({
         title: "Erro ao reimprimir",
         description: e instanceof Error ? e.message : "Falha no USB",
         variant: "destructive",
       });
+    }
+  };
+
+  const handleManualPrint = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const session = usbSessionRef.current;
+    if (!session) {
+      toast({
+        title: "Conecte a impressora",
+        description:
+          "Pareie a impressora USB no cartão “Evento e impressora” antes de imprimir.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setManualPrinting(true);
+    try {
+      await printBadgeLabel(session, {
+        name: manualName,
+        company: manualCompany.trim() ? manualCompany : null,
+      });
+      const c = manualCompany.trim();
+      toast({
+        title: "Etiqueta enviada",
+        description: c
+          ? `${manualName.trim()} — ${c}`
+          : manualName.trim() || "Participante",
+      });
+      setManualName("");
+      setManualCompany("");
+    } catch (err) {
+      toast({
+        title: "Erro ao imprimir",
+        description: err instanceof Error ? err.message : "Falha no USB",
+        variant: "destructive",
+      });
+    } finally {
+      setManualPrinting(false);
     }
   };
 
@@ -377,6 +431,9 @@ export default function AdminPrintTerminalPage() {
               value={selectedEvent?.id ?? null}
               onSelect={(e) => {
                 setSelectedEvent(e);
+                setPrintTab("fila");
+                setManualName("");
+                setManualCompany("");
               }}
             />
           </div>
@@ -400,71 +457,158 @@ export default function AdminPrintTerminalPage() {
       </Card>
 
       {selectedEvent && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Printer className="h-5 w-5" />
-              Histórico e reimpressão manual
-            </CardTitle>
-            <CardDescription>
-              A reimpressão abaixo envia ZPL localmente, sem enfileirar de novo
-              no servidor.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Nome</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Data</TableHead>
-                    <TableHead className="text-right">Ações</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.length === 0 ? (
-                    <TableRow>
-                      <TableCell
-                        colSpan={4}
-                        className="h-24 text-center text-muted-foreground"
-                      >
-                        Nenhum registro ainda. Os jobs aparecem após o check-in
-                        com impressão ativa.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    rows.map((r) => (
-                      <TableRow key={r.id}>
-                        <TableCell className="font-medium">
-                          {r.displayName}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="secondary">{r.status}</Badge>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {r.createdAt
-                            ? new Date(r.createdAt).toLocaleString("pt-BR")
-                            : "—"}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => void handleLocalReprint(r.displayName)}
-                          >
-                            Imprimir novamente
-                          </Button>
-                        </TableCell>
+        <Tabs
+          value={printTab}
+          onValueChange={(v) => {
+            const next = v === "manual" ? "manual" : "fila";
+            setPrintTab(next);
+          }}
+          className="w-full"
+        >
+          <TabsList className="mb-4 w-full max-w-md grid grid-cols-2">
+            <TabsTrigger value="fila">Fila e histórico</TabsTrigger>
+            <TabsTrigger value="manual">Impressão manual</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="fila" className="mt-0">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Printer className="h-5 w-5" />
+                  Fila e histórico
+                </CardTitle>
+                <CardDescription>
+                  A reimpressão abaixo envia ZPL localmente, sem enfileirar de
+                  novo no servidor.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Nome</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Data</TableHead>
+                        <TableHead className="text-right">Ações</TableHead>
                       </TableRow>
-                    ))
+                    </TableHeader>
+                    <TableBody>
+                      {rows.length === 0 ? (
+                        <TableRow>
+                          <TableCell
+                            colSpan={4}
+                            className="h-24 text-center text-muted-foreground"
+                          >
+                            Nenhum registro ainda. Os jobs aparecem após o
+                            check-in com impressão ativa.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        rows.map((r) => (
+                          <TableRow key={r.id}>
+                            <TableCell className="font-medium">
+                              <div className="flex flex-col gap-0.5">
+                                <span>{r.displayName}</span>
+                                {r.companyLine ? (
+                                  <span className="text-sm font-normal text-muted-foreground">
+                                    {r.companyLine}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="secondary">{r.status}</Badge>
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {r.createdAt
+                                ? new Date(r.createdAt).toLocaleString("pt-BR")
+                                : "—"}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() =>
+                                  void handleLocalReprint(
+                                    r.displayName,
+                                    r.companyLine,
+                                  )
+                                }
+                              >
+                                Imprimir novamente
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="manual" className="mt-0">
+            <Card>
+              <CardHeader>
+                <CardTitle>Impressão manual</CardTitle>
+                <CardDescription>
+                  Imprima uma etiqueta com nome e empresa personalizados, sem
+                  fila do servidor (mesmo ZPL do check-in com QR).
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form
+                  onSubmit={(ev) => void handleManualPrint(ev)}
+                  className="max-w-md space-y-4"
+                >
+                  <div className="space-y-2">
+                    <Label htmlFor="print-manual-name">Nome</Label>
+                    <Input
+                      id="print-manual-name"
+                      value={manualName}
+                      onChange={(ev) => setManualName(ev.target.value)}
+                      placeholder="Nome completo do participante"
+                      autoComplete="name"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="print-manual-company">
+                      Empresa (opcional)
+                    </Label>
+                    <Input
+                      id="print-manual-company"
+                      value={manualCompany}
+                      onChange={(ev) => setManualCompany(ev.target.value)}
+                      placeholder="Empresa ou cargo"
+                      autoComplete="organization"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      A etiqueta mostra o primeiro e o último nome na primeira
+                      linha. A empresa aparece na segunda linha, se
+                      preenchida.
+                    </p>
+                  </div>
+                  <Button
+                    type="submit"
+                    disabled={manualPrinting || !usbSession}
+                  >
+                    {manualPrinting ? "Enviando…" : "Imprimir etiqueta"}
+                  </Button>
+                  {!usbSession && (
+                    <p className="text-sm text-amber-700 dark:text-amber-500">
+                      Conecte a impressora USB no cartão “Evento e impressora”
+                      acima para habilitar a impressão.
+                    </p>
                   )}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
+                </form>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       )}
     </div>
   );

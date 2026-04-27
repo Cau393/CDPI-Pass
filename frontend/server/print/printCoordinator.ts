@@ -19,6 +19,7 @@ type Client = {
 
 const clients = new Map<WebSocket, Client>();
 
+
 type IncomingJson =
   | { type: "printer_ready" }
   | { type: "printer_offline" }
@@ -101,6 +102,9 @@ async function tryDispatchToClient(c: Client): Promise<void> {
         job_id: job.id,
         ticket_id: job.orderId,
         display_name: job.displayName,
+        ...(job.companyLine
+          ? { company_line: job.companyLine }
+          : {}),
       }),
     );
     sendOk = true;

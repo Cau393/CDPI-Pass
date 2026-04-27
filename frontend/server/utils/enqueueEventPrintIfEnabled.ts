@@ -1,6 +1,9 @@
 import type { Order } from "@shared/schema";
 import { storage } from "../storage";
-import { resolveDisplayNameForPrint } from "./printDisplayName";
+import {
+  resolveCompanyLineForPrint,
+  resolveDisplayNameForPrint,
+} from "./printDisplayName";
 
 /**
  * Resolves the badge/label name, and when the event has printing enabled, creates a
@@ -13,6 +16,7 @@ export async function enqueueEventPrintIfEnabled(order: Order): Promise<string> 
     ? await storage.getCourtesyAttendeeById(order.courtesyAttendeeId)
     : undefined;
   const displayName = resolveDisplayNameForPrint(buyer, courtesy);
+  const companyLine = resolveCompanyLineForPrint(courtesy);
 
   const { isEnabled } = await storage.getEventPrintSetting(order.eventId);
   if (!isEnabled) {
@@ -23,6 +27,7 @@ export async function enqueueEventPrintIfEnabled(order: Order): Promise<string> 
       eventId: order.eventId,
       orderId: order.id,
       displayName,
+      companyLine,
     });
     const { notifyNewPrintJob } = await import("../print/printCoordinator");
     void notifyNewPrintJob(order.eventId).catch((e) =>

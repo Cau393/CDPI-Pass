@@ -173,6 +173,8 @@ export const printJobs = pgTable("print_jobs", {
     .notNull()
     .references(() => orders.id, { onDelete: "cascade" }),
   displayName: varchar("display_name", { length: 255 }).notNull(),
+  /** Set for courtesy (`partner_company`); second line on the badge. */
+  companyLine: varchar("company_line", { length: 255 }),
   status: text("status", {
     enum: ["pending", "processing", "completed", "failed"],
   })

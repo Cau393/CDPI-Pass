@@ -834,6 +834,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           phone: users.phone,
           ticketId: orders.id,
           orderStatus: orders.status,
+          courtesyLinkId: orders.courtesyLinkId,
+          courtesyAttendeeId: orders.courtesyAttendeeId,
           amntUsed: orders.amntUsed,
           maxUses: orders.maxUses,
           qrCodeUsed: orders.qrCodeUsed,
@@ -852,6 +854,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = rows.map((r) => {
         const used = r.amntUsed ?? 0;
         const maxU = r.maxUses ?? 1;
+        const orderStatus: "paid" | "courtesy" | "cancelled" =
+          r.orderStatus === "courtesy" ||
+          r.courtesyLinkId != null ||
+          r.courtesyAttendeeId != null
+            ? "courtesy"
+            : "paid";
         return {
           userId: r.userId,
           name: r.name,
@@ -859,7 +867,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           email: r.email,
           phone: r.phone,
           ticketId: r.ticketId,
-          orderStatus: r.orderStatus,
+          orderStatus,
           amntUsed: used,
           maxUses: maxU,
           checkedIn: used > 0,
@@ -1136,6 +1144,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           id: j.id,
           orderId: j.orderId,
           displayName: j.displayName,
+          companyLine: j.companyLine ?? null,
           status: j.status,
           attempts: j.attempts,
           lastErrorCode: j.lastErrorCode,
