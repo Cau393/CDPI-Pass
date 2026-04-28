@@ -24,7 +24,7 @@ import {
   type PrintJob,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, sql, asc, count, and } from "drizzle-orm";
+import { eq, ne, desc, sql, asc, count, and } from "drizzle-orm";
 import { s3Service } from "./services/s3Service";
 import { buildUndoCheckInPatch } from "./utils/undoCheckInUpdate";
 import { validateCourtesyTicketCountUpdate } from "./utils/courtesyTicketCountUpdate";
@@ -353,7 +353,8 @@ export class DatabaseStorage implements IStorage {
   const existingOrder = await db.select().from(orders).where(
     and(
       eq(orders.cpf, cpf),
-      eq(orders.eventId, eventId)
+      eq(orders.eventId, eventId),
+      ne(orders.status, "cancelled")
     )
   ).limit(1);
 
