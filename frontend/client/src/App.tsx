@@ -30,6 +30,7 @@ import AdminEventsListPage from "@/pages/AdminEventsListPage";
 import AdminEditEventPage from "@/pages/AdminEditEventPage";
 import AdminCommercialSalesPage from "@/pages/AdminCommercialSalesPage";
 import AdminCourtesyQuotaPage from "@/pages/AdminCourtesyQuotaPage";
+import AdminCourtesyLinkRedemptionsPage from "@/pages/AdminCourtesyLinkRedemptionsPage";
 import AdminPrintTerminalPage from "@/pages/AdminPrintTerminalPage";
 
 function Router() {
@@ -76,6 +77,13 @@ function Router() {
           <AdminRoute>
             <AdminShell>
               <CourtesyAdminPage />
+            </AdminShell>
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/courtesy-quota/resgates/:linkId">
+          <AdminRoute>
+            <AdminShell>
+              <AdminCourtesyLinkRedemptionsPage />
             </AdminShell>
           </AdminRoute>
         </Route>

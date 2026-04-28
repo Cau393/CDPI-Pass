@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Search, Save } from "lucide-react";
+import { Loader2, Search, Save, Users } from "lucide-react";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -94,6 +94,11 @@ export default function AdminCourtesyQuotaPage() {
       );
       setNewTicketCount(String(result.link.ticketCount));
       void queryClient.invalidateQueries({ queryKey: ["/api/courtesy-links"] });
+      if (result.link.id) {
+        void queryClient.invalidateQueries({
+          queryKey: ["courtesy-link-redemptions", result.link.id],
+        });
+      }
       toast({
         title: "Limite atualizado",
         description: `Novo máximo: ${result.link.ticketCount} usos.`,
@@ -119,6 +124,11 @@ export default function AdminCourtesyQuotaPage() {
       return;
     }
     if (t === submittedCode) {
+      if (data?.link?.id) {
+        void queryClient.invalidateQueries({
+          queryKey: ["courtesy-link-redemptions", data.link.id],
+        });
+      }
       void refetch();
     } else {
       setSubmittedCode(t);
@@ -132,15 +142,30 @@ export default function AdminCourtesyQuotaPage() {
     queryClient.removeQueries({
       queryKey: ["/api/admin/courtesy-links/by-code"],
     });
+    queryClient.removeQueries({
+      queryKey: ["courtesy-link-redemptions"],
+    });
   };
 
   const handleSalvar = () => {
     if (!data?.link) return;
     const n = Number.parseInt(newTicketCount.trim(), 10);
-    if (!Number.isFinite(n)) {
+    if (
+      !Number.isFinite(n) ||
+      !Number.isInteger(n) ||
+      n < 1
+    ) {
       toast({
         title: "Valor inválido",
         description: "Digite um número inteiro para o novo limite.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (n < data.link.usedCount) {
+      toast({
+        title: "Limite inválido",
+        description: "O novo limite não pode ser menor que os usos já registrados.",
         variant: "destructive",
       });
       return;
@@ -151,13 +176,37 @@ export default function AdminCourtesyQuotaPage() {
   const lookupErrorMessage =
     isError && error ? parseApiErrorMessage(error) : null;
   const showEditor = Boolean(data?.link && !isLoading);
+
+  const parsedLimit = useMemo(() => {
+    const t = newTicketCount.trim();
+    if (t === "") return null;
+    return Number.parseInt(t, 10);
+  }, [newTicketCount]);
+
+  const limitValid =
+    parsedLimit !== null &&
+    Number.isFinite(parsedLimit) &&
+    Number.isInteger(parsedLimit) &&
+    parsedLimit >= 1 &&
+    (data?.link ? parsedLimit >= data.link.usedCount : true);
+
   const canSave =
     showEditor &&
     newTicketCount.trim() !== "" &&
+    limitValid &&
     !saveMutation.isPending;
 
+  const resgatantesHref = data?.link
+    ? `/admin/courtesy-quota/resgates/${
+        data.link.id
+      }?${new URLSearchParams({
+        code: data.link.code,
+        eventId: data.link.eventId,
+      }).toString()}`
+    : "";
+
   return (
-    <div className="mx-auto max-w-2xl px-4 py-8">
+    <div className="mx-auto max-w-6xl px-4 py-8">
       <Breadcrumb className="mb-4">
         <BreadcrumbList>
           <BreadcrumbItem>
@@ -175,7 +224,7 @@ export default function AdminCourtesyQuotaPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">Editar limite de cortesia</h1>
         <p className="text-sm text-muted-foreground">
-          Busque pelo código e ajuste apenas o número máximo de usos do link.
+          Busque pelo código, ajuste o limite e veja quem já resgatou com este link.
         </p>
       </div>
 
@@ -233,77 +282,104 @@ export default function AdminCourtesyQuotaPage() {
       )}
 
       {showEditor && data?.link && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Link encontrado</CardTitle>
-            <CardDescription>
-              {data.eventTitle ? (
-                <span>
-                  Evento: <strong>{data.eventTitle}</strong>
-                </span>
-              ) : (
-                "Evento vinculado ao link."
-              )}
-            </CardDescription>
-          </CardHeader>
-          <Separator />
-          <CardContent className="space-y-6 pt-6">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm text-muted-foreground">Código</span>
-              <code className="rounded bg-muted px-2 py-0.5 text-sm font-medium">
-                {data.link.code}
-              </code>
-              {data.link.isActive === false && (
-                <Badge variant="secondary">Inativo</Badge>
-              )}
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1">
-                <p className="text-sm font-medium text-muted-foreground">Usos atuais</p>
-                <p className="text-2xl font-semibold tabular-nums">{data.link.usedCount}</p>
+        <div className="grid gap-6 lg:grid-cols-[minmax(380px,min(470px,42%))_minmax(300px,min(640px,58%))]">
+          <Card className="h-fit min-w-0 w-full lg:sticky lg:top-6 lg:self-start">
+            <CardHeader>
+              <CardTitle>Link encontrado</CardTitle>
+              <CardDescription>
+                {data.eventTitle ? (
+                  <span>
+                    Evento: <strong>{data.eventTitle}</strong>
+                  </span>
+                ) : (
+                  "Evento vinculado ao link."
+                )}
+              </CardDescription>
+            </CardHeader>
+            <Separator />
+            <CardContent className="space-y-6 pt-6">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-muted-foreground">Código</span>
+                <code className="rounded bg-muted px-2 py-0.5 text-sm font-medium">
+                  {data.link.code}
+                </code>
+                {data.link.isActive === false && (
+                  <Badge variant="secondary">Inativo</Badge>
+                )}
               </div>
-              <div className="space-y-1">
-                <p className="text-sm font-medium text-muted-foreground">Limite atual</p>
-                <p className="text-2xl font-semibold tabular-nums">{data.link.ticketCount}</p>
-              </div>
-            </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="new-ticket-count">Novo limite (ticketCount)</Label>
-              <Input
-                id="new-ticket-count"
-                inputMode="numeric"
-                value={newTicketCount}
-                onChange={(e) => setNewTicketCount(e.target.value.replaceAll(/\D/g, ""))}
-                placeholder="Ex.: 100"
-              />
-              <p className="text-xs text-muted-foreground">
-                Deve ser um inteiro ≥ 1 e não menor que os usos já registrados ({data.link.usedCount}).
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-muted-foreground">
+                    Usos atuais
+                  </p>
+                  <p className="text-2xl font-semibold tabular-nums">{data.link.usedCount}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-muted-foreground">
+                    Limite atual
+                  </p>
+                  <p className="text-2xl font-semibold tabular-nums">{data.link.ticketCount}</p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="new-ticket-count">Novo limite (ticketCount)</Label>
+                <Input
+                  id="new-ticket-count"
+                  inputMode="numeric"
+                  value={newTicketCount}
+                  onChange={(e) => setNewTicketCount(e.target.value.replaceAll(/\D/g, ""))}
+                  placeholder="Ex.: 100"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Deve ser um inteiro ≥ 1 e não menor que os usos já registrados ({data.link.usedCount}).
+                </p>
+              </div>
+            </CardContent>
+            <CardFooter className="flex flex-col border-t pt-6">
+              <Button
+                type="button"
+                className="w-full"
+                disabled={!canSave}
+                onClick={handleSalvar}
+              >
+                {saveMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Salvando...
+                  </>
+                ) : (
+                  <>
+                    <Save className="mr-2 h-4 w-4" />
+                    Salvar novo limite
+                  </>
+                )}
+              </Button>
+            </CardFooter>
+          </Card>
+
+          <Card className="min-w-0 w-full max-w-3xl justify-self-start">
+            <CardHeader>
+              <CardTitle>Resgatantes</CardTitle>
+              <CardDescription>
+                Abra a página de lista para ver todas as colunas (como na aba Visualizar do envio em massa) e cancelar inscrições. Pedidos já cancelados não aparecem na lista.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <p className="text-sm text-muted-foreground">
+                <span className="font-semibold text-foreground">{data.link.usedCount}</span>{" "}
+                uso(s) registrado(s) com este código.
               </p>
-            </div>
-          </CardContent>
-          <CardFooter className="flex flex-col border-t pt-6">
-            <Button
-              type="button"
-              className="w-full"
-              disabled={!canSave}
-              onClick={handleSalvar}
-            >
-              {saveMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Salvando...
-                </>
-              ) : (
-                <>
-                  <Save className="mr-2 h-4 w-4" />
-                  Salvar novo limite
-                </>
-              )}
-            </Button>
-          </CardFooter>
-        </Card>
+              <Button asChild variant="default" className="w-full sm:w-fit">
+                <Link href={resgatantesHref}>
+                  <Users className="mr-2 h-4 w-4" aria-hidden />
+                  Ver lista completa de resgatantes
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );

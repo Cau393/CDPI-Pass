@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Search, UserCheck, UserMinus, UserX } from "lucide-react";
+import { FileSpreadsheet, Loader2, Search, UserCheck, UserMinus, UserX } from "lucide-react";
 import EventSelector from "@/components/admin/EventSelector";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { exportParticipantsToXlsx } from "@/lib/exportParticipantsExcel";
 import type { Event } from "@shared/schema";
 
 interface Participant {
@@ -333,6 +334,32 @@ export default function AdminParticipantsPage() {
       ? `${filteredParticipants.length} de ${totalLoaded} participantes`
       : `${totalLoaded} participante${totalLoaded !== 1 ? "s" : ""}`);
 
+  const handleExportExcel = () => {
+    if (!selectedEvent) return;
+    try {
+      exportParticipantsToXlsx(
+        allParticipants.map((p) => ({
+          name: p.name,
+          cpf: p.cpf,
+          email: p.email,
+          phone: p.phone,
+          orderStatus: p.orderStatus,
+        })),
+        selectedEvent.title,
+      );
+      toast({
+        title: "Arquivo gerado",
+        description: "O download do Excel foi iniciado.",
+      });
+    } catch {
+      toast({
+        title: "Erro ao exportar",
+        description: "Não foi possível gerar o arquivo.",
+        variant: "destructive",
+      });
+    }
+  };
+
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6">
       <div>
@@ -364,11 +391,23 @@ export default function AdminParticipantsPage() {
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
-            {showCountBadge && (
-              <Badge variant="secondary" className="w-fit shrink-0">
-                {showCountBadge}
-              </Badge>
-            )}
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={loading}
+                onClick={handleExportExcel}
+              >
+                <FileSpreadsheet className="mr-2 h-4 w-4" />
+                Exportar para Excel
+              </Button>
+              {showCountBadge && (
+                <Badge variant="secondary" className="w-fit shrink-0">
+                  {showCountBadge}
+                </Badge>
+              )}
+            </div>
           </div>
 
           <div className="rounded-md border">
