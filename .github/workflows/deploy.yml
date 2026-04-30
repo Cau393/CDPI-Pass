@@ -53,6 +53,7 @@ jobs:
           context: .
           file: frontend/Dockerfile
           push: true
+          # Fully lowercase to satisfy Docker
           tags: ghcr.io/cau393/cdpi-pass:latest
 
   deploy:
@@ -62,7 +63,8 @@ jobs:
     steps:
       - name: Get GitHub Runner IP
         id: ip
-        uses: haythem/public-ip@v1.3
+        # Bulletproof way to get the runner's IP
+        run: echo "ipv4=$(curl -s https://checkip.amazonaws.com)" >> $GITHUB_OUTPUT
         
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -87,6 +89,8 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # Fully lowercase to satisfy Docker
             docker pull ghcr.io/cau393/cdpi-pass:latest
             
             docker stop cdpi-pass || true
@@ -97,15 +101,24 @@ jobs:
               --restart unless-stopped \
               -p 5003:5003 \
               --env-file /home/${{ secrets.EC2_USERNAME }}/app/frontend/.env \
-              ghcr.io/${{ github.repository_owner }}/cdpi-pass:latest
+              ghcr.io/cau393/cdpi-pass:latest
               
             docker image prune -f
 
       - name: Remove GitHub IP from Security Group
-        if: always() # This ensures the rule is deleted even if the deployment step fails
+        if: always()
+        env:
+          # Injecting these ensures the cleanup works EVEN IF previous steps failed
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: sa-east-1 
         run: |
-          aws ec2 revoke-security-group-ingress \
-            --group-id ${{ secrets.AWS_SG_ID }} \
-            --protocol tcp \
-            --port 22 \
-            --cidr ${{ steps.ip.outputs.ipv4 }}/32
+          if [ -n "${{ steps.ip.outputs.ipv4 }}" ]; then
+            aws ec2 revoke-security-group-ingress \
+              --group-id ${{ secrets.AWS_SG_ID }} \
+              --protocol tcp \
+              --port 22 \
+              --cidr ${{ steps.ip.outputs.ipv4 }}/32 || echo "Rule might already be removed."
+          else
+            echo "IP was never fetched, nothing to remove."
+          fi
