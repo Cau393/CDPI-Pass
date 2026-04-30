@@ -53,13 +53,32 @@ jobs:
           context: .
           file: frontend/Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/cdpi-pass:latest
+          tags: ghcr.io/cau393/cdpi-pass:latest
 
   deploy:
     name: Deploy to EC2
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
+      - name: Get GitHub Runner IP
+        id: ip
+        uses: haythem/public-ip@v1.3
+        
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: sa-east-1
+
+      - name: Add GitHub IP to Security Group
+        run: |
+          aws ec2 authorize-security-group-ingress \
+            --group-id ${{ secrets.AWS_SG_ID }} \
+            --protocol tcp \
+            --port 22 \
+            --cidr ${{ steps.ip.outputs.ipv4 }}/32
+
       - name: Execute Remote SSH Commands
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -68,17 +87,25 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-            docker pull ghcr.io/${{ github.repository_owner }}/cdpi-pass:latest
-
+            docker pull ghcr.io/cau393/cdpi-pass:latest
+            
             docker stop cdpi-pass || true
             docker rm cdpi-pass || true
-
+            
             docker run -d \
               --name cdpi-pass \
               --restart unless-stopped \
               -p 5003:5003 \
               --env-file /home/${{ secrets.EC2_USERNAME }}/app/frontend/.env \
               ghcr.io/${{ github.repository_owner }}/cdpi-pass:latest
-
+              
             docker image prune -f
+
+      - name: Remove GitHub IP from Security Group
+        if: always() # This ensures the rule is deleted even if the deployment step fails
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id ${{ secrets.AWS_SG_ID }} \
+            --protocol tcp \
+            --port 22 \
+            --cidr ${{ steps.ip.outputs.ipv4 }}/32
