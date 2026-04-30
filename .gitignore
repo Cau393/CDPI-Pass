@@ -3,3 +3,4 @@ IMAGE_DIMENSIONS.md
 .env
 frontend/.rtk
 frontend/CLAUDE.md
+frontend/.dockerignore

@@ -50,6 +50,1217 @@ var init_esm_shims = __esm({
   }
 });
 
+// shared/schema.ts
+var schema_exports = {};
+__export(schema_exports, {
+  certificates: () => certificates,
+  certificatesRelations: () => certificatesRelations,
+  courtesyAttendees: () => courtesyAttendees,
+  courtesyLinks: () => courtesyLinks,
+  courtesyLinksRelations: () => courtesyLinksRelations,
+  courtesyRedemptionSchema: () => courtesyRedemptionSchema,
+  emailQueue: () => emailQueue,
+  eventPrintSettings: () => eventPrintSettings,
+  eventPrintSettingsRelations: () => eventPrintSettingsRelations,
+  events: () => events,
+  eventsRelations: () => eventsRelations,
+  insertCourtesyAttendeeSchema: () => insertCourtesyAttendeeSchema,
+  insertCourtesyLinkSchema: () => insertCourtesyLinkSchema,
+  insertEmailQueueSchema: () => insertEmailQueueSchema,
+  insertEventSchema: () => insertEventSchema,
+  insertOrderSchema: () => insertOrderSchema,
+  insertUserSchema: () => insertUserSchema,
+  loginSchema: () => loginSchema,
+  massSendJobs: () => massSendJobs,
+  orders: () => orders,
+  ordersRelations: () => ordersRelations,
+  printJobs: () => printJobs,
+  users: () => users,
+  usersRelations: () => usersRelations
+});
+import { sql } from "drizzle-orm";
+import { relations } from "drizzle-orm";
+import {
+  pgTable,
+  varchar,
+  text,
+  timestamp,
+  decimal,
+  boolean,
+  integer,
+  serial,
+  jsonb,
+  unique
+} from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod";
+var users, events, certificates, courtesyLinks, orders, emailQueue, courtesyAttendees, massSendJobs, eventPrintSettings, printJobs, usersRelations, eventsRelations, certificatesRelations, ordersRelations, courtesyLinksRelations, eventPrintSettingsRelations, insertUserSchema, insertEventSchema, insertOrderSchema, insertEmailQueueSchema, insertCourtesyLinkSchema, insertCourtesyAttendeeSchema, loginSchema, courtesyRedemptionSchema;
+var init_schema = __esm({
+  "shared/schema.ts"() {
+    "use strict";
+    init_esm_shims();
+    users = pgTable("users", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      email: varchar("email", { length: 255 }).notNull().unique(),
+      emailVerified: boolean("email_verified").default(false),
+      password: text("password").notNull(),
+      name: varchar("name", { length: 255 }).notNull(),
+      cpf: varchar("cpf", { length: 14 }).notNull().unique(),
+      phone: varchar("phone", { length: 20 }).notNull(),
+      birthDate: timestamp("birth_date").notNull(),
+      address: text("address").notNull(),
+      partnerCompany: varchar("partner_company", { length: 255 }),
+      isAdmin: boolean("is_admin").default(false).notNull(),
+      createdAt: timestamp("created_at").defaultNow(),
+      updatedAt: timestamp("updated_at").defaultNow(),
+      emailVerificationCode: varchar("email_verification_code", { length: 6 }),
+      emailVerificationCodeExpiresAt: timestamp("email_verification_code_expires_at")
+    });
+    events = pgTable("events", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      title: varchar("title", { length: 255 }).notNull(),
+      description: text("description").notNull(),
+      date: timestamp("date").notNull(),
+      location: varchar("location", { length: 255 }).notNull(),
+      price: decimal("price", { precision: 10, scale: 2 }).notNull(),
+      imageUrl: varchar("image_url", { length: 500 }),
+      maxAttendees: integer("max_attendees"),
+      currentAttendees: integer("current_attendees").default(0),
+      isActive: boolean("is_active").default(true),
+      createdAt: timestamp("created_at").defaultNow(),
+      updatedAt: timestamp("updated_at").defaultNow(),
+      /** S3 URL of the .docx certificate template (filled to PDF by AWS Lambda). */
+      certificateTemplateUrl: text("certificate_template_url"),
+      /** Custom HTML for courtesy mass-send emails; placeholders {nome}, {evento}, {data}, {link}. */
+      courtesyTemplate: text("courtesy_template")
+    });
+    certificates = pgTable(
+      "certificates",
+      {
+        id: serial("id").primaryKey(),
+        userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+        eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+        certificateUrl: text("certificate_url").notNull(),
+        fullName: text("full_name").notNull(),
+        npsResponses: jsonb("nps_responses").notNull(),
+        createdAt: timestamp("created_at").defaultNow().notNull()
+      },
+      (t) => [unique("certificates_user_id_event_id_unique").on(t.userId, t.eventId)]
+    );
+    courtesyLinks = pgTable("courtesy_links", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      code: varchar("code", { length: 100 }).notNull().unique(),
+      eventId: varchar("event_id").notNull().references(() => events.id),
+      recipientEmail: varchar("recipient_email", { length: 255 }),
+      recipientName: varchar("recipient_name", { length: 255 }),
+      ticketCount: integer("ticket_count").notNull().default(1),
+      usedCount: integer("used_count").default(0),
+      createdBy: varchar("created_by").notNull().references(() => users.id),
+      isActive: boolean("is_active").default(true),
+      createdAt: timestamp("created_at").defaultNow(),
+      updatedAt: timestamp("updated_at").defaultNow(),
+      overridePrice: decimal("override_price", { precision: 10, scale: 2 })
+    });
+    orders = pgTable("orders", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      userId: varchar("user_id").notNull().references(() => users.id),
+      eventId: varchar("event_id").notNull().references(() => events.id),
+      courtesyAttendeeId: varchar("courtesy_attendee_id").references(() => courtesyAttendees.id),
+      cpf: varchar("cpf", { length: 14 }).notNull(),
+      status: varchar("status", { length: 50 }).notNull().default("pending"),
+      // pending, paid, cancelled, courtesy
+      paymentMethod: varchar("payment_method", { length: 50 }).notNull(),
+      amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+      asaasPaymentId: varchar("asaas_payment_id", { length: 255 }),
+      courtesyLinkId: varchar("courtesy_link_id").references(() => courtesyLinks.id),
+      qrCodeData: text("qr_code_data"),
+      qrCodeUsed: boolean("qr_code_used").default(false),
+      qrCodeUsedAt: timestamp("qr_code_used_at"),
+      maxUses: integer("max_uses").default(1).notNull(),
+      amntUsed: integer("amnt_used").default(0).notNull(),
+      createdAt: timestamp("created_at").defaultNow(),
+      updatedAt: timestamp("updated_at").defaultNow(),
+      qr_code_s3_url: varchar("qr_code_s3_url", { length: 500 })
+    });
+    emailQueue = pgTable("email_queue", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      to: varchar("to", { length: 255 }).notNull(),
+      subject: varchar("subject", { length: 255 }).notNull(),
+      html: text("html"),
+      text: text("text"),
+      attachments: text("attachments"),
+      status: varchar("status", { length: 50 }).default("pending"),
+      // pending, sent, failed
+      attempts: integer("attempts").default(0),
+      createdAt: timestamp("created_at").defaultNow(),
+      processedAt: timestamp("processed_at")
+    });
+    courtesyAttendees = pgTable("courtesy_attendees", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      name: varchar("name", { length: 255 }).notNull(),
+      email: varchar("email", { length: 255 }).notNull(),
+      cpf: varchar("cpf", { length: 14 }).notNull(),
+      phone: varchar("phone", { length: 20 }).notNull(),
+      birthDate: timestamp("birth_date").notNull(),
+      address: text("address").notNull(),
+      partnerCompany: varchar("partner_company", { length: 255 }),
+      occupation: varchar("occupation", { length: 255 }),
+      eventTitle: varchar("event_title", { length: 255 }).notNull(),
+      createdAt: timestamp("created_at").defaultNow(),
+      updatedAt: timestamp("updated_at").defaultNow()
+    });
+    massSendJobs = pgTable("mass_send_jobs", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      status: text("status", { enum: ["pending", "processing", "completed", "failed"] }).default("pending").notNull(),
+      csvData: text("csv_data").notNull(),
+      attachmentData: text("attachment_data"),
+      // Storing as JSON string
+      createdBy: text("created_by").notNull().references(() => users.id),
+      createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+      updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+    });
+    eventPrintSettings = pgTable("event_print_settings", {
+      eventId: varchar("event_id").primaryKey().references(() => events.id, { onDelete: "cascade" }),
+      isEnabled: boolean("is_enabled").default(false).notNull(),
+      updatedBy: varchar("updated_by").references(() => users.id),
+      createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+      updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+    });
+    printJobs = pgTable("print_jobs", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+      orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+      displayName: varchar("display_name", { length: 255 }).notNull(),
+      /** Set for courtesy (`partner_company`); second line on the badge. */
+      companyLine: varchar("company_line", { length: 255 }),
+      status: text("status", {
+        enum: ["pending", "processing", "completed", "failed"]
+      }).default("pending").notNull(),
+      /** Print attempts (incremented on each failure; max 3). */
+      attempts: integer("attempts").default(0).notNull(),
+      lockedBySocketId: varchar("locked_by_socket_id", { length: 64 }),
+      lastErrorCode: varchar("last_error_code", { length: 50 }),
+      lastErrorMessage: text("last_error_message"),
+      createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+      updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+      completedAt: timestamp("completed_at", { withTimezone: true })
+    });
+    usersRelations = relations(users, ({ many }) => ({
+      orders: many(orders),
+      courtesyLinks: many(courtesyLinks),
+      certificates: many(certificates)
+    }));
+    eventsRelations = relations(events, ({ many }) => ({
+      orders: many(orders),
+      courtesyLinks: many(courtesyLinks),
+      certificates: many(certificates)
+    }));
+    certificatesRelations = relations(certificates, ({ one }) => ({
+      user: one(users, {
+        fields: [certificates.userId],
+        references: [users.id]
+      }),
+      event: one(events, {
+        fields: [certificates.eventId],
+        references: [events.id]
+      })
+    }));
+    ordersRelations = relations(orders, ({ one }) => ({
+      user: one(users, {
+        fields: [orders.userId],
+        references: [users.id]
+      }),
+      event: one(events, {
+        fields: [orders.eventId],
+        references: [events.id]
+      }),
+      courtesyLink: one(courtesyLinks, {
+        fields: [orders.courtesyLinkId],
+        references: [courtesyLinks.id]
+      }),
+      courtesyAttendee: one(courtesyAttendees, {
+        fields: [orders.courtesyAttendeeId],
+        references: [courtesyAttendees.id]
+      })
+    }));
+    courtesyLinksRelations = relations(courtesyLinks, ({ one, many }) => ({
+      event: one(events, {
+        fields: [courtesyLinks.eventId],
+        references: [events.id]
+      }),
+      createdByUser: one(users, {
+        fields: [courtesyLinks.createdBy],
+        references: [users.id]
+      }),
+      orders: many(orders)
+    }));
+    eventPrintSettingsRelations = relations(eventPrintSettings, ({ one }) => ({
+      event: one(events, {
+        fields: [eventPrintSettings.eventId],
+        references: [events.id]
+      }),
+      updatedByUser: one(users, {
+        fields: [eventPrintSettings.updatedBy],
+        references: [users.id]
+      })
+    }));
+    insertUserSchema = createInsertSchema(users, {
+      email: z.string().email("Email inv\xE1lido"),
+      cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
+      phone: z.string().regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, "Telefone deve estar no formato (00) 00000-0000"),
+      password: z.string().min(6, "Senha deve ter pelo menos 6 caracteres"),
+      name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
+      address: z.string().min(10, "Endere\xE7o deve ter pelo menos 10 caracteres"),
+      birthDate: z.date({ required_error: "Data de nascimento \xE9 obrigat\xF3ria" })
+    }).omit({
+      id: true,
+      createdAt: true,
+      updatedAt: true,
+      emailVerified: true,
+      isAdmin: true
+    });
+    insertEventSchema = createInsertSchema(events).omit({
+      id: true,
+      createdAt: true,
+      updatedAt: true,
+      currentAttendees: true
+    });
+    insertOrderSchema = createInsertSchema(orders).omit({
+      id: true,
+      createdAt: true,
+      updatedAt: true,
+      qrCodeData: true,
+      qrCodeUsed: true,
+      qrCodeUsedAt: true
+    });
+    insertEmailQueueSchema = createInsertSchema(emailQueue).omit({
+      id: true,
+      createdAt: true,
+      processedAt: true,
+      status: true,
+      attempts: true
+    });
+    insertCourtesyLinkSchema = createInsertSchema(courtesyLinks, {
+      recipientEmail: z.string().email().optional(),
+      recipientName: z.string().optional()
+    }).omit({
+      id: true,
+      createdAt: true,
+      updatedAt: true,
+      usedCount: true
+    });
+    insertCourtesyAttendeeSchema = createInsertSchema(courtesyAttendees, {
+      occupation: z.string().optional()
+    }).omit({
+      id: true,
+      createdAt: true,
+      updatedAt: true
+    });
+    loginSchema = z.object({
+      email: z.string().email("Email inv\xE1lido"),
+      password: z.string().min(1, "Senha \xE9 obrigat\xF3ria")
+    });
+    courtesyRedemptionSchema = z.object({
+      name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
+      email: z.string().email("Email inv\xE1lido"),
+      emailConfirm: z.string().email("Email inv\xE1lido"),
+      cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
+      partnerCompany: z.string().min(2, "Empresa parceira \xE9 obrigat\xF3ria"),
+      occupation: z.string().min(2, "Cargo \xE9 obrigat\xF3rio"),
+      birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
+      address: z.string().min(10, "Endere\xE7o deve ter pelo menos 10 caracteres"),
+      phone: z.string().regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, "Telefone deve estar no formato (00) 00000-0000")
+    }).refine((data) => data.email === data.emailConfirm, {
+      message: "Os emails n\xE3o coincidem",
+      path: ["emailConfirm"]
+    });
+  }
+});
+
+// server/db.ts
+import { Pool, neonConfig } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-serverless";
+import "dotenv/config";
+import ws from "ws";
+var pool, db;
+var init_db = __esm({
+  "server/db.ts"() {
+    "use strict";
+    init_esm_shims();
+    init_schema();
+    neonConfig.webSocketConstructor = ws;
+    if (!process.env.DATABASE_URL) {
+      throw new Error(
+        "DATABASE_URL must be set. Did you forget to provision a database?"
+      );
+    }
+    pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    db = drizzle({ client: pool, schema: schema_exports });
+  }
+});
+
+// server/services/s3Service.ts
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+var S3Service, s3Service;
+var init_s3Service = __esm({
+  "server/services/s3Service.ts"() {
+    "use strict";
+    init_esm_shims();
+    S3Service = class {
+      s3Client;
+      bucketName;
+      constructor() {
+        this.s3Client = new S3Client({
+          region: process.env.AWS_REGION || "sa-east-1",
+          credentials: {
+            accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+          }
+        });
+        this.bucketName = process.env.AWS_S3_BUCKET_NAME;
+        if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY || !this.bucketName) {
+          throw new Error("Missing required AWS S3 environment variables");
+        }
+      }
+      /**
+       * Upload a buffer (like QR code image) to S3
+       * @param buffer - The file buffer to upload
+       * @param key - The S3 object key (file path)
+       * @param contentType - The MIME type of the file
+       * @returns Promise with the S3 object URL
+       */
+      async uploadBuffer(buffer, key, contentType = "image/png") {
+        try {
+          const command = new PutObjectCommand({
+            Bucket: this.bucketName,
+            Key: key,
+            Body: buffer,
+            ContentType: contentType
+          });
+          await this.s3Client.send(command);
+          return `https://${this.bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
+        } catch (error) {
+          console.error("Error uploading to S3:", error);
+          throw new Error(`Failed to upload file to S3: ${error}`);
+        }
+      }
+      /**
+       * Upload QR code buffer specifically
+       * @param qrCodeBuffer - The QR code image buffer
+       * @param orderId - Order ID for unique naming
+       * @returns Promise with the S3 URL
+       */
+      async uploadQRCode(qrCodeBuffer, orderId) {
+        const timestamp2 = Date.now();
+        const key = `qr-codes/${orderId}-${timestamp2}.png`;
+        return this.uploadBuffer(qrCodeBuffer, key, "image/png");
+      }
+      /**
+       * Generate a presigned URL for secure file access
+       * @param key - The S3 object key
+       * @param expiresIn - URL expiration time in seconds (default: 1 hour)
+       * @returns Promise with the presigned URL
+       */
+      async getPresignedUrl(key, expiresIn = 3600) {
+        try {
+          const command = new GetObjectCommand({
+            Bucket: this.bucketName,
+            Key: key
+          });
+          return await getSignedUrl(this.s3Client, command, { expiresIn });
+        } catch (error) {
+          console.error("Error generating presigned URL:", error);
+          throw new Error(`Failed to generate presigned URL: ${error}`);
+        }
+      }
+      /**
+       * Delete a file from S3
+       * @param key - The S3 object key to delete
+       * @returns Promise<void>
+       */
+      async deleteFile(key) {
+        try {
+          const command = new DeleteObjectCommand({
+            Bucket: this.bucketName,
+            Key: key
+          });
+          await this.s3Client.send(command);
+        } catch (error) {
+          console.error("Error deleting from S3:", error);
+          throw new Error(`Failed to delete file from S3: ${error}`);
+        }
+      }
+      /**
+       * Extract S3 key from a full S3 URL
+       * @param url - The full S3 URL
+       * @returns The S3 object key
+       */
+      extractKeyFromUrl(url) {
+        const urlParts = url.split("/");
+        return urlParts.slice(3).join("/");
+      }
+    };
+    s3Service = new S3Service();
+  }
+});
+
+// server/utils/undoCheckInUpdate.ts
+function buildUndoCheckInPatch(order) {
+  const used = order.amntUsed ?? 0;
+  const newAmntUsed = used - 1;
+  const isStillUsed = newAmntUsed > 0;
+  return {
+    amntUsed: newAmntUsed,
+    qrCodeUsed: isStillUsed,
+    qrCodeUsedAt: isStillUsed ? order.qrCodeUsedAt ?? null : null
+  };
+}
+var init_undoCheckInUpdate = __esm({
+  "server/utils/undoCheckInUpdate.ts"() {
+    "use strict";
+    init_esm_shims();
+  }
+});
+
+// server/utils/courtesyTicketCountUpdate.ts
+function validateCourtesyTicketCountUpdate(params) {
+  const { nextTicketCount } = params;
+  if (typeof nextTicketCount !== "number" || !Number.isInteger(nextTicketCount)) {
+    return "Informe um limite inteiro v\xE1lido.";
+  }
+  if (nextTicketCount < 1) {
+    return "O limite deve ser pelo menos 1.";
+  }
+  if (nextTicketCount < params.usedCount) {
+    return "Limite n\xE3o pode ser menor que o n\xFAmero de usos j\xE1 registrados.";
+  }
+  return null;
+}
+var init_courtesyTicketCountUpdate = __esm({
+  "server/utils/courtesyTicketCountUpdate.ts"() {
+    "use strict";
+    init_esm_shims();
+  }
+});
+
+// server/utils/printJobPolicy.ts
+function nextStateAfterPrintFailure(attemptsBefore) {
+  const next = attemptsBefore + 1;
+  if (next >= MAX_PRINT_ATTEMPTS) {
+    return { status: "failed", attempts: next };
+  }
+  return { status: "pending", attempts: next };
+}
+var MAX_PRINT_ATTEMPTS;
+var init_printJobPolicy = __esm({
+  "server/utils/printJobPolicy.ts"() {
+    "use strict";
+    init_esm_shims();
+    MAX_PRINT_ATTEMPTS = 3;
+  }
+});
+
+// server/storage.ts
+import { eq, desc, sql as sql2, asc, count, and } from "drizzle-orm";
+var DatabaseStorage, storage;
+var init_storage = __esm({
+  "server/storage.ts"() {
+    "use strict";
+    init_esm_shims();
+    init_schema();
+    init_db();
+    init_s3Service();
+    init_undoCheckInUpdate();
+    init_courtesyTicketCountUpdate();
+    init_printJobPolicy();
+    DatabaseStorage = class {
+      // User operations
+      async getUser(id) {
+        const [user] = await db.select().from(users).where(eq(users.id, id));
+        return user;
+      }
+      async getUserByEmail(email) {
+        const [user] = await db.select().from(users).where(eq(users.email, email));
+        return user;
+      }
+      async getUserByCpf(cpf) {
+        const [user] = await db.select().from(users).where(eq(users.cpf, cpf));
+        return user;
+      }
+      async createUser(userData) {
+        const [user] = await db.insert(users).values({
+          ...userData,
+          createdAt: /* @__PURE__ */ new Date(),
+          updatedAt: /* @__PURE__ */ new Date()
+        }).returning();
+        return user;
+      }
+      async updateUser(id, updates) {
+        const [user] = await db.update(users).set({ ...updates, updatedAt: /* @__PURE__ */ new Date() }).where(eq(users.id, id)).returning();
+        return user;
+      }
+      async verifyUserEmail(id) {
+        const [user] = await db.update(users).set({ emailVerified: true, updatedAt: /* @__PURE__ */ new Date() }).where(eq(users.id, id)).returning();
+        return !!user;
+      }
+      async deleteUser(id) {
+        await db.delete(orders).where(eq(orders.userId, id));
+        const result = await db.delete(users).where(eq(users.id, id));
+        return (result.rowCount ?? 0) > 0;
+      }
+      // Event operations
+      async getEvents() {
+        const startOfToday = /* @__PURE__ */ new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        return await db.select().from(events).where(eq(events.isActive, true)).orderBy(asc(events.date));
+      }
+      async getAllEventsForAdmin() {
+        return await db.select().from(events).orderBy(asc(events.date));
+      }
+      async getAllEventsForAdminPaginated(page, limit) {
+        const safePage = Math.max(1, Math.floor(page));
+        const safeLimit = Math.min(100, Math.max(1, Math.floor(limit)));
+        const offset = (safePage - 1) * safeLimit;
+        const [countRow] = await db.select({ n: count() }).from(events);
+        const total = Number(countRow?.n ?? 0);
+        const list = await db.select().from(events).orderBy(desc(events.date)).limit(safeLimit).offset(offset);
+        return { events: list, total };
+      }
+      async getEvent(id) {
+        const [event] = await db.select().from(events).where(eq(events.id, id));
+        return event;
+      }
+      async createEvent(eventData) {
+        const [event] = await db.insert(events).values({
+          ...eventData,
+          createdAt: /* @__PURE__ */ new Date(),
+          updatedAt: /* @__PURE__ */ new Date()
+        }).returning();
+        return event;
+      }
+      async updateEvent(id, updates) {
+        const [event] = await db.update(events).set({ ...updates, updatedAt: /* @__PURE__ */ new Date() }).where(eq(events.id, id)).returning();
+        return event;
+      }
+      async deleteEvent(id) {
+        return await db.transaction(async (tx) => {
+          await tx.delete(orders).where(eq(orders.eventId, id));
+          await tx.delete(courtesyLinks).where(eq(courtesyLinks.eventId, id));
+          await tx.delete(certificates).where(eq(certificates.eventId, id));
+          const result = await tx.delete(events).where(eq(events.id, id));
+          return (result.rowCount ?? 0) > 0;
+        });
+      }
+      // Order operations
+      async getOrder(id) {
+        const [order] = await db.select().from(orders).where(eq(orders.id, id));
+        return order;
+      }
+      async getOrdersByUser(userId, page = 1, limit = 10) {
+        const offset = (page - 1) * limit;
+        const ordersQuery = db.select({
+          id: orders.id,
+          userId: orders.userId,
+          eventId: orders.eventId,
+          status: orders.status,
+          courtesyAttendeeId: orders.courtesyAttendeeId,
+          cpf: orders.cpf,
+          paymentMethod: orders.paymentMethod,
+          amount: orders.amount,
+          asaasPaymentId: orders.asaasPaymentId,
+          courtesyLinkId: orders.courtesyLinkId,
+          qrCodeData: orders.qrCodeData,
+          qr_code_s3_url: orders.qr_code_s3_url,
+          qrCodeUsed: orders.qrCodeUsed,
+          maxUses: orders.maxUses,
+          amntUsed: orders.amntUsed,
+          qrCodeUsedAt: orders.qrCodeUsedAt,
+          createdAt: orders.createdAt,
+          updatedAt: orders.updatedAt,
+          event: {
+            id: events.id,
+            title: events.title,
+            description: events.description,
+            date: events.date,
+            location: events.location,
+            price: events.price,
+            imageUrl: events.imageUrl
+          }
+        }).from(orders).leftJoin(events, eq(orders.eventId, events.id)).where(eq(orders.userId, userId)).orderBy(desc(orders.createdAt)).limit(limit).offset(offset);
+        const totalQuery = db.select({ value: count() }).from(orders).where(eq(orders.userId, userId));
+        const [ordersResult, totalResult] = await Promise.all([ordersQuery, totalQuery]);
+        return {
+          orders: ordersResult,
+          total: totalResult[0].value
+        };
+      }
+      async createOrder(orderData) {
+        const [order] = await db.insert(orders).values({
+          ...orderData,
+          createdAt: /* @__PURE__ */ new Date(),
+          updatedAt: /* @__PURE__ */ new Date()
+        }).returning();
+        return order;
+      }
+      async createCourtesyAttendee(attendee) {
+        const [newAttendee] = await db.insert(courtesyAttendees).values(attendee).returning();
+        return newAttendee;
+      }
+      async updateOrder(id, updates) {
+        const [order] = await db.update(orders).set({ ...updates, updatedAt: /* @__PURE__ */ new Date() }).where(eq(orders.id, id)).returning();
+        return order;
+      }
+      async getOrderByAsaasPaymentId(paymentId) {
+        const [order] = await db.select().from(orders).where(eq(orders.asaasPaymentId, paymentId));
+        return order;
+      }
+      async isCpfAlreadyRegisteredForEvent(cpf, eventId) {
+        const existingOrder = await db.select().from(orders).where(
+          and(
+            eq(orders.cpf, cpf),
+            eq(orders.eventId, eventId)
+          )
+        ).limit(1);
+        return existingOrder.length > 0;
+      }
+      // Email queue operations
+      async addEmailToQueue(emailData) {
+        const [email] = await db.insert(emailQueue).values({
+          ...emailData,
+          createdAt: /* @__PURE__ */ new Date()
+        }).returning();
+        return email;
+      }
+      async getPendingEmails() {
+        return await db.select().from(emailQueue).where(eq(emailQueue.status, "pending")).orderBy(emailQueue.createdAt);
+      }
+      async updateEmailStatus(id, status, processedAt) {
+        await db.update(emailQueue).set({
+          status,
+          processedAt: processedAt || /* @__PURE__ */ new Date(),
+          attempts: sql2`attempts + 1`
+        }).where(eq(emailQueue.id, id));
+      }
+      async deleteOrder(id) {
+        await db.delete(orders).where(eq(orders.id, id));
+      }
+      async getPendingOrders() {
+        return await db.select().from(orders).where(eq(orders.status, "pending"));
+      }
+      // Courtesy link operations
+      async createCourtesyLink(linkData) {
+        const [link] = await db.insert(courtesyLinks).values({
+          ...linkData,
+          createdAt: /* @__PURE__ */ new Date(),
+          updatedAt: /* @__PURE__ */ new Date()
+        }).returning();
+        return link;
+      }
+      async getCourtesyLinkByCode(code) {
+        const [link] = await db.select().from(courtesyLinks).where(eq(courtesyLinks.code, code));
+        return link;
+      }
+      async getCourtesyLinksByCreator(userId, page = 1, limit = 10) {
+        const offset = (page - 1) * limit;
+        const linksQuery = db.select().from(courtesyLinks).where(eq(courtesyLinks.createdBy, userId)).orderBy(desc(courtesyLinks.createdAt)).limit(limit).offset(offset);
+        const totalQuery = db.select({ value: count() }).from(courtesyLinks).where(eq(courtesyLinks.createdBy, userId));
+        const [linksResult, totalResult] = await Promise.all([linksQuery, totalQuery]);
+        return {
+          links: linksResult,
+          total: totalResult[0].value
+        };
+      }
+      async updateCourtesyLink(id, updates) {
+        const [link] = await db.update(courtesyLinks).set({ ...updates, updatedAt: /* @__PURE__ */ new Date() }).where(eq(courtesyLinks.id, id)).returning();
+        return link;
+      }
+      async updateCourtesyLinkTicketCount(id, ticketCount) {
+        const [link] = await db.select().from(courtesyLinks).where(eq(courtesyLinks.id, id));
+        if (!link) {
+          throw new Error("LINK_NOT_FOUND");
+        }
+        const errMsg = validateCourtesyTicketCountUpdate({
+          usedCount: link.usedCount ?? 0,
+          nextTicketCount: ticketCount
+        });
+        if (errMsg) {
+          throw new Error(errMsg);
+        }
+        const [updated] = await db.update(courtesyLinks).set({ ticketCount, updatedAt: /* @__PURE__ */ new Date() }).where(eq(courtesyLinks.id, id)).returning();
+        if (!updated) {
+          throw new Error("LINK_NOT_FOUND");
+        }
+        return updated;
+      }
+      async incrementCourtesyLinkUsage(id) {
+        await db.update(courtesyLinks).set({
+          usedCount: sql2`used_count + 1`,
+          updatedAt: /* @__PURE__ */ new Date()
+        }).where(eq(courtesyLinks.id, id));
+      }
+      async cancelOrderAndInvalidateQr(orderId) {
+        const order = await this.getOrder(orderId);
+        if (!order) {
+          return { ok: false, code: "not_found" };
+        }
+        if (order.status === "cancelled") {
+          return { ok: false, code: "already_cancelled", order };
+        }
+        if (order.status !== "pending" && order.status !== "paid" && order.status !== "courtesy") {
+          return { ok: false, code: "invalid_status", status: order.status };
+        }
+        if (order.qr_code_s3_url) {
+          try {
+            const key = s3Service.extractKeyFromUrl(order.qr_code_s3_url);
+            await s3Service.deleteFile(key);
+          } catch (s3Error) {
+            console.error(`Erro ao deletar QR Code do S3 (Order ${orderId}):`, s3Error);
+          }
+        }
+        const [updated] = await db.update(orders).set({
+          status: "cancelled",
+          qrCodeData: null,
+          qr_code_s3_url: null,
+          updatedAt: /* @__PURE__ */ new Date()
+        }).where(eq(orders.id, orderId)).returning();
+        if (!updated) {
+          return { ok: false, code: "not_found" };
+        }
+        return { ok: true, order: updated };
+      }
+      async undoOrderCheckIn(orderId) {
+        const order = await this.getOrder(orderId);
+        if (!order) {
+          throw new Error("Pedido n\xE3o encontrado");
+        }
+        if (order.status === "cancelled") {
+          throw new Error("N\xE3o \xE9 poss\xEDvel alterar presen\xE7a de ingresso cancelado");
+        }
+        if ((order.amntUsed ?? 0) === 0) {
+          throw new Error("Este ingresso n\xE3o possui check-in para ser desmarcado");
+        }
+        const patch = buildUndoCheckInPatch(order);
+        const [updated] = await db.update(orders).set({
+          ...patch,
+          updatedAt: /* @__PURE__ */ new Date()
+        }).where(eq(orders.id, orderId)).returning();
+        if (!updated) {
+          throw new Error("Pedido n\xE3o encontrado");
+        }
+        return updated;
+      }
+      async getCourtesyAttendeeById(id) {
+        const [a] = await db.select().from(courtesyAttendees).where(eq(courtesyAttendees.id, id));
+        return a;
+      }
+      async getEventPrintSetting(eventId) {
+        const [row] = await db.select().from(eventPrintSettings).where(eq(eventPrintSettings.eventId, eventId));
+        if (!row) {
+          return { isEnabled: false };
+        }
+        return { isEnabled: row.isEnabled ?? false };
+      }
+      async upsertEventPrintSetting(eventId, isEnabled, updatedBy) {
+        const now = /* @__PURE__ */ new Date();
+        await db.insert(eventPrintSettings).values({
+          eventId,
+          isEnabled,
+          updatedBy,
+          createdAt: now,
+          updatedAt: now
+        }).onConflictDoUpdate({
+          target: eventPrintSettings.eventId,
+          set: {
+            isEnabled,
+            updatedBy,
+            updatedAt: now
+          }
+        });
+      }
+      async createPrintJob(params) {
+        const now = /* @__PURE__ */ new Date();
+        const [row] = await db.insert(printJobs).values({
+          eventId: params.eventId,
+          orderId: params.orderId,
+          displayName: params.displayName,
+          companyLine: params.companyLine?.trim() ? params.companyLine.trim().slice(0, 255) : null,
+          status: "pending",
+          attempts: 0,
+          createdAt: now,
+          updatedAt: now
+        }).returning();
+        if (!row) {
+          throw new Error("PRINT_JOB_INSERT_FAILED");
+        }
+        return row;
+      }
+      async claimNextPrintJobForEvent(eventId, socketId) {
+        const maxA = MAX_PRINT_ATTEMPTS;
+        const result = await db.execute(sql2`
+      UPDATE print_jobs AS pj
+      SET
+        status = 'processing',
+        locked_by_socket_id = ${socketId},
+        updated_at = NOW()
+      FROM (
+        SELECT pj2.id
+        FROM print_jobs pj2
+        WHERE pj2.status = 'pending'
+          AND pj2.attempts < ${maxA}
+          AND pj2.event_id = ${eventId}
+        ORDER BY pj2.created_at ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+      ) AS sub
+      WHERE pj.id = sub.id
+      RETURNING pj.id,
+        pj.event_id AS "eventId",
+        pj.order_id AS "orderId",
+        pj.display_name AS "displayName",
+        pj.company_line AS "companyLine",
+        pj.status,
+        pj.attempts,
+        pj.locked_by_socket_id AS "lockedBySocketId",
+        pj.last_error_code AS "lastErrorCode",
+        pj.last_error_message AS "lastErrorMessage",
+        pj.created_at AS "createdAt",
+        pj.updated_at AS "updatedAt",
+        pj.completed_at AS "completedAt"
+    `);
+        return result.rows?.[0];
+      }
+      async completePrintJob(jobId, socketId) {
+        const [row] = await db.update(printJobs).set({
+          status: "completed",
+          completedAt: /* @__PURE__ */ new Date(),
+          lockedBySocketId: null,
+          updatedAt: /* @__PURE__ */ new Date()
+        }).where(
+          and(
+            eq(printJobs.id, jobId),
+            eq(printJobs.lockedBySocketId, socketId)
+          )
+        ).returning();
+        return !!row;
+      }
+      async failPrintJob(jobId, socketId, errorCode, message) {
+        const job = await this.getPrintJobById(jobId);
+        if (!job || job.lockedBySocketId !== socketId) {
+          return { ok: false, terminalFailure: false };
+        }
+        const now = /* @__PURE__ */ new Date();
+        const nextState = nextStateAfterPrintFailure(job.attempts ?? 0);
+        if (nextState.status === "failed") {
+          await db.update(printJobs).set({
+            status: "failed",
+            attempts: nextState.attempts,
+            lastErrorCode: errorCode,
+            lastErrorMessage: message,
+            lockedBySocketId: null,
+            updatedAt: now
+          }).where(eq(printJobs.id, jobId));
+          return { ok: true, terminalFailure: true };
+        }
+        await db.update(printJobs).set({
+          status: "pending",
+          attempts: nextState.attempts,
+          lastErrorCode: errorCode,
+          lastErrorMessage: message,
+          lockedBySocketId: null,
+          updatedAt: now
+        }).where(eq(printJobs.id, jobId));
+        return { ok: true, terminalFailure: false };
+      }
+      async getPrintJobById(id) {
+        const [row] = await db.select().from(printJobs).where(eq(printJobs.id, id));
+        return row;
+      }
+      async listPrintJobsForEvent(eventId, limit) {
+        return await db.select().from(printJobs).where(eq(printJobs.eventId, eventId)).orderBy(desc(printJobs.createdAt)).limit(Math.min(200, Math.max(1, limit)));
+      }
+      async requeueJobOnSocketDisconnect(jobId, socketId) {
+        await db.update(printJobs).set({
+          status: "pending",
+          lockedBySocketId: null,
+          updatedAt: /* @__PURE__ */ new Date()
+        }).where(
+          and(
+            eq(printJobs.id, jobId),
+            eq(printJobs.lockedBySocketId, socketId),
+            eq(printJobs.status, "processing")
+          )
+        );
+      }
+      async addMassSendJobToQueue(jobData) {
+        const newJob = {
+          // ID is removed, database will generate it
+          status: "pending",
+          csvData: jobData.csvData,
+          attachmentData: jobData.attachmentData,
+          createdBy: jobData.createdBy
+        };
+        const [insertedJob] = await db.insert(massSendJobs).values(newJob).returning();
+        return insertedJob;
+      }
+      /**
+       * Gets pending mass-send jobs for the worker to process.
+       * This is called by your new worker.
+       */
+      async getPendingMassSendJobs(limit = 5) {
+        return db.select().from(massSendJobs).where(eq(massSendJobs.status, "pending")).orderBy(asc(massSendJobs.createdAt)).limit(limit);
+      }
+      /**
+       * Updates the status of a specific mass-send job.
+       * This is called by your new worker.
+       */
+      async updateMassSendJobStatus(jobId, status) {
+        return db.update(massSendJobs).set({
+          status,
+          updatedAt: /* @__PURE__ */ new Date()
+        }).where(eq(massSendJobs.id, jobId));
+      }
+    };
+    storage = new DatabaseStorage();
+  }
+});
+
+// server/print/printCoordinator.ts
+var printCoordinator_exports = {};
+__export(printCoordinator_exports, {
+  initPrintWebSocket: () => initPrintWebSocket,
+  notifyNewPrintJob: () => notifyNewPrintJob
+});
+import { randomUUID } from "crypto";
+import jwt2 from "jsonwebtoken";
+import { WebSocket, WebSocketServer } from "ws";
+function parseQuery(request) {
+  const host = request.headers.host ?? "localhost";
+  const u = new URL(request.url ?? "/", `http://${host}`);
+  return {
+    token: u.searchParams.get("token"),
+    eventId: u.searchParams.get("eventId")
+  };
+}
+async function notifyNewPrintJob(eventId) {
+  const toWake = [];
+  for (const c of Array.from(clients.values())) {
+    if (c.eventId === eventId && c.ready && !c.busy) {
+      toWake.push(c);
+    }
+  }
+  await Promise.all(
+    toWake.map(
+      (c) => tryDispatchToClient(c).catch((err) => {
+        console.error("tryDispatchToClient:", err);
+      })
+    )
+  );
+  const qMsg = JSON.stringify({ type: "print_queue_notify" });
+  for (const c of Array.from(clients.values())) {
+    if (c.eventId === eventId && c.ws.readyState === WebSocket.OPEN) {
+      try {
+        c.ws.send(qMsg);
+      } catch (e) {
+        console.error("print_queue_notify send:", e);
+      }
+    }
+  }
+}
+async function tryDispatchToClient(c) {
+  if (c.busy || !c.ready || c.ws.readyState !== WebSocket.OPEN) {
+    return;
+  }
+  c.busy = true;
+  let job;
+  try {
+    job = await storage.claimNextPrintJobForEvent(c.eventId, c.socketId);
+  } catch (e) {
+    console.error("claimNextPrintJobForEvent:", e);
+    c.busy = false;
+    return;
+  }
+  if (!job) {
+    c.busy = false;
+    return;
+  }
+  c.currentJobId = job.id;
+  let sendOk = false;
+  try {
+    c.ws.send(
+      JSON.stringify({
+        type: "print_job",
+        job_id: job.id,
+        ticket_id: job.orderId,
+        display_name: job.displayName,
+        ...job.companyLine ? { company_line: job.companyLine } : {}
+      })
+    );
+    sendOk = true;
+  } catch (e) {
+    console.error("ws.send print_job:", e);
+  }
+  if (!sendOk) {
+    c.currentJobId = void 0;
+    c.busy = false;
+    await storage.requeueJobOnSocketDisconnect(job.id, c.socketId);
+    await notifyNewPrintJob(c.eventId);
+  }
+}
+function broadcastToEvent(eventId, payload) {
+  const msg = JSON.stringify(payload);
+  for (const c of Array.from(clients.values())) {
+    if (c.eventId === eventId && c.ws.readyState === WebSocket.OPEN) {
+      c.ws.send(msg);
+    }
+  }
+}
+async function handleMessage(c, raw) {
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  if (data.type === "printer_ready") {
+    c.ready = true;
+    void notifyNewPrintJob(c.eventId).catch(
+      (e) => console.error("notify after printer_ready:", e)
+    );
+    return;
+  }
+  if (data.type === "printer_offline") {
+    c.ready = false;
+    if (c.currentJobId) {
+      const jid = c.currentJobId;
+      c.busy = false;
+      c.currentJobId = void 0;
+      void (async () => {
+        await storage.requeueJobOnSocketDisconnect(jid, c.socketId);
+        await notifyNewPrintJob(c.eventId);
+      })();
+    }
+    return;
+  }
+  if (data.type === "print_ack" && data.job_id) {
+    if (!c.busy || c.currentJobId !== data.job_id) {
+      return;
+    }
+    const ts = (/* @__PURE__ */ new Date()).toISOString();
+    if (data.status === "SUCCESS") {
+      await storage.completePrintJob(data.job_id, c.socketId);
+      c.ws.send(
+        JSON.stringify({ status: "SUCCESS", job_id: data.job_id, timestamp: ts })
+      );
+    } else {
+      const code = data.error_code ?? "TRANSFER_ERROR";
+      const message = data.message ?? "Falha na impress\xE3o";
+      const { terminalFailure } = await storage.failPrintJob(
+        data.job_id,
+        c.socketId,
+        code,
+        message
+      );
+      c.ws.send(
+        JSON.stringify({
+          status: "FAILED",
+          job_id: data.job_id,
+          error_code: code,
+          message,
+          timestamp: ts
+        })
+      );
+      if (terminalFailure) {
+        const job = await storage.getPrintJobById(data.job_id);
+        broadcastToEvent(c.eventId, {
+          type: "print_dead_letter",
+          job_id: data.job_id,
+          display_name: job?.displayName ?? null,
+          message: "Falha definitiva na impress\xE3o. Utilize a impress\xE3o manual na tabela."
+        });
+      }
+    }
+    c.busy = false;
+    c.currentJobId = void 0;
+    await notifyNewPrintJob(c.eventId);
+  }
+}
+function initPrintWebSocket(httpServer) {
+  const wss = new WebSocketServer({ noServer: true });
+  httpServer.on("upgrade", (request, socket, head) => {
+    const host = request.headers.host ?? "localhost";
+    const path5 = new URL(request.url ?? "/", `http://${host}`).pathname;
+    if (path5 === "/api/ws/print") {
+      wss.handleUpgrade(request, socket, head, (ws2) => {
+        wss.emit("connection", ws2, request);
+      });
+    }
+  });
+  wss.on("connection", (ws2, request) => {
+    void (async () => {
+      const { token, eventId } = parseQuery(request);
+      if (!token || !eventId) {
+        ws2.close(4e3, "token ou eventId ausente");
+        return;
+      }
+      let userId;
+      try {
+        const dec = jwt2.verify(token, JWT_SECRET);
+        userId = dec.userId;
+      } catch {
+        ws2.close(4001, "token inv\xE1lido");
+        return;
+      }
+      const user = await storage.getUser(userId);
+      if (!user?.isAdmin) {
+        ws2.close(4002, "acesso negado");
+        return;
+      }
+      const c = {
+        socketId: randomUUID(),
+        userId,
+        eventId,
+        ready: false,
+        busy: false,
+        ws: ws2
+      };
+      clients.set(ws2, c);
+      ws2.on("message", (data) => {
+        const raw = data.toString();
+        void handleMessage(c, raw);
+      });
+      ws2.on("close", () => {
+        const cur = clients.get(ws2);
+        clients.delete(ws2);
+        if (cur?.currentJobId) {
+          void (async () => {
+            await storage.requeueJobOnSocketDisconnect(
+              cur.currentJobId,
+              cur.socketId
+            );
+            await notifyNewPrintJob(cur.eventId);
+          })();
+        }
+      });
+    })().catch(() => {
+      try {
+        ws2.close(4003, "erro");
+      } catch {
+      }
+    });
+  });
+}
+var JWT_SECRET, clients;
+var init_printCoordinator = __esm({
+  "server/print/printCoordinator.ts"() {
+    "use strict";
+    init_esm_shims();
+    init_storage();
+    JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+    clients = /* @__PURE__ */ new Map();
+  }
+});
+
 // node_modules/@replit/vite-plugin-runtime-error-modal/dist/index.mjs
 import { readFileSync } from "fs";
 import { originalPositionFor, TraceMap } from "@jridgewell/trace-mapping";
@@ -175,12 +1386,12 @@ function generateCodeFrame(source, start = 0, end) {
     source.length
   );
   const lines = source.split(splitRE);
-  let count2 = 0;
+  let count3 = 0;
   const res = [];
   for (let i = 0; i < lines.length; i++) {
-    count2 += lines[i].length;
-    if (count2 >= start) {
-      for (let j = i - range; j <= i + range || end > count2; j++) {
+    count3 += lines[i].length;
+    if (count3 >= start) {
+      for (let j = i - range; j <= i + range || end > count3; j++) {
         if (j < 0 || j >= lines.length) {
           continue;
         }
@@ -190,23 +1401,23 @@ function generateCodeFrame(source, start = 0, end) {
         );
         const lineLength = lines[j].length;
         if (j === i) {
-          const pad = Math.max(start - (count2 - lineLength), 0);
+          const pad = Math.max(start - (count3 - lineLength), 0);
           const length = Math.max(
             1,
-            end > count2 ? lineLength - pad : end - start
+            end > count3 ? lineLength - pad : end - start
           );
           res.push(`   |  ` + " ".repeat(pad) + "^".repeat(length));
         } else if (j > i) {
-          if (end > count2) {
-            const length = Math.max(Math.min(end - count2, lineLength), 1);
+          if (end > count3) {
+            const length = Math.max(Math.min(end - count3, lineLength), 1);
             res.push(`   |  ` + "^".repeat(length));
           }
-          count2 += lineLength + 1;
+          count3 += lineLength + 1;
         }
       }
       break;
     }
-    count2++;
+    count3++;
   }
   return res.join("\n");
 }
@@ -6956,9 +8167,9 @@ var require_lib = __commonJS({
             return String.fromCodePoint(codePoint);
           }
         } else {
-          let count2 = 0;
+          let count3 = 0;
           let semi = false;
-          while (count2++ < 10 && this.state.pos < this.length && !(semi = this.codePointAtPos(this.state.pos) === 59)) {
+          while (count3++ < 10 && this.state.pos < this.length && !(semi = this.codePointAtPos(this.state.pos) === 59)) {
             ++this.state.pos;
           }
           if (semi) {
@@ -14445,8 +15656,7 @@ function encodeInteger(builder, num, relative) {
   do {
     let clamped = delta & 31;
     delta >>>= 5;
-    if (delta > 0)
-      clamped |= 32;
+    if (delta > 0) clamped |= 32;
     builder.write(intToChar[clamped]);
   } while (delta > 0);
   return num;
@@ -14459,23 +15669,18 @@ function encode(decoded) {
   let namesIndex = 0;
   for (let i = 0; i < decoded.length; i++) {
     const line = decoded[i];
-    if (i > 0)
-      writer.write(semicolon);
-    if (line.length === 0)
-      continue;
+    if (i > 0) writer.write(semicolon);
+    if (line.length === 0) continue;
     let genColumn = 0;
     for (let j = 0; j < line.length; j++) {
       const segment = line[j];
-      if (j > 0)
-        writer.write(comma);
+      if (j > 0) writer.write(comma);
       genColumn = encodeInteger(writer, segment[0], genColumn);
-      if (segment.length === 1)
-        continue;
+      if (segment.length === 1) continue;
       sourcesIndex = encodeInteger(writer, segment[1], sourcesIndex);
       sourceLine = encodeInteger(writer, segment[2], sourceLine);
       sourceColumn = encodeInteger(writer, segment[3], sourceColumn);
-      if (segment.length === 4)
-        continue;
+      if (segment.length === 4) continue;
       namesIndex = encodeInteger(writer, segment[4], namesIndex);
     }
   }
@@ -14976,6 +16181,9 @@ var init_magic_string_es = __esm({
           }
           if (chunk.outro.length) mappings.advance(chunk.outro);
         });
+        if (this.outro) {
+          mappings.advance(this.outro);
+        }
         return {
           file: options.file ? options.file.split(/[/\\]/).pop() : void 0,
           sources: [
@@ -15333,10 +16541,13 @@ var init_magic_string_es = __esm({
       _split(index) {
         if (this.byStart[index] || this.byEnd[index]) return;
         let chunk = this.lastSearchedChunk;
+        let previousChunk = chunk;
         const searchForward = index > chunk.end;
         while (chunk) {
           if (chunk.contains(index)) return this._splitChunk(chunk, index);
           chunk = searchForward ? this.byStart[chunk.end] : this.byEnd[chunk.start];
+          if (chunk === previousChunk) return;
+          previousChunk = chunk;
         }
       }
       _splitChunk(chunk, index) {
@@ -15483,7 +16694,12 @@ var init_magic_string_es = __esm({
         const { original } = this;
         const index = original.indexOf(string);
         if (index !== -1) {
-          this.overwrite(index, index + string.length, replacement);
+          if (typeof replacement === "function") {
+            replacement = replacement(string, index, original);
+          }
+          if (string !== replacement) {
+            this.overwrite(index, index + string.length, replacement);
+          }
         }
         return this;
       }
@@ -15498,7 +16714,11 @@ var init_magic_string_es = __esm({
         const stringLength = string.length;
         for (let index = original.indexOf(string); index !== -1; index = original.indexOf(string, index + stringLength)) {
           const previous = original.slice(index, index + stringLength);
-          if (previous !== replacement) this.overwrite(index, index + stringLength, replacement);
+          let _replacement = replacement;
+          if (typeof replacement === "function") {
+            _replacement = replacement(previous, index, original);
+          }
+          if (previous !== _replacement) this.overwrite(index, index + stringLength, _replacement);
         }
         return this;
       }
@@ -19152,8 +20372,8 @@ var require_isType = __commonJS({
       const aliases = _index.FLIPPED_ALIAS_KEYS[targetType];
       if (aliases) {
         if (aliases[0] === nodeType) return true;
-        for (const alias of aliases) {
-          if (nodeType === alias) return true;
+        for (const alias2 of aliases) {
+          if (nodeType === alias2) return true;
         }
       }
       return false;
@@ -19175,8 +20395,8 @@ var require_isPlaceholderType = __commonJS({
       if (placeholderType === targetType) return true;
       const aliases = _index.PLACEHOLDERS_ALIAS[placeholderType];
       if (aliases) {
-        for (const alias of aliases) {
-          if (targetType === alias) return true;
+        for (const alias2 of aliases) {
+          if (targetType === alias2) return true;
         }
       }
       return false;
@@ -20007,9 +21227,9 @@ ${errors.join("\n")}`);
       BUILDER_KEYS[type] = opts.builder = builder;
       NODE_FIELDS[type] = opts.fields = fields;
       ALIAS_KEYS[type] = opts.aliases = aliases;
-      aliases.forEach((alias) => {
-        FLIPPED_ALIAS_KEYS[alias] = FLIPPED_ALIAS_KEYS[alias] || [];
-        FLIPPED_ALIAS_KEYS[alias].push(type);
+      aliases.forEach((alias2) => {
+        FLIPPED_ALIAS_KEYS[alias2] = FLIPPED_ALIAS_KEYS[alias2] || [];
+        FLIPPED_ALIAS_KEYS[alias2].push(type);
       });
       if (opts.validate) {
         NODE_PARENT_VALIDATIONS[type] = opts.validate;
@@ -22342,16 +23562,16 @@ var require_placeholders = __commonJS({
       Pattern: ["PatternLike", "LVal"]
     };
     for (const type of PLACEHOLDERS) {
-      const alias = _utils.ALIAS_KEYS[type];
-      if (alias != null && alias.length) PLACEHOLDERS_ALIAS[type] = alias;
+      const alias2 = _utils.ALIAS_KEYS[type];
+      if (alias2 != null && alias2.length) PLACEHOLDERS_ALIAS[type] = alias2;
     }
     var PLACEHOLDERS_FLIPPED_ALIAS = exports.PLACEHOLDERS_FLIPPED_ALIAS = {};
     Object.keys(PLACEHOLDERS_ALIAS).forEach((type) => {
-      PLACEHOLDERS_ALIAS[type].forEach((alias) => {
-        if (!hasOwnProperty.call(PLACEHOLDERS_FLIPPED_ALIAS, alias)) {
-          PLACEHOLDERS_FLIPPED_ALIAS[alias] = [];
+      PLACEHOLDERS_ALIAS[type].forEach((alias2) => {
+        if (!hasOwnProperty.call(PLACEHOLDERS_FLIPPED_ALIAS, alias2)) {
+          PLACEHOLDERS_FLIPPED_ALIAS[alias2] = [];
         }
-        PLACEHOLDERS_FLIPPED_ALIAS[alias].push(type);
+        PLACEHOLDERS_FLIPPED_ALIAS[alias2].push(type);
       });
     });
   }
@@ -29903,23 +31123,23 @@ var require_toKeyAlias = __commonJS({
     var _cloneNode = require_cloneNode();
     var _removePropertiesDeep = require_removePropertiesDeep();
     function toKeyAlias(node, key = node.key) {
-      let alias;
+      let alias2;
       if (node.kind === "method") {
         return toKeyAlias.increment() + "";
       } else if ((0, _index.isIdentifier)(key)) {
-        alias = key.name;
+        alias2 = key.name;
       } else if ((0, _index.isStringLiteral)(key)) {
-        alias = JSON.stringify(key.value);
+        alias2 = JSON.stringify(key.value);
       } else {
-        alias = JSON.stringify((0, _removePropertiesDeep.default)((0, _cloneNode.default)(key)));
+        alias2 = JSON.stringify((0, _removePropertiesDeep.default)((0, _cloneNode.default)(key)));
       }
       if (node.computed) {
-        alias = `[${alias}]`;
+        alias2 = `[${alias2}]`;
       }
       if (node.static) {
-        alias = `static:${alias}`;
+        alias2 = `static:${alias2}`;
       }
-      return alias;
+      return alias2;
     }
     toKeyAlias.uid = 0;
     toKeyAlias.increment = function() {
@@ -31681,12 +32901,12 @@ var require_visitors = __commonJS({
         if (!aliases) continue;
         const fns = visitor[nodeType];
         delete visitor[nodeType];
-        for (const alias of aliases) {
-          const existing = visitor[alias];
+        for (const alias2 of aliases) {
+          const existing = visitor[alias2];
           if (existing) {
             mergePair(existing, fns);
           } else {
-            visitor[alias] = Object.assign({}, fns);
+            visitor[alias2] = Object.assign({}, fns);
           }
         }
       }
@@ -34766,14 +35986,57 @@ var require_sourcemap_codec_umd = __commonJS({
     "use strict";
     init_esm_shims();
     (function(global2, factory) {
-      typeof exports === "object" && typeof module !== "undefined" ? factory(exports) : typeof define === "function" && define.amd ? define(["exports"], factory) : (global2 = typeof globalThis !== "undefined" ? globalThis : global2 || self, factory(global2.sourcemapCodec = {}));
-    })(exports, function(exports2) {
+      if (typeof exports === "object" && typeof module !== "undefined") {
+        factory(module);
+        module.exports = def(module);
+      } else if (typeof define === "function" && define.amd) {
+        define(["module"], function(mod) {
+          factory.apply(this, arguments);
+          mod.exports = def(mod);
+        });
+      } else {
+        const mod = { exports: {} };
+        factory(mod);
+        global2 = typeof globalThis !== "undefined" ? globalThis : global2 || self;
+        global2.sourcemapCodec = def(mod);
+      }
+      function def(m) {
+        return "default" in m.exports ? m.exports.default : m.exports;
+      }
+    })(exports, function(module2) {
       "use strict";
-      const comma2 = ",".charCodeAt(0);
-      const semicolon2 = ";".charCodeAt(0);
-      const chars2 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-      const intToChar2 = new Uint8Array(64);
-      const charToInt2 = new Uint8Array(128);
+      var __defProp2 = Object.defineProperty;
+      var __getOwnPropDesc2 = Object.getOwnPropertyDescriptor;
+      var __getOwnPropNames2 = Object.getOwnPropertyNames;
+      var __hasOwnProp2 = Object.prototype.hasOwnProperty;
+      var __export2 = (target, all) => {
+        for (var name in all)
+          __defProp2(target, name, { get: all[name], enumerable: true });
+      };
+      var __copyProps2 = (to, from, except, desc3) => {
+        if (from && typeof from === "object" || typeof from === "function") {
+          for (let key of __getOwnPropNames2(from))
+            if (!__hasOwnProp2.call(to, key) && key !== except)
+              __defProp2(to, key, { get: () => from[key], enumerable: !(desc3 = __getOwnPropDesc2(from, key)) || desc3.enumerable });
+        }
+        return to;
+      };
+      var __toCommonJS = (mod) => __copyProps2(__defProp2({}, "__esModule", { value: true }), mod);
+      var sourcemap_codec_exports = {};
+      __export2(sourcemap_codec_exports, {
+        decode: () => decode,
+        decodeGeneratedRanges: () => decodeGeneratedRanges,
+        decodeOriginalScopes: () => decodeOriginalScopes,
+        encode: () => encode2,
+        encodeGeneratedRanges: () => encodeGeneratedRanges,
+        encodeOriginalScopes: () => encodeOriginalScopes
+      });
+      module2.exports = __toCommonJS(sourcemap_codec_exports);
+      var comma2 = ",".charCodeAt(0);
+      var semicolon2 = ";".charCodeAt(0);
+      var chars2 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      var intToChar2 = new Uint8Array(64);
+      var charToInt2 = new Uint8Array(128);
       for (let i = 0; i < chars2.length; i++) {
         const c = chars2.charCodeAt(i);
         intToChar2[i] = c;
@@ -34802,19 +36065,17 @@ var require_sourcemap_codec_umd = __commonJS({
         do {
           let clamped = delta & 31;
           delta >>>= 5;
-          if (delta > 0)
-            clamped |= 32;
+          if (delta > 0) clamped |= 32;
           builder.write(intToChar2[clamped]);
         } while (delta > 0);
         return num;
       }
       function hasMoreVlq(reader, max) {
-        if (reader.pos >= max)
-          return false;
+        if (reader.pos >= max) return false;
         return reader.peek() !== comma2;
       }
-      const bufLength2 = 1024 * 16;
-      const td2 = typeof TextDecoder !== "undefined" ? /* @__PURE__ */ new TextDecoder() : typeof Buffer !== "undefined" ? {
+      var bufLength2 = 1024 * 16;
+      var td2 = typeof TextDecoder !== "undefined" ? /* @__PURE__ */ new TextDecoder() : typeof Buffer !== "undefined" ? {
         decode(buf) {
           const out = Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength);
           return out.toString();
@@ -34828,7 +36089,7 @@ var require_sourcemap_codec_umd = __commonJS({
           return out;
         }
       };
-      class StringWriter2 {
+      var StringWriter2 = class {
         constructor() {
           this.pos = 0;
           this.out = "";
@@ -34846,8 +36107,8 @@ var require_sourcemap_codec_umd = __commonJS({
           const { buffer, out, pos } = this;
           return pos > 0 ? out + td2.decode(buffer.subarray(0, pos)) : out;
         }
-      }
-      class StringReader {
+      };
+      var StringReader = class {
         constructor(buffer) {
           this.pos = 0;
           this.buffer = buffer;
@@ -34863,8 +36124,8 @@ var require_sourcemap_codec_umd = __commonJS({
           const idx = buffer.indexOf(char, pos);
           return idx === -1 ? buffer.length : idx;
         }
-      }
-      const EMPTY = [];
+      };
+      var EMPTY = [];
       function decodeOriginalScopes(input) {
         const { length } = input;
         const reader = new StringReader(input);
@@ -34908,15 +36169,13 @@ var require_sourcemap_codec_umd = __commonJS({
       function _encodeOriginalScopes(scopes, index, writer, state) {
         const scope = scopes[index];
         const { 0: startLine, 1: startColumn, 2: endLine, 3: endColumn, 4: kind, vars } = scope;
-        if (index > 0)
-          writer.write(comma2);
+        if (index > 0) writer.write(comma2);
         state[0] = encodeInteger2(writer, startLine, state[0]);
         encodeInteger2(writer, startColumn, 0);
         encodeInteger2(writer, kind, 0);
         const fields = scope.length === 6 ? 1 : 0;
         encodeInteger2(writer, fields, 0);
-        if (scope.length === 6)
-          encodeInteger2(writer, scope[5], 0);
+        if (scope.length === 6) encodeInteger2(writer, scope[5], 0);
         for (const v of vars) {
           encodeInteger2(writer, v, 0);
         }
@@ -34966,7 +36225,10 @@ var require_sourcemap_codec_umd = __commonJS({
             let range2;
             if (hasDefinition) {
               const defSourcesIndex = decodeInteger(reader, definitionSourcesIndex);
-              definitionScopeIndex = decodeInteger(reader, definitionSourcesIndex === defSourcesIndex ? definitionScopeIndex : 0);
+              definitionScopeIndex = decodeInteger(
+                reader,
+                definitionSourcesIndex === defSourcesIndex ? definitionScopeIndex : 0
+              );
               definitionSourcesIndex = defSourcesIndex;
               range2 = [genLine, genColumn, 0, 0, defSourcesIndex, definitionScopeIndex];
             } else {
@@ -34979,7 +36241,10 @@ var require_sourcemap_codec_umd = __commonJS({
               callsiteSourcesIndex = decodeInteger(reader, callsiteSourcesIndex);
               const sameSource = prevCsi === callsiteSourcesIndex;
               callsiteLine = decodeInteger(reader, sameSource ? callsiteLine : 0);
-              callsiteColumn = decodeInteger(reader, sameSource && prevLine === callsiteLine ? callsiteColumn : 0);
+              callsiteColumn = decodeInteger(
+                reader,
+                sameSource && prevLine === callsiteLine ? callsiteColumn : 0
+              );
               callsite = [callsiteSourcesIndex, callsiteLine, callsiteColumn];
             }
             range2.callsite = callsite;
@@ -35015,8 +36280,7 @@ var require_sourcemap_codec_umd = __commonJS({
         return ranges;
       }
       function encodeGeneratedRanges(ranges) {
-        if (ranges.length === 0)
-          return "";
+        if (ranges.length === 0) return "";
         const writer = new StringWriter2();
         for (let i = 0; i < ranges.length; ) {
           i = _encodeGeneratedRanges(ranges, i, writer, [0, 0, 0, 0, 0, 0, 0]);
@@ -35025,7 +36289,15 @@ var require_sourcemap_codec_umd = __commonJS({
       }
       function _encodeGeneratedRanges(ranges, index, writer, state) {
         const range2 = ranges[index];
-        const { 0: startLine, 1: startColumn, 2: endLine, 3: endColumn, isScope, callsite, bindings } = range2;
+        const {
+          0: startLine,
+          1: startColumn,
+          2: endLine,
+          3: endColumn,
+          isScope,
+          callsite,
+          bindings
+        } = range2;
         if (state[0] < startLine) {
           catchupLine(writer, state[0], startLine);
           state[0] = startLine;
@@ -35058,8 +36330,7 @@ var require_sourcemap_codec_umd = __commonJS({
         }
         if (bindings) {
           for (const binding of bindings) {
-            if (binding.length > 1)
-              encodeInteger2(writer, -binding.length, 0);
+            if (binding.length > 1) encodeInteger2(writer, -binding.length, 0);
             const expression = binding[0][0];
             encodeInteger2(writer, expression, 0);
             let bindingStartLine = startLine;
@@ -35113,8 +36384,7 @@ var require_sourcemap_codec_umd = __commonJS({
           while (reader.pos < semi) {
             let seg;
             genColumn = decodeInteger(reader, genColumn);
-            if (genColumn < lastCol)
-              sorted = false;
+            if (genColumn < lastCol) sorted = false;
             lastCol = genColumn;
             if (hasMoreVlq(reader, semi)) {
               sourcesIndex = decodeInteger(reader, sourcesIndex);
@@ -35132,8 +36402,7 @@ var require_sourcemap_codec_umd = __commonJS({
             line.push(seg);
             reader.pos++;
           }
-          if (!sorted)
-            sort(line);
+          if (!sorted) sort(line);
           decoded.push(line);
           reader.pos = semi + 1;
         } while (reader.pos <= length);
@@ -35153,35 +36422,23 @@ var require_sourcemap_codec_umd = __commonJS({
         let namesIndex = 0;
         for (let i = 0; i < decoded.length; i++) {
           const line = decoded[i];
-          if (i > 0)
-            writer.write(semicolon2);
-          if (line.length === 0)
-            continue;
+          if (i > 0) writer.write(semicolon2);
+          if (line.length === 0) continue;
           let genColumn = 0;
           for (let j = 0; j < line.length; j++) {
             const segment = line[j];
-            if (j > 0)
-              writer.write(comma2);
+            if (j > 0) writer.write(comma2);
             genColumn = encodeInteger2(writer, segment[0], genColumn);
-            if (segment.length === 1)
-              continue;
+            if (segment.length === 1) continue;
             sourcesIndex = encodeInteger2(writer, segment[1], sourcesIndex);
             sourceLine = encodeInteger2(writer, segment[2], sourceLine);
             sourceColumn = encodeInteger2(writer, segment[3], sourceColumn);
-            if (segment.length === 4)
-              continue;
+            if (segment.length === 4) continue;
             namesIndex = encodeInteger2(writer, segment[4], namesIndex);
           }
         }
         return writer.flush();
       }
-      exports2.decode = decode;
-      exports2.decodeGeneratedRanges = decodeGeneratedRanges;
-      exports2.decodeOriginalScopes = decodeOriginalScopes;
-      exports2.encode = encode2;
-      exports2.encodeGeneratedRanges = encodeGeneratedRanges;
-      exports2.encodeOriginalScopes = encodeOriginalScopes;
-      Object.defineProperty(exports2, "__esModule", { value: true });
     });
   }
 });
@@ -35701,15 +36958,15 @@ var require_buffer = __commonJS({
       }
       getNewlineCount() {
         const queueCursor = this._queueCursor;
-        let count2 = 0;
+        let count3 = 0;
         if (queueCursor === 0) return this._last === 10 ? 1 : 0;
         for (let i = queueCursor - 1; i >= 0; i--) {
           if (this._queue[i].char !== 10) {
             break;
           }
-          count2++;
+          count3++;
         }
-        return count2 === queueCursor && this._last === 10 ? count2 + 1 : count2;
+        return count3 === queueCursor && this._last === 10 ? count3 + 1 : count3;
       }
       endsWithCharAndNewline() {
         const queue = this._queue;
@@ -35779,14 +37036,14 @@ var require_buffer = __commonJS({
         return lastIndex === -1 ? this._position.column + len : len - 1 - lastIndex;
       }
       getCurrentLine() {
-        let count2 = 0;
+        let count3 = 0;
         const queue = this._queue;
         for (let i = 0; i < this._queueCursor; i++) {
           if (queue[i].char === 10) {
-            count2++;
+            count3++;
           }
         }
-        return this._position.line + count2;
+        return this._position.line + count3;
       }
     };
     exports.default = Buffer2;
@@ -36255,8 +37512,8 @@ var require_node2 = __commonJS({
       for (const type of Object.keys(obj)) {
         const aliases = FLIPPED_ALIAS_KEYS[type];
         if (aliases) {
-          for (const alias of aliases) {
-            add(alias, obj[type]);
+          for (const alias2 of aliases) {
+            add(alias2, obj[type]);
           }
         } else {
           add(type, obj[type]);
@@ -36391,10 +37648,10 @@ var require_token_map = __commonJS({
         const indexes = this._nodesToTokenIndexes.get(node);
         if (indexes) {
           let i = 0;
-          const count2 = occurrenceCount;
-          if (count2 > 1) {
+          const count3 = occurrenceCount;
+          if (count3 > 1) {
             const cache = this._nodesOccurrencesCountCache.get(node);
-            if (cache && cache.test === test && cache.count < count2) {
+            if (cache && cache.test === test && cache.count < count3) {
               i = cache.i + 1;
               occurrenceCount -= cache.count + 1;
             }
@@ -36403,10 +37660,10 @@ var require_token_map = __commonJS({
             const tok = this._tokens[indexes[i]];
             if (this.matchesOriginal(tok, test)) {
               if (occurrenceCount === 0) {
-                if (count2 > 0) {
+                if (count3 > 0) {
                   this._nodesOccurrencesCountCache.set(node, {
                     test,
-                    count: count2,
+                    count: count3,
                     i
                   });
                 }
@@ -40451,8 +41708,8 @@ var require_printer = __commonJS({
       }
       catchUp(line) {
         if (!this.format.retainLines) return;
-        const count2 = line - this._buf.getCurrentLine();
-        for (let i = 0; i < count2; i++) {
+        const count3 = line - this._buf.getCurrentLine();
+        for (let i = 0; i < count3; i++) {
           this._newline();
         }
       }
@@ -40474,14 +41731,14 @@ var require_printer = __commonJS({
         column,
         index
       }) {
-        const count2 = line - this._buf.getCurrentLine();
-        if (count2 > 0 && this._noLineTerminator) {
+        const count3 = line - this._buf.getCurrentLine();
+        if (count3 > 0 && this._noLineTerminator) {
           return;
         }
-        for (let i = 0; i < count2; i++) {
+        for (let i = 0; i < count3; i++) {
           this._newline();
         }
-        const spacesCount = count2 > 0 ? column : column - this._buf.getCurrentColumn();
+        const spacesCount = count3 > 0 ? column : column - this._buf.getCurrentColumn();
         if (spacesCount > 0) {
           const spaces = this._originalCode ? this._originalCode.slice(index - spacesCount, index).replace(/[^\t\x0B\f \xA0\u1680\u2000-\u200A\u202F\u205F\u3000\uFEFF]/gu, " ") : " ".repeat(spacesCount);
           this._append(spaces, false);
@@ -44460,8 +45717,8 @@ var require_conversion = __commonJS({
       return this.replaceWith(call)[0].get("arguments.0");
     }
     function getFunctionArity(node) {
-      const count2 = node.params.findIndex((param) => isAssignmentPattern(param) || isRestElement(param));
-      return count2 === -1 ? node.params.length : count2;
+      const count3 = node.params.findIndex((param) => isAssignmentPattern(param) || isRestElement(param));
+      return count3 === -1 ? node.params.length : count3;
     }
   }
 });
@@ -46361,556 +47618,17 @@ import express2 from "express";
 
 // server/routes.ts
 init_esm_shims();
-import axios from "axios";
+init_storage();
+init_db();
+init_schema();
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { createServer } from "http";
-import { randomUUID } from "crypto";
-
-// server/storage.ts
-init_esm_shims();
-
-// shared/schema.ts
-var schema_exports = {};
-__export(schema_exports, {
-  certificates: () => certificates,
-  certificatesRelations: () => certificatesRelations,
-  courtesyAttendees: () => courtesyAttendees,
-  courtesyLinks: () => courtesyLinks,
-  courtesyLinksRelations: () => courtesyLinksRelations,
-  courtesyRedemptionSchema: () => courtesyRedemptionSchema,
-  emailQueue: () => emailQueue,
-  events: () => events,
-  eventsRelations: () => eventsRelations,
-  insertCourtesyAttendeeSchema: () => insertCourtesyAttendeeSchema,
-  insertCourtesyLinkSchema: () => insertCourtesyLinkSchema,
-  insertEmailQueueSchema: () => insertEmailQueueSchema,
-  insertEventSchema: () => insertEventSchema,
-  insertOrderSchema: () => insertOrderSchema,
-  insertUserSchema: () => insertUserSchema,
-  loginSchema: () => loginSchema,
-  massSendJobs: () => massSendJobs,
-  orders: () => orders,
-  ordersRelations: () => ordersRelations,
-  users: () => users,
-  usersRelations: () => usersRelations
-});
-init_esm_shims();
-import { sql } from "drizzle-orm";
-import { relations } from "drizzle-orm";
-import {
-  pgTable,
-  varchar,
-  text,
-  timestamp,
-  decimal,
-  boolean,
-  integer,
-  serial,
-  jsonb,
-  unique
-} from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
-import { z } from "zod";
-var users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: varchar("email", { length: 255 }).notNull().unique(),
-  emailVerified: boolean("email_verified").default(false),
-  password: text("password").notNull(),
-  name: varchar("name", { length: 255 }).notNull(),
-  cpf: varchar("cpf", { length: 14 }).notNull().unique(),
-  phone: varchar("phone", { length: 20 }).notNull(),
-  birthDate: timestamp("birth_date").notNull(),
-  address: text("address").notNull(),
-  partnerCompany: varchar("partner_company", { length: 255 }),
-  isAdmin: boolean("is_admin").default(false).notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-  emailVerificationCode: varchar("email_verification_code", { length: 6 }),
-  emailVerificationCodeExpiresAt: timestamp("email_verification_code_expires_at")
-});
-var events = pgTable("events", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  title: varchar("title", { length: 255 }).notNull(),
-  description: text("description").notNull(),
-  date: timestamp("date").notNull(),
-  location: varchar("location", { length: 255 }).notNull(),
-  price: decimal("price", { precision: 10, scale: 2 }).notNull(),
-  imageUrl: varchar("image_url", { length: 500 }),
-  maxAttendees: integer("max_attendees"),
-  currentAttendees: integer("current_attendees").default(0),
-  isActive: boolean("is_active").default(true),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-  /** S3 URL of the .docx certificate template (filled to PDF by AWS Lambda). */
-  certificateTemplateUrl: text("certificate_template_url"),
-  /** Custom HTML for courtesy mass-send emails; placeholders {nome}, {evento}, {data}, {link}. */
-  courtesyTemplate: text("courtesy_template")
-});
-var certificates = pgTable(
-  "certificates",
-  {
-    id: serial("id").primaryKey(),
-    userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
-    certificateUrl: text("certificate_url").notNull(),
-    fullName: text("full_name").notNull(),
-    npsResponses: jsonb("nps_responses").notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull()
-  },
-  (t) => [unique("certificates_user_id_event_id_unique").on(t.userId, t.eventId)]
-);
-var courtesyLinks = pgTable("courtesy_links", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  code: varchar("code", { length: 100 }).notNull().unique(),
-  eventId: varchar("event_id").notNull().references(() => events.id),
-  recipientEmail: varchar("recipient_email", { length: 255 }),
-  recipientName: varchar("recipient_name", { length: 255 }),
-  ticketCount: integer("ticket_count").notNull().default(1),
-  usedCount: integer("used_count").default(0),
-  createdBy: varchar("created_by").notNull().references(() => users.id),
-  isActive: boolean("is_active").default(true),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-  overridePrice: decimal("override_price", { precision: 10, scale: 2 })
-});
-var orders = pgTable("orders", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
-  eventId: varchar("event_id").notNull().references(() => events.id),
-  courtesyAttendeeId: varchar("courtesy_attendee_id").references(() => courtesyAttendees.id),
-  cpf: varchar("cpf", { length: 14 }).notNull(),
-  status: varchar("status", { length: 50 }).notNull().default("pending"),
-  // pending, paid, cancelled, courtesy
-  paymentMethod: varchar("payment_method", { length: 50 }).notNull(),
-  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
-  asaasPaymentId: varchar("asaas_payment_id", { length: 255 }),
-  courtesyLinkId: varchar("courtesy_link_id").references(() => courtesyLinks.id),
-  qrCodeData: text("qr_code_data"),
-  qrCodeUsed: boolean("qr_code_used").default(false),
-  qrCodeUsedAt: timestamp("qr_code_used_at"),
-  maxUses: integer("max_uses").default(1).notNull(),
-  amntUsed: integer("amnt_used").default(0).notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-  qr_code_s3_url: varchar("qr_code_s3_url", { length: 500 })
-});
-var emailQueue = pgTable("email_queue", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  to: varchar("to", { length: 255 }).notNull(),
-  subject: varchar("subject", { length: 255 }).notNull(),
-  html: text("html"),
-  text: text("text"),
-  attachments: text("attachments"),
-  status: varchar("status", { length: 50 }).default("pending"),
-  // pending, sent, failed
-  attempts: integer("attempts").default(0),
-  createdAt: timestamp("created_at").defaultNow(),
-  processedAt: timestamp("processed_at")
-});
-var courtesyAttendees = pgTable("courtesy_attendees", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: varchar("name", { length: 255 }).notNull(),
-  email: varchar("email", { length: 255 }).notNull(),
-  cpf: varchar("cpf", { length: 14 }).notNull(),
-  phone: varchar("phone", { length: 20 }).notNull(),
-  birthDate: timestamp("birth_date").notNull(),
-  address: text("address").notNull(),
-  partnerCompany: varchar("partner_company", { length: 255 }),
-  occupation: varchar("occupation", { length: 255 }),
-  eventTitle: varchar("event_title", { length: 255 }).notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow()
-});
-var massSendJobs = pgTable("mass_send_jobs", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  status: text("status", { enum: ["pending", "processing", "completed", "failed"] }).default("pending").notNull(),
-  csvData: text("csv_data").notNull(),
-  attachmentData: text("attachment_data"),
-  // Storing as JSON string
-  createdBy: text("created_by").notNull().references(() => users.id),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
-});
-var usersRelations = relations(users, ({ many }) => ({
-  orders: many(orders),
-  courtesyLinks: many(courtesyLinks),
-  certificates: many(certificates)
-}));
-var eventsRelations = relations(events, ({ many }) => ({
-  orders: many(orders),
-  courtesyLinks: many(courtesyLinks),
-  certificates: many(certificates)
-}));
-var certificatesRelations = relations(certificates, ({ one }) => ({
-  user: one(users, {
-    fields: [certificates.userId],
-    references: [users.id]
-  }),
-  event: one(events, {
-    fields: [certificates.eventId],
-    references: [events.id]
-  })
-}));
-var ordersRelations = relations(orders, ({ one }) => ({
-  user: one(users, {
-    fields: [orders.userId],
-    references: [users.id]
-  }),
-  event: one(events, {
-    fields: [orders.eventId],
-    references: [events.id]
-  }),
-  courtesyLink: one(courtesyLinks, {
-    fields: [orders.courtesyLinkId],
-    references: [courtesyLinks.id]
-  }),
-  courtesyAttendee: one(courtesyAttendees, {
-    fields: [orders.courtesyAttendeeId],
-    references: [courtesyAttendees.id]
-  })
-}));
-var courtesyLinksRelations = relations(courtesyLinks, ({ one, many }) => ({
-  event: one(events, {
-    fields: [courtesyLinks.eventId],
-    references: [events.id]
-  }),
-  createdByUser: one(users, {
-    fields: [courtesyLinks.createdBy],
-    references: [users.id]
-  }),
-  orders: many(orders)
-}));
-var insertUserSchema = createInsertSchema(users, {
-  email: z.string().email("Email inv\xE1lido"),
-  cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
-  phone: z.string().regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, "Telefone deve estar no formato (00) 00000-0000"),
-  password: z.string().min(6, "Senha deve ter pelo menos 6 caracteres"),
-  name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
-  address: z.string().min(10, "Endere\xE7o deve ter pelo menos 10 caracteres"),
-  birthDate: z.date({ required_error: "Data de nascimento \xE9 obrigat\xF3ria" })
-}).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-  emailVerified: true,
-  isAdmin: true
-});
-var insertEventSchema = createInsertSchema(events).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-  currentAttendees: true
-});
-var insertOrderSchema = createInsertSchema(orders).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-  qrCodeData: true,
-  qrCodeUsed: true,
-  qrCodeUsedAt: true
-});
-var insertEmailQueueSchema = createInsertSchema(emailQueue).omit({
-  id: true,
-  createdAt: true,
-  processedAt: true,
-  status: true,
-  attempts: true
-});
-var insertCourtesyLinkSchema = createInsertSchema(courtesyLinks, {
-  recipientEmail: z.string().email().optional(),
-  recipientName: z.string().optional()
-}).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-  usedCount: true
-});
-var insertCourtesyAttendeeSchema = createInsertSchema(courtesyAttendees, {
-  occupation: z.string().optional()
-}).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true
-});
-var loginSchema = z.object({
-  email: z.string().email("Email inv\xE1lido"),
-  password: z.string().min(1, "Senha \xE9 obrigat\xF3ria")
-});
-var courtesyRedemptionSchema = z.object({
-  name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
-  email: z.string().email("Email inv\xE1lido"),
-  emailConfirm: z.string().email("Email inv\xE1lido"),
-  cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
-  partnerCompany: z.string().min(2, "Empresa parceira \xE9 obrigat\xF3ria"),
-  occupation: z.string().min(2, "Cargo \xE9 obrigat\xF3rio"),
-  birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
-  address: z.string().min(10, "Endere\xE7o deve ter pelo menos 10 caracteres"),
-  phone: z.string().regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, "Telefone deve estar no formato (00) 00000-0000")
-}).refine((data) => data.email === data.emailConfirm, {
-  message: "Os emails n\xE3o coincidem",
-  path: ["emailConfirm"]
-});
-
-// server/db.ts
-init_esm_shims();
-import { Pool, neonConfig } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-serverless";
-import "dotenv/config";
-import ws from "ws";
-neonConfig.webSocketConstructor = ws;
-if (!process.env.DATABASE_URL) {
-  throw new Error(
-    "DATABASE_URL must be set. Did you forget to provision a database?"
-  );
-}
-var pool = new Pool({ connectionString: process.env.DATABASE_URL });
-var db = drizzle({ client: pool, schema: schema_exports });
-
-// server/storage.ts
-import { eq, desc, sql as sql2, asc, count, and } from "drizzle-orm";
-var DatabaseStorage = class {
-  // User operations
-  async getUser(id) {
-    const [user] = await db.select().from(users).where(eq(users.id, id));
-    return user;
-  }
-  async getUserByEmail(email) {
-    const [user] = await db.select().from(users).where(eq(users.email, email));
-    return user;
-  }
-  async getUserByCpf(cpf) {
-    const [user] = await db.select().from(users).where(eq(users.cpf, cpf));
-    return user;
-  }
-  async createUser(userData) {
-    const [user] = await db.insert(users).values({
-      ...userData,
-      createdAt: /* @__PURE__ */ new Date(),
-      updatedAt: /* @__PURE__ */ new Date()
-    }).returning();
-    return user;
-  }
-  async updateUser(id, updates) {
-    const [user] = await db.update(users).set({ ...updates, updatedAt: /* @__PURE__ */ new Date() }).where(eq(users.id, id)).returning();
-    return user;
-  }
-  async verifyUserEmail(id) {
-    const [user] = await db.update(users).set({ emailVerified: true, updatedAt: /* @__PURE__ */ new Date() }).where(eq(users.id, id)).returning();
-    return !!user;
-  }
-  async deleteUser(id) {
-    await db.delete(orders).where(eq(orders.userId, id));
-    const result = await db.delete(users).where(eq(users.id, id));
-    return (result.rowCount ?? 0) > 0;
-  }
-  // Event operations
-  async getEvents() {
-    const startOfToday = /* @__PURE__ */ new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    return await db.select().from(events).where(eq(events.isActive, true)).orderBy(asc(events.date));
-  }
-  async getAllEventsForAdmin() {
-    return await db.select().from(events).orderBy(asc(events.date));
-  }
-  async getAllEventsForAdminPaginated(page, limit) {
-    const safePage = Math.max(1, Math.floor(page));
-    const safeLimit = Math.min(100, Math.max(1, Math.floor(limit)));
-    const offset = (safePage - 1) * safeLimit;
-    const [countRow] = await db.select({ n: count() }).from(events);
-    const total = Number(countRow?.n ?? 0);
-    const list = await db.select().from(events).orderBy(desc(events.date)).limit(safeLimit).offset(offset);
-    return { events: list, total };
-  }
-  async getEvent(id) {
-    const [event] = await db.select().from(events).where(eq(events.id, id));
-    return event;
-  }
-  async createEvent(eventData) {
-    const [event] = await db.insert(events).values({
-      ...eventData,
-      createdAt: /* @__PURE__ */ new Date(),
-      updatedAt: /* @__PURE__ */ new Date()
-    }).returning();
-    return event;
-  }
-  async updateEvent(id, updates) {
-    const [event] = await db.update(events).set({ ...updates, updatedAt: /* @__PURE__ */ new Date() }).where(eq(events.id, id)).returning();
-    return event;
-  }
-  async deleteEvent(id) {
-    return await db.transaction(async (tx) => {
-      await tx.delete(orders).where(eq(orders.eventId, id));
-      await tx.delete(courtesyLinks).where(eq(courtesyLinks.eventId, id));
-      await tx.delete(certificates).where(eq(certificates.eventId, id));
-      const result = await tx.delete(events).where(eq(events.id, id));
-      return (result.rowCount ?? 0) > 0;
-    });
-  }
-  // Order operations
-  async getOrder(id) {
-    const [order] = await db.select().from(orders).where(eq(orders.id, id));
-    return order;
-  }
-  async getOrdersByUser(userId, page = 1, limit = 10) {
-    const offset = (page - 1) * limit;
-    const ordersQuery = db.select({
-      id: orders.id,
-      userId: orders.userId,
-      eventId: orders.eventId,
-      status: orders.status,
-      courtesyAttendeeId: orders.courtesyAttendeeId,
-      cpf: orders.cpf,
-      paymentMethod: orders.paymentMethod,
-      amount: orders.amount,
-      asaasPaymentId: orders.asaasPaymentId,
-      courtesyLinkId: orders.courtesyLinkId,
-      qrCodeData: orders.qrCodeData,
-      qr_code_s3_url: orders.qr_code_s3_url,
-      qrCodeUsed: orders.qrCodeUsed,
-      maxUses: orders.maxUses,
-      amntUsed: orders.amntUsed,
-      qrCodeUsedAt: orders.qrCodeUsedAt,
-      createdAt: orders.createdAt,
-      updatedAt: orders.updatedAt,
-      event: {
-        id: events.id,
-        title: events.title,
-        description: events.description,
-        date: events.date,
-        location: events.location,
-        price: events.price,
-        imageUrl: events.imageUrl
-      }
-    }).from(orders).leftJoin(events, eq(orders.eventId, events.id)).where(eq(orders.userId, userId)).orderBy(desc(orders.createdAt)).limit(limit).offset(offset);
-    const totalQuery = db.select({ value: count() }).from(orders).where(eq(orders.userId, userId));
-    const [ordersResult, totalResult] = await Promise.all([ordersQuery, totalQuery]);
-    return {
-      orders: ordersResult,
-      total: totalResult[0].value
-    };
-  }
-  async createOrder(orderData) {
-    const [order] = await db.insert(orders).values({
-      ...orderData,
-      createdAt: /* @__PURE__ */ new Date(),
-      updatedAt: /* @__PURE__ */ new Date()
-    }).returning();
-    return order;
-  }
-  async createCourtesyAttendee(attendee) {
-    const [newAttendee] = await db.insert(courtesyAttendees).values(attendee).returning();
-    return newAttendee;
-  }
-  async updateOrder(id, updates) {
-    const [order] = await db.update(orders).set({ ...updates, updatedAt: /* @__PURE__ */ new Date() }).where(eq(orders.id, id)).returning();
-    return order;
-  }
-  async getOrderByAsaasPaymentId(paymentId) {
-    const [order] = await db.select().from(orders).where(eq(orders.asaasPaymentId, paymentId));
-    return order;
-  }
-  async isCpfAlreadyRegisteredForEvent(cpf, eventId) {
-    const existingOrder = await db.select().from(orders).where(
-      and(
-        eq(orders.cpf, cpf),
-        eq(orders.eventId, eventId)
-      )
-    ).limit(1);
-    return existingOrder.length > 0;
-  }
-  // Email queue operations
-  async addEmailToQueue(emailData) {
-    const [email] = await db.insert(emailQueue).values({
-      ...emailData,
-      createdAt: /* @__PURE__ */ new Date()
-    }).returning();
-    return email;
-  }
-  async getPendingEmails() {
-    return await db.select().from(emailQueue).where(eq(emailQueue.status, "pending")).orderBy(emailQueue.createdAt);
-  }
-  async updateEmailStatus(id, status, processedAt) {
-    await db.update(emailQueue).set({
-      status,
-      processedAt: processedAt || /* @__PURE__ */ new Date(),
-      attempts: sql2`attempts + 1`
-    }).where(eq(emailQueue.id, id));
-  }
-  async deleteOrder(id) {
-    await db.delete(orders).where(eq(orders.id, id));
-  }
-  async getPendingOrders() {
-    return await db.select().from(orders).where(eq(orders.status, "pending"));
-  }
-  // Courtesy link operations
-  async createCourtesyLink(linkData) {
-    const [link] = await db.insert(courtesyLinks).values({
-      ...linkData,
-      createdAt: /* @__PURE__ */ new Date(),
-      updatedAt: /* @__PURE__ */ new Date()
-    }).returning();
-    return link;
-  }
-  async getCourtesyLinkByCode(code) {
-    const [link] = await db.select().from(courtesyLinks).where(eq(courtesyLinks.code, code));
-    return link;
-  }
-  async getCourtesyLinksByCreator(userId, page = 1, limit = 10) {
-    const offset = (page - 1) * limit;
-    const linksQuery = db.select().from(courtesyLinks).where(eq(courtesyLinks.createdBy, userId)).orderBy(desc(courtesyLinks.createdAt)).limit(limit).offset(offset);
-    const totalQuery = db.select({ value: count() }).from(courtesyLinks).where(eq(courtesyLinks.createdBy, userId));
-    const [linksResult, totalResult] = await Promise.all([linksQuery, totalQuery]);
-    return {
-      links: linksResult,
-      total: totalResult[0].value
-    };
-  }
-  async updateCourtesyLink(id, updates) {
-    const [link] = await db.update(courtesyLinks).set({ ...updates, updatedAt: /* @__PURE__ */ new Date() }).where(eq(courtesyLinks.id, id)).returning();
-    return link;
-  }
-  async incrementCourtesyLinkUsage(id) {
-    await db.update(courtesyLinks).set({
-      usedCount: sql2`used_count + 1`,
-      updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq(courtesyLinks.id, id));
-  }
-  async addMassSendJobToQueue(jobData) {
-    const newJob = {
-      // ID is removed, database will generate it
-      status: "pending",
-      csvData: jobData.csvData,
-      attachmentData: jobData.attachmentData,
-      createdBy: jobData.createdBy
-    };
-    const [insertedJob] = await db.insert(massSendJobs).values(newJob).returning();
-    return insertedJob;
-  }
-  /**
-   * Gets pending mass-send jobs for the worker to process.
-   * This is called by your new worker.
-   */
-  async getPendingMassSendJobs(limit = 5) {
-    return db.select().from(massSendJobs).where(eq(massSendJobs.status, "pending")).orderBy(asc(massSendJobs.createdAt)).limit(limit);
-  }
-  /**
-   * Updates the status of a specific mass-send job.
-   * This is called by your new worker.
-   */
-  async updateMassSendJobStatus(jobId, status) {
-    return db.update(massSendJobs).set({
-      status,
-      updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq(massSendJobs.id, jobId));
-  }
-};
-var storage = new DatabaseStorage();
-
-// server/routes.ts
+import { randomUUID as randomUUID2 } from "crypto";
 import { z as z2 } from "zod";
 import bcrypt from "bcrypt";
-import jwt3 from "jsonwebtoken";
-import { and as and2, asc as asc2, desc as desc2, eq as eq2, isNotNull, sql as sql3 } from "drizzle-orm";
+import jwt4 from "jsonwebtoken";
+import { and as and2, asc as asc2, count as count2, desc as desc2, eq as eq2, inArray, isNotNull, ne, or, sql as sql3 } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 
 // server/utils/validation.ts
 init_esm_shims();
@@ -47009,8 +47727,117 @@ function sanitizeCourtesyTemplateHtml(template) {
   });
 }
 
+// server/utils/commercialSalesMapper.ts
+init_esm_shims();
+function mapCommercialSales(rows) {
+  return rows.map((row) => {
+    const hasLink = !!row.courtesyLinkId;
+    const isCourtesyAttendee = !!row.courtesyAttendeeId;
+    const isPaidLike = row.status === "paid" || row.status === "courtesy";
+    return {
+      id: row.id,
+      vendedor: hasLink ? row.sellerName ?? "Usu\xE1rio Removido" : "N/A",
+      status: isPaidLike ? "pago" : "pendente",
+      orderDbStatus: row.status,
+      paymentMethod: row.paymentMethod,
+      nome: isCourtesyAttendee ? row.attendeeName ?? row.buyerName : row.buyerName,
+      cpf: isCourtesyAttendee ? row.attendeeCpf ?? row.cpf : row.cpf,
+      email: isCourtesyAttendee ? row.attendeeEmail ?? row.buyerEmail : row.buyerEmail,
+      telefone: isCourtesyAttendee ? row.attendeePhone ?? row.buyerPhone ?? "" : row.buyerPhone ?? ""
+    };
+  });
+}
+
+// server/utils/massSendCourtesyQueries.ts
+init_esm_shims();
+function mapMassSendRecipientFromLink(link) {
+  const used = link.usedCount ?? 0;
+  const ticket = link.ticketCount;
+  return {
+    id: link.id,
+    code: link.code,
+    recipientName: link.recipientName,
+    recipientEmail: link.recipientEmail,
+    ticketCount: ticket,
+    usedCount: used,
+    remaining: Math.max(0, ticket - used),
+    isActive: link.isActive ?? true,
+    createdAt: (() => {
+      if (!link.createdAt) return (/* @__PURE__ */ new Date(0)).toISOString();
+      if (link.createdAt instanceof Date) return link.createdAt.toISOString();
+      return new Date(link.createdAt).toISOString();
+    })()
+  };
+}
+function mapRedemptionRowFromOrder(row) {
+  const name = row.attName?.trim() ? row.attName : row.uName;
+  const email = row.attEmail?.trim() ? row.attEmail : row.uEmail;
+  const cpf = row.attCpf?.trim() ? row.attCpf : row.uCpf;
+  const phone = row.attPhone?.trim() ? row.attPhone : row.uPhone;
+  const used = row.amntUsed ?? 0;
+  return {
+    orderId: row.orderId,
+    orderStatus: row.orderStatus,
+    amntUsed: used,
+    maxUses: row.maxUses ?? 1,
+    attendeeName: name,
+    attendeeEmail: email,
+    attendeeCpf: cpf,
+    attendeePhone: phone,
+    checkedIn: used > 0,
+    checkedInAt: row.qrCodeUsedAt ? row.qrCodeUsedAt instanceof Date ? row.qrCodeUsedAt.toISOString() : new Date(row.qrCodeUsedAt).toISOString() : null,
+    createdAt: row.orderCreatedAt ? row.orderCreatedAt instanceof Date ? row.orderCreatedAt.toISOString() : new Date(row.orderCreatedAt).toISOString() : (/* @__PURE__ */ new Date(0)).toISOString()
+  };
+}
+function buildMassSendRecipientIlikePattern(search) {
+  const t = search.trim().slice(0, 120);
+  if (t.length === 0) return null;
+  return `%${t.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")}%`;
+}
+
+// server/utils/cancellationEmailTemplate.ts
+init_esm_shims();
+
+// server/utils/templateRenderer.ts
+init_esm_shims();
+function renderTemplate(html, variables) {
+  return Object.entries(variables).reduce((result, [key, value]) => {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return result.replace(new RegExp(`\\{${escaped}\\}`, "g"), value);
+  }, html);
+}
+
+// server/utils/cancellationEmailTemplate.ts
+var CANCELLATION_EMAIL_HTML = `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="utf-8" /></head>
+<body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #1a1a1a;">
+  <p>Ol\xE1, <strong>{nome}</strong>,</p>
+  <p>Sua inscri\xE7\xE3o no evento <strong>{evento}</strong> foi <strong>cancelada</strong> pela organiza\xE7\xE3o.</p>
+  <p>O QR Code do ingresso foi invalidado e n\xE3o poder\xE1 mais ser utilizado na entrada.</p>
+  <p style="margin-top: 1.5rem; font-size: 0.9rem; color: #555;">
+    Em caso de pagamento confirmado, eventuais estornos devem ser tratados diretamente com o financeiro / Asaas, conforme as regras do evento.
+  </p>
+  <p style="margin-top: 1.5rem;">Atenciosamente,<br />Equipe CDPI Pass</p>
+</body>
+</html>
+`.trim();
+function buildCancellationEmailHtml(recipientName, eventTitle) {
+  return renderTemplate(CANCELLATION_EMAIL_HTML, {
+    nome: recipientName,
+    evento: eventTitle
+  });
+}
+
+// server/utils/finalizeOrderPaidLikeWebhook.ts
+init_esm_shims();
+init_storage();
+import axios from "axios";
+
 // server/services/emailService.ts
 init_esm_shims();
+init_storage();
 import { MailService } from "@sendgrid/mail";
 import jwt from "jsonwebtoken";
 if (!process.env.SENDGRID_API_KEY) {
@@ -47366,6 +48193,108 @@ Equipe CDPI Pass
 };
 var emailService = new EmailService();
 
+// server/utils/finalizeOrderPaidLikeWebhook.ts
+var MAKE_WEBHOOK_URL = "https://hook.us2.make.com/wrlqnqumlmgvfjicglpdrc3gv8lkbqce";
+async function finalizeOrderPaidLikeWebhook(order, paymentMeta) {
+  if (order.status === "paid") {
+    return { ok: false, code: "already_paid" };
+  }
+  if (order.status !== "pending") {
+    return { ok: false, code: "not_pending" };
+  }
+  const finalStatus = order.courtesyLinkId != null || order.courtesyAttendeeId != null ? "courtesy" : "paid";
+  await storage.updateOrder(order.id, { status: finalStatus });
+  if (order.courtesyLinkId) {
+    await storage.incrementCourtesyLinkUsage(order.courtesyLinkId);
+  }
+  const event = await storage.getEvent(order.eventId);
+  const user = await storage.getUser(order.userId);
+  if (event && user) {
+    await storage.updateEvent(event.id, {
+      currentAttendees: (event.currentAttendees || 0) + 1
+    });
+    (async () => {
+      try {
+        await axios.post(MAKE_WEBHOOK_URL, {
+          user: {
+            name: user.name,
+            email: user.email
+          },
+          event: {
+            title: event.title,
+            date: event.date,
+            location: event.location
+          },
+          order: {
+            id: order.id,
+            amount: order.amount || paymentMeta.value || null,
+            status: finalStatus,
+            paymentMethod: paymentMeta.billingType || "unknown"
+          }
+        });
+        console.log("\u2705 Forwarded structured data to Make.com successfully");
+      } catch (err) {
+        console.error("\u274C Failed to forward data to Make.com:", err);
+      }
+    })();
+    await emailService.sendTicketEmail(user.email, {
+      userName: user.name,
+      eventTitle: event.title,
+      eventDate: event.date,
+      eventLocation: event.location,
+      qrCodeData: order.qrCodeData || "",
+      orderId: order.id,
+      qrCodeS3Url: order.qr_code_s3_url || ""
+    });
+  }
+  return { ok: true };
+}
+
+// server/utils/enqueueEventPrintIfEnabled.ts
+init_esm_shims();
+init_storage();
+
+// server/utils/printDisplayName.ts
+init_esm_shims();
+function resolveDisplayNameForPrint(buyer, courtesy) {
+  const fromCourtesy = courtesy?.name?.trim();
+  if (fromCourtesy) {
+    return fromCourtesy.slice(0, 255);
+  }
+  return (buyer?.name?.trim() || "Participante").slice(0, 255);
+}
+function resolveCompanyLineForPrint(courtesy) {
+  const c = courtesy?.partnerCompany?.trim();
+  return c ? c.slice(0, 255) : null;
+}
+
+// server/utils/enqueueEventPrintIfEnabled.ts
+async function enqueueEventPrintIfEnabled(order) {
+  const buyer = await storage.getUser(order.userId);
+  const courtesy = order.courtesyAttendeeId ? await storage.getCourtesyAttendeeById(order.courtesyAttendeeId) : void 0;
+  const displayName = resolveDisplayNameForPrint(buyer, courtesy);
+  const companyLine = resolveCompanyLineForPrint(courtesy);
+  const { isEnabled } = await storage.getEventPrintSetting(order.eventId);
+  if (!isEnabled) {
+    return displayName;
+  }
+  try {
+    await storage.createPrintJob({
+      eventId: order.eventId,
+      orderId: order.id,
+      displayName,
+      companyLine
+    });
+    const { notifyNewPrintJob: notifyNewPrintJob2 } = await Promise.resolve().then(() => (init_printCoordinator(), printCoordinator_exports));
+    void notifyNewPrintJob2(order.eventId).catch(
+      (e) => console.error("notifyNewPrintJob:", e)
+    );
+  } catch (e) {
+    console.error("enqueue print job:", e);
+  }
+  return displayName;
+}
+
 // server/services/asaasService.ts
 init_esm_shims();
 var AsaasService = class {
@@ -47547,110 +48476,10 @@ var asaasService = new AsaasService();
 
 // server/services/qrCodeService.ts
 init_esm_shims();
+init_s3Service();
+init_storage();
 import QRCode from "qrcode";
 import crypto from "crypto";
-
-// server/services/s3Service.ts
-init_esm_shims();
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-var S3Service = class {
-  s3Client;
-  bucketName;
-  constructor() {
-    this.s3Client = new S3Client({
-      region: process.env.AWS_REGION || "sa-east-1",
-      credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-      }
-    });
-    this.bucketName = process.env.AWS_S3_BUCKET_NAME;
-    if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY || !this.bucketName) {
-      throw new Error("Missing required AWS S3 environment variables");
-    }
-  }
-  /**
-   * Upload a buffer (like QR code image) to S3
-   * @param buffer - The file buffer to upload
-   * @param key - The S3 object key (file path)
-   * @param contentType - The MIME type of the file
-   * @returns Promise with the S3 object URL
-   */
-  async uploadBuffer(buffer, key, contentType = "image/png") {
-    try {
-      const command = new PutObjectCommand({
-        Bucket: this.bucketName,
-        Key: key,
-        Body: buffer,
-        ContentType: contentType
-      });
-      await this.s3Client.send(command);
-      return `https://${this.bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
-    } catch (error) {
-      console.error("Error uploading to S3:", error);
-      throw new Error(`Failed to upload file to S3: ${error}`);
-    }
-  }
-  /**
-   * Upload QR code buffer specifically
-   * @param qrCodeBuffer - The QR code image buffer
-   * @param orderId - Order ID for unique naming
-   * @returns Promise with the S3 URL
-   */
-  async uploadQRCode(qrCodeBuffer, orderId) {
-    const timestamp2 = Date.now();
-    const key = `qr-codes/${orderId}-${timestamp2}.png`;
-    return this.uploadBuffer(qrCodeBuffer, key, "image/png");
-  }
-  /**
-   * Generate a presigned URL for secure file access
-   * @param key - The S3 object key
-   * @param expiresIn - URL expiration time in seconds (default: 1 hour)
-   * @returns Promise with the presigned URL
-   */
-  async getPresignedUrl(key, expiresIn = 3600) {
-    try {
-      const command = new GetObjectCommand({
-        Bucket: this.bucketName,
-        Key: key
-      });
-      return await getSignedUrl(this.s3Client, command, { expiresIn });
-    } catch (error) {
-      console.error("Error generating presigned URL:", error);
-      throw new Error(`Failed to generate presigned URL: ${error}`);
-    }
-  }
-  /**
-   * Delete a file from S3
-   * @param key - The S3 object key to delete
-   * @returns Promise<void>
-   */
-  async deleteFile(key) {
-    try {
-      const command = new DeleteObjectCommand({
-        Bucket: this.bucketName,
-        Key: key
-      });
-      await this.s3Client.send(command);
-    } catch (error) {
-      console.error("Error deleting from S3:", error);
-      throw new Error(`Failed to delete file from S3: ${error}`);
-    }
-  }
-  /**
-   * Extract S3 key from a full S3 URL
-   * @param url - The full S3 URL
-   * @returns The S3 object key
-   */
-  extractKeyFromUrl(url) {
-    const urlParts = url.split("/");
-    return urlParts.slice(3).join("/");
-  }
-};
-var s3Service = new S3Service();
-
-// server/services/qrCodeService.ts
 var QRCodeService = class {
   /*
     Generate a QR code for the given data.
@@ -47761,6 +48590,9 @@ var QRCodeService = class {
 };
 var qrCodeService = new QRCodeService();
 
+// server/routes.ts
+init_s3Service();
+
 // server/services/certificateLambdaService.ts
 init_esm_shims();
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
@@ -47823,8 +48655,9 @@ async function invokeGenerateCertificatePdf(request) {
 
 // server/middleware/auth.ts
 init_esm_shims();
-import jwt2 from "jsonwebtoken";
-var JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+init_storage();
+import jwt3 from "jsonwebtoken";
+var JWT_SECRET2 = process.env.JWT_SECRET || "your-secret-key";
 var requireEmailVerification = (req, res, next) => {
   if (req.user && !req.user.emailVerified) {
     return res.status(403).json({
@@ -47848,7 +48681,7 @@ var generateCertificateBodySchema = z2.object({
   fullName: z2.string().min(1, "Nome \xE9 obrigat\xF3rio").max(120, "Nome deve ter no m\xE1ximo 120 caracteres"),
   npsResponses: generateCertificateNpsSchema
 });
-var JWT_SECRET2 = process.env.JWT_SECRET || "your-secret-key";
+var JWT_SECRET3 = process.env.JWT_SECRET || "your-secret-key";
 var authenticateToken = async (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
@@ -47856,7 +48689,7 @@ var authenticateToken = async (req, res, next) => {
     return res.status(401).json({ message: "Token de acesso requerido" });
   }
   try {
-    const decoded = jwt3.verify(token, JWT_SECRET2);
+    const decoded = jwt4.verify(token, JWT_SECRET3);
     const user = await storage.getUser(decoded.userId);
     if (!user) {
       return res.status(401).json({ message: "Usu\xE1rio n\xE3o encontrado" });
@@ -47941,7 +48774,7 @@ async function registerRoutes(app2) {
         // Clear the code
         emailVerificationCodeExpiresAt: null
       });
-      const token = jwt3.sign({ userId: user.id }, JWT_SECRET2, { expiresIn: "7d" });
+      const token = jwt4.sign({ userId: user.id }, JWT_SECRET3, { expiresIn: "7d" });
       res.json({ token, user: { id: user.id, email: user.email, name: user.name, emailVerified: true } });
     } catch (error) {
       res.status(500).json({ message: "Erro interno do servidor." });
@@ -47970,7 +48803,7 @@ async function registerRoutes(app2) {
       if (!isValidPassword) {
         return res.status(401).json({ message: "Email ou senha incorretos" });
       }
-      const token = jwt3.sign({ userId: user.id }, JWT_SECRET2, { expiresIn: "7d" });
+      const token = jwt4.sign({ userId: user.id }, JWT_SECRET3, { expiresIn: "7d" });
       res.json({
         token,
         user: { id: user.id, email: user.email, name: user.name, emailVerified: user.emailVerified }
@@ -47994,7 +48827,7 @@ async function registerRoutes(app2) {
         return res.status(400).json({ message: "Token de verifica\xE7\xE3o inv\xE1lido" });
       }
       try {
-        const decoded = jwt3.verify(token, JWT_SECRET2);
+        const decoded = jwt4.verify(token, JWT_SECRET3);
         if (decoded.type !== "email-verification") {
           return res.status(400).json({ message: "Token inv\xE1lido" });
         }
@@ -48034,7 +48867,7 @@ async function registerRoutes(app2) {
       if (!token || !newPassword) {
         return res.status(400).json({ message: "Token e nova senha s\xE3o obrigat\xF3rios." });
       }
-      const decoded = jwt3.verify(token, JWT_SECRET2);
+      const decoded = jwt4.verify(token, JWT_SECRET3);
       if (decoded.type !== "password-reset") {
         return res.status(400).json({ message: "Token inv\xE1lido." });
       }
@@ -48043,7 +48876,7 @@ async function registerRoutes(app2) {
       res.status(200).json({ message: "Senha redefinida com sucesso." });
     } catch (error) {
       console.error("Reset password error:", error);
-      if (error instanceof jwt3.TokenExpiredError) {
+      if (error instanceof jwt4.TokenExpiredError) {
         return res.status(400).json({ message: "O link de redefini\xE7\xE3o expirou." });
       }
       res.status(400).json({ message: "Link de redefini\xE7\xE3o inv\xE1lido ou expirado." });
@@ -48080,9 +48913,9 @@ async function registerRoutes(app2) {
       if (!userToReset) {
         return res.status(404).json({ message: "User not found" });
       }
-      const token = jwt3.sign(
+      const token = jwt4.sign(
         { userId: userToReset.id, type: "password-reset" },
-        JWT_SECRET2,
+        JWT_SECRET3,
         { expiresIn: "1h" }
         // 1 hour expiration is standard
       );
@@ -48209,7 +49042,7 @@ async function registerRoutes(app2) {
         if (!ext) {
           return res.status(400).json({ error: "Invalid image type" });
         }
-        const key = `events/covers/${randomUUID()}.${ext}`;
+        const key = `events/covers/${randomUUID2()}.${ext}`;
         let imageUrl;
         try {
           imageUrl = await s3Service.uploadBuffer(file.buffer, key, file.mimetype);
@@ -48396,7 +49229,7 @@ async function registerRoutes(app2) {
           if (!ext) {
             return res.status(400).json({ error: "Invalid image type" });
           }
-          const key = `events/covers/${randomUUID()}.${ext}`;
+          const key = `events/covers/${randomUUID2()}.${ext}`;
           try {
             const imageUrl = await s3Service.uploadBuffer(file.buffer, key, file.mimetype);
             if (imageUrl !== existing.imageUrl) {
@@ -48469,23 +49302,386 @@ async function registerRoutes(app2) {
         email: users.email,
         phone: users.phone,
         ticketId: orders.id,
+        orderStatus: orders.status,
+        courtesyLinkId: orders.courtesyLinkId,
+        courtesyAttendeeId: orders.courtesyAttendeeId,
+        amntUsed: orders.amntUsed,
+        maxUses: orders.maxUses,
         qrCodeUsed: orders.qrCodeUsed,
         qrCodeUsedAt: orders.qrCodeUsedAt
-      }).from(orders).innerJoin(users, eq2(orders.userId, users.id)).where(and2(eq2(orders.eventId, eventId), eq2(orders.status, "paid"))).orderBy(asc2(users.name));
-      const data = rows.map((r) => ({
-        userId: r.userId,
-        name: r.name,
-        cpf: r.cpf,
-        email: r.email,
-        phone: r.phone,
-        ticketId: r.ticketId,
-        checkedIn: r.qrCodeUsed === true,
-        checkedInAt: r.qrCodeUsedAt ? r.qrCodeUsedAt instanceof Date ? r.qrCodeUsedAt.toISOString() : new Date(r.qrCodeUsedAt).toISOString() : null
-      }));
+      }).from(orders).innerJoin(users, eq2(orders.userId, users.id)).where(
+        and2(
+          eq2(orders.eventId, eventId),
+          inArray(orders.status, ["paid", "courtesy"])
+        )
+      ).orderBy(asc2(users.name));
+      const data = rows.map((r) => {
+        const used = r.amntUsed ?? 0;
+        const maxU = r.maxUses ?? 1;
+        const orderStatus = r.orderStatus === "courtesy" || r.courtesyLinkId != null || r.courtesyAttendeeId != null ? "courtesy" : "paid";
+        return {
+          userId: r.userId,
+          name: r.name,
+          cpf: r.cpf,
+          email: r.email,
+          phone: r.phone,
+          ticketId: r.ticketId,
+          orderStatus,
+          amntUsed: used,
+          maxUses: maxU,
+          checkedIn: used > 0,
+          checkedInAt: r.qrCodeUsedAt ? r.qrCodeUsedAt instanceof Date ? r.qrCodeUsedAt.toISOString() : new Date(r.qrCodeUsedAt).toISOString() : null
+        };
+      });
       res.json({ data, total: data.length });
     } catch (error) {
       console.error("GET /api/admin/events/:eventId/participants:", error);
       res.status(500).json({ message: "Erro ao listar participantes" });
+    }
+  });
+  app2.get(
+    "/api/admin/events/:eventId/mass-send-recipients",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({
+            success: false,
+            message: "Acesso negado. Apenas administradores."
+          });
+        }
+        const parsed = z2.string().uuid().safeParse(req.params.eventId);
+        if (!parsed.success) {
+          return res.status(400).json({ success: false, message: "eventId inv\xE1lido" });
+        }
+        const eventId = parsed.data;
+        const page = Math.max(1, parseInt(String(req.query.page), 10) || 1);
+        const limit = 50;
+        const offset = (page - 1) * limit;
+        const searchRaw = String(req.query.search ?? "").trim();
+        const search = searchRaw.slice(0, 120);
+        const pattern = buildMassSendRecipientIlikePattern(search);
+        const baseWhere = and2(
+          eq2(courtesyLinks.eventId, eventId),
+          isNotNull(courtesyLinks.recipientEmail),
+          isNotNull(courtesyLinks.recipientName)
+        );
+        const whereClause = pattern == null ? baseWhere : and2(
+          baseWhere,
+          or(
+            sql3`${courtesyLinks.recipientName}::text ilike ${pattern} escape '\\'`,
+            sql3`${courtesyLinks.recipientEmail}::text ilike ${pattern} escape '\\'`
+          )
+        );
+        const [totalRow] = await db.select({ c: count2() }).from(courtesyLinks).where(whereClause);
+        const total = totalRow?.c ?? 0;
+        const links = await db.select().from(courtesyLinks).where(whereClause).orderBy(desc2(courtesyLinks.createdAt)).limit(limit).offset(offset);
+        const data = links.map((link) => mapMassSendRecipientFromLink(link));
+        return res.json({ data, total });
+      } catch (error) {
+        console.error("GET /api/admin/events/:eventId/mass-send-recipients:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Erro interno ao carregar envios de cortesia"
+        });
+      }
+    }
+  );
+  app2.get(
+    "/api/admin/courtesy-links/:linkId/redemptions",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({
+            success: false,
+            message: "Acesso negado. Apenas administradores."
+          });
+        }
+        const parsed = z2.string().uuid().safeParse(req.params.linkId);
+        if (!parsed.success) {
+          return res.status(400).json({ success: false, message: "linkId inv\xE1lido" });
+        }
+        const linkId = parsed.data;
+        const [link] = await db.select().from(courtesyLinks).where(eq2(courtesyLinks.id, linkId));
+        if (!link) {
+          return res.status(404).json({
+            success: false,
+            message: "Link de cortesia n\xE3o encontrado"
+          });
+        }
+        const event = await storage.getEvent(link.eventId);
+        const eventTitle = event?.title ?? "\u2014";
+        const buyer = alias(users, "courtesy_buyer");
+        const rows = await db.select({
+          orderId: orders.id,
+          orderStatus: orders.status,
+          amntUsed: orders.amntUsed,
+          maxUses: orders.maxUses,
+          qrCodeUsedAt: orders.qrCodeUsedAt,
+          orderCreatedAt: orders.createdAt,
+          attName: courtesyAttendees.name,
+          attEmail: courtesyAttendees.email,
+          attCpf: courtesyAttendees.cpf,
+          attPhone: courtesyAttendees.phone,
+          uName: buyer.name,
+          uEmail: buyer.email,
+          uCpf: buyer.cpf,
+          uPhone: buyer.phone
+        }).from(orders).innerJoin(buyer, eq2(orders.userId, buyer.id)).leftJoin(
+          courtesyAttendees,
+          eq2(orders.courtesyAttendeeId, courtesyAttendees.id)
+        ).where(
+          and2(
+            eq2(orders.courtesyLinkId, linkId),
+            ne(orders.status, "cancelled")
+          )
+        ).orderBy(desc2(orders.createdAt));
+        const data = rows.map((r) => mapRedemptionRowFromOrder(r));
+        return res.json({
+          link: {
+            id: link.id,
+            code: link.code,
+            eventId: link.eventId,
+            eventTitle,
+            recipientName: link.recipientName,
+            recipientEmail: link.recipientEmail,
+            ticketCount: link.ticketCount,
+            usedCount: link.usedCount ?? 0
+          },
+          data,
+          total: data.length
+        });
+      } catch (error) {
+        console.error("GET /api/admin/courtesy-links/:linkId/redemptions:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Erro interno ao carregar resgates"
+        });
+      }
+    }
+  );
+  app2.get(
+    "/api/admin/events/:eventId/print-settings",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado" });
+        }
+        const parsed = z2.string().uuid().safeParse(req.params.eventId);
+        if (!parsed.success) {
+          return res.status(400).json({ message: "eventId inv\xE1lido" });
+        }
+        const eventId = parsed.data;
+        const ev = await storage.getEvent(eventId);
+        if (!ev) {
+          return res.status(404).json({ message: "Evento n\xE3o encontrado" });
+        }
+        const s = await storage.getEventPrintSetting(eventId);
+        return res.json({ isEnabled: s.isEnabled, eventId });
+      } catch (e) {
+        console.error("GET /api/admin/events/:eventId/print-settings:", e);
+        return res.status(500).json({ message: "Erro ao carregar configura\xE7\xE3o" });
+      }
+    }
+  );
+  app2.patch(
+    "/api/admin/events/:eventId/print-settings",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado" });
+        }
+        const parsed = z2.string().uuid().safeParse(req.params.eventId);
+        if (!parsed.success) {
+          return res.status(400).json({ message: "eventId inv\xE1lido" });
+        }
+        const eventId = parsed.data;
+        const ev = await storage.getEvent(eventId);
+        if (!ev) {
+          return res.status(404).json({ message: "Evento n\xE3o encontrado" });
+        }
+        const body = z2.object({ isEnabled: z2.boolean() }).safeParse(req.body);
+        if (!body.success) {
+          return res.status(400).json({ message: "Body inv\xE1lido: informe { isEnabled: boolean }" });
+        }
+        await storage.upsertEventPrintSetting(
+          eventId,
+          body.data.isEnabled,
+          req.user.id
+        );
+        return res.json({ isEnabled: body.data.isEnabled, eventId });
+      } catch (e) {
+        console.error("PATCH /api/admin/events/:eventId/print-settings:", e);
+        return res.status(500).json({ message: "Erro ao salvar configura\xE7\xE3o de impress\xE3o" });
+      }
+    }
+  );
+  app2.get(
+    "/api/admin/events/:eventId/print-history",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado" });
+        }
+        const parsed = z2.string().uuid().safeParse(req.params.eventId);
+        if (!parsed.success) {
+          return res.status(400).json({ message: "eventId inv\xE1lido" });
+        }
+        const eventId = parsed.data;
+        const ev = await storage.getEvent(eventId);
+        if (!ev) {
+          return res.status(404).json({ message: "Evento n\xE3o encontrado" });
+        }
+        const limit = Math.min(
+          200,
+          Math.max(1, parseInt(String(req.query.limit), 10) || 100)
+        );
+        const list = await storage.listPrintJobsForEvent(eventId, limit);
+        const data = list.map((j) => ({
+          id: j.id,
+          orderId: j.orderId,
+          displayName: j.displayName,
+          companyLine: j.companyLine ?? null,
+          status: j.status,
+          attempts: j.attempts,
+          lastErrorCode: j.lastErrorCode,
+          lastErrorMessage: j.lastErrorMessage,
+          createdAt: j.createdAt ? j.createdAt instanceof Date ? j.createdAt.toISOString() : new Date(String(j.createdAt)).toISOString() : null,
+          completedAt: j.completedAt ? j.completedAt instanceof Date ? j.completedAt.toISOString() : new Date(String(j.completedAt)).toISOString() : null
+        }));
+        return res.json({ data, total: data.length });
+      } catch (e) {
+        console.error("GET /api/admin/events/:eventId/print-history:", e);
+        return res.status(500).json({ message: "Erro ao carregar hist\xF3rico" });
+      }
+    }
+  );
+  app2.get("/api/admin/events/:eventId/commercial-sales", authenticateToken, async (req, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ error: "Unauthorized" });
+      }
+      const parsed = z2.string().uuid().safeParse(req.params.eventId);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "eventId inv\xE1lido" });
+      }
+      const eventId = parsed.data;
+      const event = await storage.getEvent(eventId);
+      if (!event) {
+        return res.status(404).json({ error: "Event not found" });
+      }
+      const sellers = alias(users, "sellers");
+      const rows = await db.select({
+        id: orders.id,
+        status: orders.status,
+        paymentMethod: orders.paymentMethod,
+        buyerName: users.name,
+        cpf: orders.cpf,
+        buyerEmail: users.email,
+        buyerPhone: users.phone,
+        courtesyAttendeeId: orders.courtesyAttendeeId,
+        attendeeName: courtesyAttendees.name,
+        attendeeCpf: courtesyAttendees.cpf,
+        attendeeEmail: courtesyAttendees.email,
+        attendeePhone: courtesyAttendees.phone,
+        sellerName: sellers.name,
+        courtesyLinkId: orders.courtesyLinkId,
+        createdAt: orders.createdAt
+      }).from(orders).innerJoin(users, eq2(orders.userId, users.id)).leftJoin(courtesyAttendees, eq2(orders.courtesyAttendeeId, courtesyAttendees.id)).leftJoin(courtesyLinks, eq2(orders.courtesyLinkId, courtesyLinks.id)).leftJoin(sellers, eq2(courtesyLinks.createdBy, sellers.id)).where(and2(
+        eq2(orders.eventId, eventId),
+        // Sales only: courtesy ingressos listam em /participants, não aqui
+        inArray(orders.status, ["pending", "paid"])
+      )).orderBy(desc2(orders.createdAt));
+      const data = mapCommercialSales(rows);
+      res.json(data);
+    } catch (error) {
+      console.error("GET /api/admin/events/:eventId/commercial-sales:", error);
+      res.status(500).json({ error: "Erro ao carregar dados de vendas" });
+    }
+  });
+  app2.get(
+    "/api/admin/courtesy-links/by-code/:code",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+        }
+        let raw = req.params.code ?? "";
+        try {
+          raw = decodeURIComponent(raw);
+        } catch {
+          return res.status(400).json({ error: "C\xF3digo inv\xE1lido" });
+        }
+        const code = raw.trim();
+        if (!code) {
+          return res.status(400).json({ error: "C\xF3digo inv\xE1lido" });
+        }
+        const link = await storage.getCourtesyLinkByCode(code);
+        if (!link) {
+          return res.status(404).json({ error: "Link de cortesia n\xE3o encontrado" });
+        }
+        const event = await storage.getEvent(link.eventId);
+        res.json({
+          link: {
+            id: link.id,
+            code: link.code,
+            eventId: link.eventId,
+            ticketCount: link.ticketCount,
+            usedCount: link.usedCount ?? 0,
+            isActive: link.isActive
+          },
+          eventTitle: event?.title ?? null
+        });
+      } catch (error) {
+        console.error("GET /api/admin/courtesy-links/by-code/:code:", error);
+        res.status(500).json({ error: "Erro ao buscar link de cortesia" });
+      }
+    }
+  );
+  app2.patch("/api/admin/courtesy-links/:id", authenticateToken, async (req, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const idParsed = z2.string().uuid().safeParse(req.params.id);
+      if (!idParsed.success) {
+        return res.status(400).json({ error: "id inv\xE1lido" });
+      }
+      const bodyParsed = z2.object({ ticketCount: z2.coerce.number() }).safeParse(req.body);
+      if (!bodyParsed.success) {
+        return res.status(400).json({ error: "Payload inv\xE1lido: informe ticketCount" });
+      }
+      const ticketCount = bodyParsed.data.ticketCount;
+      if (!Number.isInteger(ticketCount)) {
+        return res.status(400).json({ error: "Informe um limite inteiro v\xE1lido." });
+      }
+      try {
+        const updated = await storage.updateCourtesyLinkTicketCount(idParsed.data, ticketCount);
+        res.json({
+          link: {
+            id: updated.id,
+            code: updated.code,
+            eventId: updated.eventId,
+            ticketCount: updated.ticketCount,
+            usedCount: updated.usedCount ?? 0,
+            isActive: updated.isActive
+          }
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Erro ao atualizar";
+        if (msg === "LINK_NOT_FOUND") {
+          return res.status(404).json({ error: "Link de cortesia n\xE3o encontrado" });
+        }
+        return res.status(400).json({ error: msg });
+      }
+    } catch (error) {
+      console.error("PATCH /api/admin/courtesy-links/:id:", error);
+      res.status(500).json({ error: "Erro ao atualizar link de cortesia" });
     }
   });
   app2.post("/api/admin/tickets/:ticketId/check-in", authenticateToken, async (req, res) => {
@@ -48502,7 +49698,13 @@ async function registerRoutes(app2) {
       if (!order) {
         return res.status(404).json({ error: "Ticket not found" });
       }
-      if (order.status !== "paid") {
+      if (order.status === "cancelled") {
+        return res.status(400).json({
+          error: "Ingresso Cancelado",
+          message: "Ingresso Cancelado"
+        });
+      }
+      if (order.status !== "paid" && order.status !== "courtesy") {
         return res.status(400).json({ error: "Ticket not valid for check-in" });
       }
       const maxUses = order.maxUses ?? 1;
@@ -48514,15 +49716,186 @@ async function registerRoutes(app2) {
         });
       }
       const now = /* @__PURE__ */ new Date();
+      const newUsed = used + 1;
       await storage.updateOrder(ticketId, {
         qrCodeUsed: true,
         qrCodeUsedAt: now,
-        amntUsed: used + 1
+        amntUsed: newUsed
       });
-      res.json({ success: true, checkedInAt: now.toISOString() });
+      const displayName = await enqueueEventPrintIfEnabled(order);
+      res.json({
+        success: true,
+        checkedInAt: now.toISOString(),
+        amntUsed: newUsed,
+        maxUses,
+        checkedIn: newUsed > 0,
+        userName: displayName
+      });
     } catch (error) {
       console.error("POST /api/admin/tickets/:ticketId/check-in:", error);
       res.status(500).json({ message: "Erro ao registrar presen\xE7a" });
+    }
+  });
+  app2.post("/api/admin/orders/:id/cancel", authenticateToken, async (req, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({
+          success: false,
+          message: "Acesso negado. Apenas administradores."
+        });
+      }
+      const parsed = z2.string().uuid().safeParse(req.params.id);
+      if (!parsed.success) {
+        return res.status(400).json({ success: false, message: "orderId inv\xE1lido" });
+      }
+      const orderId = parsed.data;
+      const result = await storage.cancelOrderAndInvalidateQr(orderId);
+      if (!result.ok) {
+        if (result.code === "not_found") {
+          return res.status(404).json({
+            success: false,
+            message: "Pedido n\xE3o encontrado."
+          });
+        }
+        if (result.code === "already_cancelled") {
+          return res.status(409).json({
+            success: false,
+            message: "Este ingresso j\xE1 est\xE1 cancelado."
+          });
+        }
+        if (result.code === "invalid_status") {
+          return res.status(400).json({
+            success: false,
+            message: `N\xE3o \xE9 poss\xEDvel cancelar um pedido com status: ${result.status}`
+          });
+        }
+        return res.status(400).json({ success: false, message: "N\xE3o foi poss\xEDvel cancelar o pedido." });
+      }
+      const buyer = await storage.getUser(result.order.userId);
+      const event = await storage.getEvent(result.order.eventId);
+      if (buyer?.email) {
+        const html = buildCancellationEmailHtml(
+          buyer.name ?? "Participante",
+          event?.title ?? "Evento"
+        );
+        const text2 = [
+          `Ol\xE1, ${buyer.name ?? "Participante"},`,
+          "",
+          `Sua inscri\xE7\xE3o no evento ${event?.title ?? "Evento"} foi cancelada pela organiza\xE7\xE3o.`,
+          "O QR Code do ingresso foi invalidado.",
+          "",
+          "Equipe CDPI Pass"
+        ].join("\n");
+        await storage.addEmailToQueue({
+          to: buyer.email,
+          subject: "Cancelamento de inscri\xE7\xE3o \u2014 CDPI Pass",
+          html,
+          text: text2,
+          attachments: null
+        });
+      }
+      res.json({
+        success: true,
+        message: "Inscri\xE7\xE3o cancelada com sucesso. O QR Code foi invalidado e um e-mail foi enfileirado."
+      });
+    } catch (error) {
+      console.error("POST /api/admin/orders/:id/cancel:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro interno ao cancelar inscri\xE7\xE3o"
+      });
+    }
+  });
+  app2.post(
+    "/api/admin/orders/:id/mark-paid-external",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({
+            success: false,
+            message: "Acesso negado. Apenas administradores."
+          });
+        }
+        const parsed = z2.string().uuid().safeParse(req.params.id);
+        if (!parsed.success) {
+          return res.status(400).json({ success: false, message: "orderId inv\xE1lido" });
+        }
+        const orderId = parsed.data;
+        const order = await storage.getOrder(orderId);
+        if (!order) {
+          return res.status(404).json({
+            success: false,
+            message: "Pedido n\xE3o encontrado."
+          });
+        }
+        if (order.paymentMethod !== "credit_card") {
+          return res.status(400).json({
+            success: false,
+            message: "A\xE7\xE3o dispon\xEDvel somente para pedidos criados com cart\xE3o de cr\xE9dito."
+          });
+        }
+        const result = await finalizeOrderPaidLikeWebhook(order, {
+          billingType: "CREDIT_CARD",
+          value: Number.parseFloat(String(order.amount))
+        });
+        if (!result.ok) {
+          if (result.code === "already_paid") {
+            return res.status(409).json({
+              success: false,
+              message: "Este pedido j\xE1 est\xE1 pago."
+            });
+          }
+          return res.status(400).json({
+            success: false,
+            message: `N\xE3o \xE9 poss\xEDvel confirmar pagamento: status do pedido inv\xE1lido (${order.status}).`
+          });
+        }
+        res.json({
+          success: true,
+          message: "Pagamento registrado. O participante receber\xE1 o e-mail de confirma\xE7\xE3o com o QR Code."
+        });
+      } catch (error) {
+        console.error("POST /api/admin/orders/:id/mark-paid-external:", error);
+        res.status(500).json({
+          success: false,
+          message: "Erro interno ao confirmar pagamento"
+        });
+      }
+    }
+  );
+  app2.post("/api/admin/orders/:id/undo-check-in", authenticateToken, async (req, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsed = z2.string().uuid().safeParse(req.params.id);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "orderId inv\xE1lido" });
+      }
+      const orderId = parsed.data;
+      const updated = await storage.undoOrderCheckIn(orderId);
+      const amntUsed = updated.amntUsed ?? 0;
+      const maxUses = updated.maxUses ?? 1;
+      res.json({
+        success: true,
+        message: "Presen\xE7a desmarcada com sucesso.",
+        data: {
+          checkedIn: amntUsed > 0,
+          amntUsed,
+          maxUses
+        }
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Erro ao desmarcar presen\xE7a";
+      console.error("POST /api/admin/orders/:id/undo-check-in:", error);
+      if (msg === "Pedido n\xE3o encontrado") {
+        return res.status(400).json({ error: msg });
+      }
+      if (msg === "N\xE3o \xE9 poss\xEDvel alterar presen\xE7a de ingresso cancelado" || msg === "Este ingresso n\xE3o possui check-in para ser desmarcado") {
+        return res.status(400).json({ error: msg });
+      }
+      res.status(400).json({ error: msg });
     }
   });
   const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -48549,7 +49922,7 @@ async function registerRoutes(app2) {
         if (!event) {
           return res.status(404).json({ message: "Evento n\xE3o encontrado" });
         }
-        const key = `certificate-templates/${id}/${randomUUID()}.docx`;
+        const key = `certificate-templates/${id}/${randomUUID2()}.docx`;
         const certificateTemplateUrl = await s3Service.uploadBuffer(
           file.buffer,
           key,
@@ -48777,28 +50150,6 @@ async function registerRoutes(app2) {
       res.status(500).json({ message: "Erro ao cancelar o pedido" });
     }
   });
-  app2.post("/api/reset-ticket/:orderId", authenticateToken, async (req, res) => {
-    try {
-      const userId = req.user.id;
-      const user = await storage.getUser(userId);
-      if (!user?.isAdmin) {
-        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
-      }
-      const { orderId } = req.params;
-      const order = await storage.getOrder(orderId);
-      if (!order) {
-        return res.status(404).json({ message: "Pedido n\xE3o encontrado" });
-      }
-      await storage.updateOrder(orderId, {
-        qrCodeUsed: false,
-        qrCodeUsedAt: null
-      });
-      res.json({ message: "Ticket resetado" });
-    } catch (error) {
-      console.error("Reset ticket error:", error);
-      res.status(500).json({ message: "Erro ao resetar ticket" });
-    }
-  });
   app2.post("/api/verify-ticket", authenticateToken, async (req, res) => {
     try {
       const userId = req.user.id;
@@ -48830,16 +50181,24 @@ async function registerRoutes(app2) {
           message: "Ingresso n\xE3o encontrado"
         });
       }
+      if (order.status === "cancelled") {
+        return res.status(400).json({
+          success: false,
+          message: "Ingresso Cancelado",
+          error: "Ingresso Cancelado"
+        });
+      }
       if (order.amntUsed >= order.maxUses) {
         return res.status(400).json({
           success: false,
           message: "Ingresso j\xE1 foi utilizado o n\xFAmero m\xE1ximo de vezes"
         });
       }
-      if (order.status !== "paid") {
+      if (order.status !== "paid" && order.status !== "courtesy") {
         return res.status(400).json({
           success: false,
-          message: "Pagamento n\xE3o confirmado"
+          message: "Pagamento n\xE3o confirmado.",
+          error: "Pagamento n\xE3o confirmado."
         });
       }
       await storage.updateOrder(order.id, {
@@ -48847,11 +50206,12 @@ async function registerRoutes(app2) {
         qrCodeUsedAt: /* @__PURE__ */ new Date(),
         amntUsed: order.amntUsed + 1
       });
+      const displayName = await enqueueEventPrintIfEnabled(order);
       const event = await storage.getEvent(order.eventId);
       res.json({
         success: true,
         message: "Ingresso verificado com sucesso",
-        userName: "Participante Confirmado",
+        userName: displayName,
         eventTitle: event?.title || "Evento"
       });
     } catch (error) {
@@ -48874,52 +50234,11 @@ async function registerRoutes(app2) {
       console.log("Full webhook payload:", JSON.stringify(req.body, null, 2));
       if (eventType === "PAYMENT_CONFIRMED" || eventType === "PAYMENT_RECEIVED") {
         const order = payment.externalReference ? await storage.getOrder(payment.externalReference) : await storage.getOrderByAsaasPaymentId(payment.id);
-        if (order && order.status !== "paid") {
-          await storage.updateOrder(order.id, { status: "paid" });
-          const event = await storage.getEvent(order.eventId);
-          const user = await storage.getUser(order.userId);
-          if (order.courtesyLinkId) {
-            await storage.incrementCourtesyLinkUsage(order.courtesyLinkId);
-          }
-          if (event && user) {
-            await storage.updateEvent(event.id, {
-              currentAttendees: (event.currentAttendees || 0) + 1
-            });
-            const makeWebhookUrl = "https://hook.us2.make.com/wrlqnqumlmgvfjicglpdrc3gv8lkbqce";
-            (async () => {
-              try {
-                await axios.post(makeWebhookUrl, {
-                  user: {
-                    name: user.name,
-                    email: user.email
-                  },
-                  event: {
-                    title: event.title,
-                    date: event.date,
-                    location: event.location
-                  },
-                  order: {
-                    id: order.id,
-                    amount: order.amount || payment?.value || null,
-                    status: "paid",
-                    paymentMethod: payment?.billingType || "unknown"
-                  }
-                });
-                console.log("\u2705 Forwarded structured data to Make.com successfully");
-              } catch (err) {
-                console.error("\u274C Failed to forward data to Make.com:", err);
-              }
-            })();
-            await emailService.sendTicketEmail(user.email, {
-              userName: user.name,
-              eventTitle: event.title,
-              eventDate: event.date,
-              eventLocation: event.location,
-              qrCodeData: order.qrCodeData || "",
-              orderId: order.id,
-              qrCodeS3Url: order.qr_code_s3_url || ""
-            });
-          }
+        if (order) {
+          await finalizeOrderPaidLikeWebhook(order, {
+            billingType: payment?.billingType || "unknown",
+            value: payment?.value ?? null
+          });
         }
       } else if (eventType === "PAYMENT_OVERDUE" || eventType === "PAYMENT_DELETED") {
         const order = await storage.getOrderByAsaasPaymentId(payment.id);
@@ -49449,6 +50768,8 @@ async function registerRoutes(app2) {
     }
   });
   const httpServer = createServer(app2);
+  const { initPrintWebSocket: initPrintWebSocket2 } = await Promise.resolve().then(() => (init_printCoordinator(), printCoordinator_exports));
+  initPrintWebSocket2(httpServer);
   return httpServer;
 }
 

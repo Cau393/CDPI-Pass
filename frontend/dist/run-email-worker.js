@@ -21,6 +21,8 @@ __export(schema_exports, {
   courtesyLinksRelations: () => courtesyLinksRelations,
   courtesyRedemptionSchema: () => courtesyRedemptionSchema,
   emailQueue: () => emailQueue,
+  eventPrintSettings: () => eventPrintSettings,
+  eventPrintSettingsRelations: () => eventPrintSettingsRelations,
   events: () => events,
   eventsRelations: () => eventsRelations,
   insertCourtesyAttendeeSchema: () => insertCourtesyAttendeeSchema,
@@ -33,6 +35,7 @@ __export(schema_exports, {
   massSendJobs: () => massSendJobs,
   orders: () => orders,
   ordersRelations: () => ordersRelations,
+  printJobs: () => printJobs,
   users: () => users,
   usersRelations: () => usersRelations
 });
@@ -172,6 +175,32 @@ var massSendJobs = pgTable("mass_send_jobs", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 });
+var eventPrintSettings = pgTable("event_print_settings", {
+  eventId: varchar("event_id").primaryKey().references(() => events.id, { onDelete: "cascade" }),
+  isEnabled: boolean("is_enabled").default(false).notNull(),
+  updatedBy: varchar("updated_by").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+});
+var printJobs = pgTable("print_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+  orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  displayName: varchar("display_name", { length: 255 }).notNull(),
+  /** Set for courtesy (`partner_company`); second line on the badge. */
+  companyLine: varchar("company_line", { length: 255 }),
+  status: text("status", {
+    enum: ["pending", "processing", "completed", "failed"]
+  }).default("pending").notNull(),
+  /** Print attempts (incremented on each failure; max 3). */
+  attempts: integer("attempts").default(0).notNull(),
+  lockedBySocketId: varchar("locked_by_socket_id", { length: 64 }),
+  lastErrorCode: varchar("last_error_code", { length: 50 }),
+  lastErrorMessage: text("last_error_message"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true })
+});
 var usersRelations = relations(users, ({ many }) => ({
   orders: many(orders),
   courtesyLinks: many(courtesyLinks),
@@ -220,6 +249,16 @@ var courtesyLinksRelations = relations(courtesyLinks, ({ one, many }) => ({
     references: [users.id]
   }),
   orders: many(orders)
+}));
+var eventPrintSettingsRelations = relations(eventPrintSettings, ({ one }) => ({
+  event: one(events, {
+    fields: [eventPrintSettings.eventId],
+    references: [events.id]
+  }),
+  updatedByUser: one(users, {
+    fields: [eventPrintSettings.updatedBy],
+    references: [users.id]
+  })
 }));
 var insertUserSchema = createInsertSchema(users, {
   email: z.string().email("Email inv\xE1lido"),
@@ -308,6 +347,144 @@ var db = drizzle({ client: pool, schema: schema_exports });
 
 // server/storage.ts
 import { eq, desc, sql as sql2, asc, count, and } from "drizzle-orm";
+
+// server/services/s3Service.ts
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+var S3Service = class {
+  s3Client;
+  bucketName;
+  constructor() {
+    this.s3Client = new S3Client({
+      region: process.env.AWS_REGION || "sa-east-1",
+      credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+      }
+    });
+    this.bucketName = process.env.AWS_S3_BUCKET_NAME;
+    if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY || !this.bucketName) {
+      throw new Error("Missing required AWS S3 environment variables");
+    }
+  }
+  /**
+   * Upload a buffer (like QR code image) to S3
+   * @param buffer - The file buffer to upload
+   * @param key - The S3 object key (file path)
+   * @param contentType - The MIME type of the file
+   * @returns Promise with the S3 object URL
+   */
+  async uploadBuffer(buffer, key, contentType = "image/png") {
+    try {
+      const command = new PutObjectCommand({
+        Bucket: this.bucketName,
+        Key: key,
+        Body: buffer,
+        ContentType: contentType
+      });
+      await this.s3Client.send(command);
+      return `https://${this.bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
+    } catch (error) {
+      console.error("Error uploading to S3:", error);
+      throw new Error(`Failed to upload file to S3: ${error}`);
+    }
+  }
+  /**
+   * Upload QR code buffer specifically
+   * @param qrCodeBuffer - The QR code image buffer
+   * @param orderId - Order ID for unique naming
+   * @returns Promise with the S3 URL
+   */
+  async uploadQRCode(qrCodeBuffer, orderId) {
+    const timestamp2 = Date.now();
+    const key = `qr-codes/${orderId}-${timestamp2}.png`;
+    return this.uploadBuffer(qrCodeBuffer, key, "image/png");
+  }
+  /**
+   * Generate a presigned URL for secure file access
+   * @param key - The S3 object key
+   * @param expiresIn - URL expiration time in seconds (default: 1 hour)
+   * @returns Promise with the presigned URL
+   */
+  async getPresignedUrl(key, expiresIn = 3600) {
+    try {
+      const command = new GetObjectCommand({
+        Bucket: this.bucketName,
+        Key: key
+      });
+      return await getSignedUrl(this.s3Client, command, { expiresIn });
+    } catch (error) {
+      console.error("Error generating presigned URL:", error);
+      throw new Error(`Failed to generate presigned URL: ${error}`);
+    }
+  }
+  /**
+   * Delete a file from S3
+   * @param key - The S3 object key to delete
+   * @returns Promise<void>
+   */
+  async deleteFile(key) {
+    try {
+      const command = new DeleteObjectCommand({
+        Bucket: this.bucketName,
+        Key: key
+      });
+      await this.s3Client.send(command);
+    } catch (error) {
+      console.error("Error deleting from S3:", error);
+      throw new Error(`Failed to delete file from S3: ${error}`);
+    }
+  }
+  /**
+   * Extract S3 key from a full S3 URL
+   * @param url - The full S3 URL
+   * @returns The S3 object key
+   */
+  extractKeyFromUrl(url) {
+    const urlParts = url.split("/");
+    return urlParts.slice(3).join("/");
+  }
+};
+var s3Service = new S3Service();
+
+// server/utils/undoCheckInUpdate.ts
+function buildUndoCheckInPatch(order) {
+  const used = order.amntUsed ?? 0;
+  const newAmntUsed = used - 1;
+  const isStillUsed = newAmntUsed > 0;
+  return {
+    amntUsed: newAmntUsed,
+    qrCodeUsed: isStillUsed,
+    qrCodeUsedAt: isStillUsed ? order.qrCodeUsedAt ?? null : null
+  };
+}
+
+// server/utils/courtesyTicketCountUpdate.ts
+function validateCourtesyTicketCountUpdate(params) {
+  const { nextTicketCount } = params;
+  if (typeof nextTicketCount !== "number" || !Number.isInteger(nextTicketCount)) {
+    return "Informe um limite inteiro v\xE1lido.";
+  }
+  if (nextTicketCount < 1) {
+    return "O limite deve ser pelo menos 1.";
+  }
+  if (nextTicketCount < params.usedCount) {
+    return "Limite n\xE3o pode ser menor que o n\xFAmero de usos j\xE1 registrados.";
+  }
+  return null;
+}
+
+// server/utils/printJobPolicy.ts
+var MAX_PRINT_ATTEMPTS = 3;
+function nextStateAfterPrintFailure(attemptsBefore) {
+  const next = attemptsBefore + 1;
+  if (next >= MAX_PRINT_ATTEMPTS) {
+    return { status: "failed", attempts: next };
+  }
+  return { status: "pending", attempts: next };
+}
+
+// server/storage.ts
 var DatabaseStorage = class {
   // User operations
   async getUser(id) {
@@ -509,11 +686,222 @@ var DatabaseStorage = class {
     const [link] = await db.update(courtesyLinks).set({ ...updates, updatedAt: /* @__PURE__ */ new Date() }).where(eq(courtesyLinks.id, id)).returning();
     return link;
   }
+  async updateCourtesyLinkTicketCount(id, ticketCount) {
+    const [link] = await db.select().from(courtesyLinks).where(eq(courtesyLinks.id, id));
+    if (!link) {
+      throw new Error("LINK_NOT_FOUND");
+    }
+    const errMsg = validateCourtesyTicketCountUpdate({
+      usedCount: link.usedCount ?? 0,
+      nextTicketCount: ticketCount
+    });
+    if (errMsg) {
+      throw new Error(errMsg);
+    }
+    const [updated] = await db.update(courtesyLinks).set({ ticketCount, updatedAt: /* @__PURE__ */ new Date() }).where(eq(courtesyLinks.id, id)).returning();
+    if (!updated) {
+      throw new Error("LINK_NOT_FOUND");
+    }
+    return updated;
+  }
   async incrementCourtesyLinkUsage(id) {
     await db.update(courtesyLinks).set({
       usedCount: sql2`used_count + 1`,
       updatedAt: /* @__PURE__ */ new Date()
     }).where(eq(courtesyLinks.id, id));
+  }
+  async cancelOrderAndInvalidateQr(orderId) {
+    const order = await this.getOrder(orderId);
+    if (!order) {
+      return { ok: false, code: "not_found" };
+    }
+    if (order.status === "cancelled") {
+      return { ok: false, code: "already_cancelled", order };
+    }
+    if (order.status !== "pending" && order.status !== "paid" && order.status !== "courtesy") {
+      return { ok: false, code: "invalid_status", status: order.status };
+    }
+    if (order.qr_code_s3_url) {
+      try {
+        const key = s3Service.extractKeyFromUrl(order.qr_code_s3_url);
+        await s3Service.deleteFile(key);
+      } catch (s3Error) {
+        console.error(`Erro ao deletar QR Code do S3 (Order ${orderId}):`, s3Error);
+      }
+    }
+    const [updated] = await db.update(orders).set({
+      status: "cancelled",
+      qrCodeData: null,
+      qr_code_s3_url: null,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).where(eq(orders.id, orderId)).returning();
+    if (!updated) {
+      return { ok: false, code: "not_found" };
+    }
+    return { ok: true, order: updated };
+  }
+  async undoOrderCheckIn(orderId) {
+    const order = await this.getOrder(orderId);
+    if (!order) {
+      throw new Error("Pedido n\xE3o encontrado");
+    }
+    if (order.status === "cancelled") {
+      throw new Error("N\xE3o \xE9 poss\xEDvel alterar presen\xE7a de ingresso cancelado");
+    }
+    if ((order.amntUsed ?? 0) === 0) {
+      throw new Error("Este ingresso n\xE3o possui check-in para ser desmarcado");
+    }
+    const patch = buildUndoCheckInPatch(order);
+    const [updated] = await db.update(orders).set({
+      ...patch,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).where(eq(orders.id, orderId)).returning();
+    if (!updated) {
+      throw new Error("Pedido n\xE3o encontrado");
+    }
+    return updated;
+  }
+  async getCourtesyAttendeeById(id) {
+    const [a] = await db.select().from(courtesyAttendees).where(eq(courtesyAttendees.id, id));
+    return a;
+  }
+  async getEventPrintSetting(eventId) {
+    const [row] = await db.select().from(eventPrintSettings).where(eq(eventPrintSettings.eventId, eventId));
+    if (!row) {
+      return { isEnabled: false };
+    }
+    return { isEnabled: row.isEnabled ?? false };
+  }
+  async upsertEventPrintSetting(eventId, isEnabled, updatedBy) {
+    const now = /* @__PURE__ */ new Date();
+    await db.insert(eventPrintSettings).values({
+      eventId,
+      isEnabled,
+      updatedBy,
+      createdAt: now,
+      updatedAt: now
+    }).onConflictDoUpdate({
+      target: eventPrintSettings.eventId,
+      set: {
+        isEnabled,
+        updatedBy,
+        updatedAt: now
+      }
+    });
+  }
+  async createPrintJob(params) {
+    const now = /* @__PURE__ */ new Date();
+    const [row] = await db.insert(printJobs).values({
+      eventId: params.eventId,
+      orderId: params.orderId,
+      displayName: params.displayName,
+      companyLine: params.companyLine?.trim() ? params.companyLine.trim().slice(0, 255) : null,
+      status: "pending",
+      attempts: 0,
+      createdAt: now,
+      updatedAt: now
+    }).returning();
+    if (!row) {
+      throw new Error("PRINT_JOB_INSERT_FAILED");
+    }
+    return row;
+  }
+  async claimNextPrintJobForEvent(eventId, socketId) {
+    const maxA = MAX_PRINT_ATTEMPTS;
+    const result = await db.execute(sql2`
+      UPDATE print_jobs AS pj
+      SET
+        status = 'processing',
+        locked_by_socket_id = ${socketId},
+        updated_at = NOW()
+      FROM (
+        SELECT pj2.id
+        FROM print_jobs pj2
+        WHERE pj2.status = 'pending'
+          AND pj2.attempts < ${maxA}
+          AND pj2.event_id = ${eventId}
+        ORDER BY pj2.created_at ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+      ) AS sub
+      WHERE pj.id = sub.id
+      RETURNING pj.id,
+        pj.event_id AS "eventId",
+        pj.order_id AS "orderId",
+        pj.display_name AS "displayName",
+        pj.company_line AS "companyLine",
+        pj.status,
+        pj.attempts,
+        pj.locked_by_socket_id AS "lockedBySocketId",
+        pj.last_error_code AS "lastErrorCode",
+        pj.last_error_message AS "lastErrorMessage",
+        pj.created_at AS "createdAt",
+        pj.updated_at AS "updatedAt",
+        pj.completed_at AS "completedAt"
+    `);
+    return result.rows?.[0];
+  }
+  async completePrintJob(jobId, socketId) {
+    const [row] = await db.update(printJobs).set({
+      status: "completed",
+      completedAt: /* @__PURE__ */ new Date(),
+      lockedBySocketId: null,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).where(
+      and(
+        eq(printJobs.id, jobId),
+        eq(printJobs.lockedBySocketId, socketId)
+      )
+    ).returning();
+    return !!row;
+  }
+  async failPrintJob(jobId, socketId, errorCode, message) {
+    const job = await this.getPrintJobById(jobId);
+    if (!job || job.lockedBySocketId !== socketId) {
+      return { ok: false, terminalFailure: false };
+    }
+    const now = /* @__PURE__ */ new Date();
+    const nextState = nextStateAfterPrintFailure(job.attempts ?? 0);
+    if (nextState.status === "failed") {
+      await db.update(printJobs).set({
+        status: "failed",
+        attempts: nextState.attempts,
+        lastErrorCode: errorCode,
+        lastErrorMessage: message,
+        lockedBySocketId: null,
+        updatedAt: now
+      }).where(eq(printJobs.id, jobId));
+      return { ok: true, terminalFailure: true };
+    }
+    await db.update(printJobs).set({
+      status: "pending",
+      attempts: nextState.attempts,
+      lastErrorCode: errorCode,
+      lastErrorMessage: message,
+      lockedBySocketId: null,
+      updatedAt: now
+    }).where(eq(printJobs.id, jobId));
+    return { ok: true, terminalFailure: false };
+  }
+  async getPrintJobById(id) {
+    const [row] = await db.select().from(printJobs).where(eq(printJobs.id, id));
+    return row;
+  }
+  async listPrintJobsForEvent(eventId, limit) {
+    return await db.select().from(printJobs).where(eq(printJobs.eventId, eventId)).orderBy(desc(printJobs.createdAt)).limit(Math.min(200, Math.max(1, limit)));
+  }
+  async requeueJobOnSocketDisconnect(jobId, socketId) {
+    await db.update(printJobs).set({
+      status: "pending",
+      lockedBySocketId: null,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).where(
+      and(
+        eq(printJobs.id, jobId),
+        eq(printJobs.lockedBySocketId, socketId),
+        eq(printJobs.status, "processing")
+      )
+    );
   }
   async addMassSendJobToQueue(jobData) {
     const newJob = {
