@@ -13,6 +13,9 @@ if (process.env.SENDGRID_API_KEY) {
 
 const FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || "relacionamento.mkt@cdpipharma.com.br";
 
+/** Match EventDetailsPage / Brazil wall-clock display regardless of server TZ. */
+const EVENT_TZ = "America/Sao_Paulo";
+
 /** Rough HTML to plain text for multipart/alternative body (no external deps). */
 function courtesyMessageHtmlToPlainText(html: string): string {
   return html
@@ -108,13 +111,14 @@ class EmailService {
     }
 
   async sendTicketEmail(email: string, data: TicketEmailData): Promise<boolean> {
-    const eventDate = new Date(data.eventDate).toLocaleDateString('pt-BR', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
+    const eventDate = new Date(data.eventDate).toLocaleDateString("pt-BR", {
+      timeZone: EVENT_TZ,
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     });
 
     const html = `
