@@ -23,6 +23,7 @@ const MOCK_EVENTS = [
   },
 ];
 
+/** Mirrors GET /api/admin/events/:eventId/commercial-sales (paid/pending, amount > 0, not courtesy). */
 const MOCK_SALES = [
   {
     id: "ord-1",
@@ -45,17 +46,6 @@ const MOCK_SALES = [
     cpf: "987.654.321-00",
     email: "ana@email.com",
     telefone: "+5521888888888",
-  },
-  {
-    id: "ord-3",
-    vendedor: "Usuário Removido",
-    status: "pago",
-    orderDbStatus: "courtesy" as const,
-    paymentMethod: "pix",
-    nome: "Carlos Cortesia",
-    cpf: "111.222.333-44",
-    email: "carlos@email.com",
-    telefone: "+5531777777777",
   },
 ];
 
@@ -158,16 +148,14 @@ describe("AdminCommercialSalesPage", () => {
     });
 
     expect(screen.getByText("Ana Souza")).toBeInTheDocument();
-    expect(screen.getByText("Carlos Cortesia")).toBeInTheDocument();
 
     expect(screen.getByText("Maria Admin")).toBeInTheDocument();
-    expect(screen.getByText("Usuário Removido")).toBeInTheDocument();
 
     const naCells = screen.getAllByText("N/A");
     expect(naCells.length).toBeGreaterThanOrEqual(1);
 
     const pagoBadges = screen.getAllByText("Pago");
-    expect(pagoBadges).toHaveLength(2);
+    expect(pagoBadges).toHaveLength(1);
     for (const badge of pagoBadges) {
       expect(badge.className).toContain("bg-green-600");
     }
@@ -192,8 +180,8 @@ describe("AdminCommercialSalesPage", () => {
     });
 
     const rows = screen.getAllByRole("row");
-    // 1 header row + 3 data rows = 4
-    expect(rows).toHaveLength(4);
+    // 1 header row + 2 data rows = 3
+    expect(rows).toHaveLength(3);
   });
 
   it("shows Pago por meios externos and Cancelar for pending credit card only", async () => {

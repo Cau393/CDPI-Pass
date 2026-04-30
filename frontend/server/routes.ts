@@ -7,7 +7,19 @@ import { db } from "./db";
 import { z } from "zod";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { and, asc, count, desc, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { 
   insertUserSchema, 
@@ -854,10 +866,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = rows.map((r) => {
         const used = r.amntUsed ?? 0;
         const maxU = r.maxUses ?? 1;
+        // Promo links set courtesyLinkId but paid buyers are still paid entries.
         const orderStatus: "paid" | "courtesy" | "cancelled" =
-          r.orderStatus === "courtesy" ||
-          r.courtesyLinkId != null ||
-          r.courtesyAttendeeId != null
+          r.orderStatus === "courtesy" || r.courtesyAttendeeId != null
             ? "courtesy"
             : "paid";
         return {
@@ -1210,11 +1221,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .leftJoin(courtesyAttendees, eq(orders.courtesyAttendeeId, courtesyAttendees.id))
         .leftJoin(courtesyLinks, eq(orders.courtesyLinkId, courtesyLinks.id))
         .leftJoin(sellers, eq(courtesyLinks.createdBy, sellers.id))
-        .where(and(
-          eq(orders.eventId, eventId),
-          // Sales only: courtesy ingressos listam em /participants, não aqui
-          inArray(orders.status, ["pending", "paid"]),
-        ))
+        .where(
+          and(
+            eq(orders.eventId, eventId),
+            // Paid commercial sales only — free cortesia / resgates vanishes from this list
+            inArray(orders.status, ["pending", "paid"]),
+            ne(orders.paymentMethod, "courtesy"),
+            gt(orders.amount, "0"),
+          ),
+        )
         .orderBy(desc(orders.createdAt));
 
       const data = mapCommercialSales(rows);

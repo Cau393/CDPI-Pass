@@ -32,10 +32,13 @@ export async function finalizeOrderPaidLikeWebhook(
     return { ok: false, code: "not_pending" };
   }
 
-  const finalStatus: "paid" | "courtesy" =
-    order.courtesyLinkId != null || order.courtesyAttendeeId != null
-      ? "courtesy"
-      : "paid";
+  // Promo/discount links set `courtesyLinkId` but still use Asaas (`pending` → paid).
+  // Only free cortesia redemptions use `paymentMethod: "courtesy"` and/or `courtesyAttendeeId`.
+  const isFreeCourtesyRedeem =
+    order.paymentMethod === "courtesy" || order.courtesyAttendeeId != null;
+  const finalStatus: "paid" | "courtesy" = isFreeCourtesyRedeem
+    ? "courtesy"
+    : "paid";
   await storage.updateOrder(order.id, { status: finalStatus });
 
   if (order.courtesyLinkId) {

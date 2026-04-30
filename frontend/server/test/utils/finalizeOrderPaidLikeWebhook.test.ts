@@ -87,18 +87,37 @@ describe("finalizeOrderPaidLikeWebhook", () => {
     expect(updateOrder).not.toHaveBeenCalled();
   });
 
-  it("updates order, optional courtesy, attendees, and completes when pending", async () => {
-    const o = baseOrder({ courtesyLinkId: "cl-1" });
+  it("finalizes promo-link (paid) orders as paid and increments link usage", async () => {
+    const o = baseOrder({
+      courtesyLinkId: "cl-1",
+      paymentMethod: "credit_card",
+      courtesyAttendeeId: null,
+    });
     const r = await finalizeOrderPaidLikeWebhook(o, {
       billingType: "CREDIT_CARD",
       value: 100,
     });
     expect(r).toEqual({ ok: true });
-    expect(updateOrder).toHaveBeenCalledWith("order-uuid", { status: "courtesy" });
+    expect(updateOrder).toHaveBeenCalledWith("order-uuid", { status: "paid" });
     expect(incrementCourtesyLinkUsage).toHaveBeenCalledWith("cl-1");
     expect(updateEvent).toHaveBeenCalledWith("evt-1", {
       currentAttendees: 2,
     });
+  });
+
+  it("finalizes free cortesia redemptions as courtesy when attendee is linked", async () => {
+    const o = baseOrder({
+      courtesyLinkId: "cl-1",
+      paymentMethod: "courtesy",
+      courtesyAttendeeId: "att-1",
+      amount: "0.00",
+    });
+    const r = await finalizeOrderPaidLikeWebhook(o, {
+      billingType: "UNKNOWN",
+    });
+    expect(r).toEqual({ ok: true });
+    expect(updateOrder).toHaveBeenCalledWith("order-uuid", { status: "courtesy" });
+    expect(incrementCourtesyLinkUsage).toHaveBeenCalledWith("cl-1");
   });
 
   it("sets paid when pending with no courtesy link or attendee", async () => {
