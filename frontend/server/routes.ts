@@ -845,7 +845,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           email: users.email,
           phone: users.phone,
           ticketId: orders.id,
-          orderStatus: orders.status,
+          paymentMethod: orders.paymentMethod,
           courtesyLinkId: orders.courtesyLinkId,
           courtesyAttendeeId: orders.courtesyAttendeeId,
           amntUsed: orders.amntUsed,
@@ -858,7 +858,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(
           and(
             eq(orders.eventId, eventId),
-            inArray(orders.status, ["paid", "courtesy"]),
+            eq(orders.status, "paid"),
           ),
         )
         .orderBy(asc(users.name));
@@ -866,9 +866,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = rows.map((r) => {
         const used = r.amntUsed ?? 0;
         const maxU = r.maxUses ?? 1;
-        // Promo links set courtesyLinkId but paid buyers are still paid entries.
+        // Cortesia vs pagamento comercial: somente `payment_method` / attendee cortesia (status sempre paid aqui).
         const orderStatus: "paid" | "courtesy" | "cancelled" =
-          r.orderStatus === "courtesy" || r.courtesyAttendeeId != null
+          r.paymentMethod === "courtesy" || r.courtesyAttendeeId != null
             ? "courtesy"
             : "paid";
         return {
@@ -1352,7 +1352,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      if (order.status !== "paid" && order.status !== "courtesy") {
+      if (order.status !== "paid") {
         return res.status(400).json({ error: "Ticket not valid for check-in" });
       }
 
@@ -1623,6 +1623,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { eventId, paymentMethod, promoCode } = req.body;
       const userId = req.user.id;
+
+      if (
+        paymentMethod !== "pix" &&
+        paymentMethod !== "credit_card" &&
+        paymentMethod !== "boleto"
+      ) {
+        return res.status(400).json({ message: "Método de pagamento inválido." });
+      }
 
       const event = await storage.getEvent(eventId);
       if (!event) {
@@ -1952,7 +1960,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      if (order.status !== "paid" && order.status !== "courtesy") {
+      if (order.status !== "paid") {
         return res.status(400).json({
           success: false,
           message: "Pagamento não confirmado.",

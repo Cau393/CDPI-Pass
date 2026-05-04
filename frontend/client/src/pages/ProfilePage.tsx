@@ -251,7 +251,13 @@ export default function ProfilePage() {
     setShowFirstConfirmation(false);
   };
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, paymentMethod?: string) => {
+    if (
+      paymentMethod === "courtesy" &&
+      (status === "paid" || status === "courtesy")
+    ) {
+      return <Badge className="bg-teal-600 text-white">Cortesia</Badge>;
+    }
     switch (status) {
       case "paid":
         return <Badge className="bg-green-500 text-white">Confirmado</Badge>;
@@ -263,6 +269,9 @@ export default function ProfilePage() {
         return <Badge variant="secondary">{status}</Badge>;
     }
   };
+
+  const isPaidLikeOrderStatus = (status: string) =>
+    status === "paid" || status === "courtesy";
 
   const formatCurrency = (amount: string | number) => {
     const value = typeof amount === "string" ? parseFloat(amount) : amount;
@@ -437,7 +446,7 @@ const handleCancelOrder = (orderId: string) => {
                                 </div>
                                 <div className="flex items-center mb-2">
                                   <span className="text-sm text-gray-500 mr-2">Status:</span>
-                                  {getStatusBadge(order.status)}
+                                  {getStatusBadge(order.status, order.paymentMethod)}
                                 </div>
                               </div>
                               <div className="flex items-center space-x-4 mt-4 sm:mt-0">
@@ -449,7 +458,7 @@ const handleCancelOrder = (orderId: string) => {
                                     Comprado em {new Date(order.createdAt).toLocaleDateString("pt-BR")}
                                   </div>
                                 </div>
-                                {order.status === "paid" && order.qrCodeData ? (
+                                {isPaidLikeOrderStatus(order.status) && order.qrCodeData ? (
                                   <div className="flex gap-2">
                                     <Button
                                       className="bg-primary hover:bg-secondary"

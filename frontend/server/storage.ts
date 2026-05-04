@@ -498,7 +498,7 @@ export class DatabaseStorage implements IStorage {
     if (order.status === "cancelled") {
       return { ok: false, code: "already_cancelled", order };
     }
-    if (order.status !== "pending" && order.status !== "paid" && order.status !== "courtesy") {
+    if (order.status !== "pending" && order.status !== "paid") {
       return { ok: false, code: "invalid_status", status: order.status };
     }
 

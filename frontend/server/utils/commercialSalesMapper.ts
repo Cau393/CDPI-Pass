@@ -21,7 +21,7 @@ export interface CommercialSaleOutput {
   vendedor: string;
   status: "pago" | "pendente";
   /** DB status for admin actions (e.g. cancel). */
-  orderDbStatus: "pending" | "paid" | "courtesy";
+  orderDbStatus: "pending" | "paid" | "cancelled";
   nome: string;
   cpf: string;
   email: string;
@@ -41,7 +41,7 @@ export function mapCommercialSales(
   return rows.map((row) => {
     const hasLink = !!row.courtesyLinkId;
     const isCourtesyAttendee = !!row.courtesyAttendeeId;
-    const isPaidLike = row.status === "paid" || row.status === "courtesy";
+    const isPaidLike = row.status === "paid";
 
     return {
       id: row.id,
@@ -49,7 +49,7 @@ export function mapCommercialSales(
         ? (row.sellerName ?? "Usuário Removido")
         : "N/A",
       status: isPaidLike ? ("pago" as const) : ("pendente" as const),
-      orderDbStatus: row.status as "pending" | "paid" | "courtesy",
+      orderDbStatus: row.status as "pending" | "paid" | "cancelled",
       paymentMethod: row.paymentMethod,
       nome: isCourtesyAttendee
         ? (row.attendeeName ?? row.buyerName)

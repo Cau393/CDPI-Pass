@@ -96,7 +96,7 @@ export const orders = pgTable("orders", {
   eventId: varchar("event_id").notNull().references(() => events.id),
   courtesyAttendeeId: varchar("courtesy_attendee_id").references(() => courtesyAttendees.id),
   cpf: varchar("cpf", { length: 14 }).notNull(),
-  status: varchar("status", { length: 50 }).notNull().default("pending"), // pending, paid, cancelled, courtesy
+  status: varchar("status", { length: 50 }).notNull().default("pending"), // pending, paid, cancelled
   paymentMethod: varchar("payment_method", { length: 50 }).notNull(),
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
   asaasPaymentId: varchar("asaas_payment_id", { length: 255 }),

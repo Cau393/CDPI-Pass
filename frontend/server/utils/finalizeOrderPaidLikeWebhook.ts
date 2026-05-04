@@ -19,7 +19,8 @@ export type PaymentMetaForFinalize = {
 
 /**
  * Same business effects as a successful `PAYMENT_RECEIVED` / `PAYMENT_CONFIRMED` Asaas webhook:
- * set paid, optional courtesy link usage, +1 attendees, Make.com, ticket e-mail.
+ * set `paid`, optional courtesy link usage, +1 attendees, Make.com, ticket e-mail.
+ * Cortesia is expressed only via `orders.paymentMethod` (and optional courtesy fields), never via status.
  */
 export async function finalizeOrderPaidLikeWebhook(
   order: Order,
@@ -32,14 +33,7 @@ export async function finalizeOrderPaidLikeWebhook(
     return { ok: false, code: "not_pending" };
   }
 
-  // Promo/discount links set `courtesyLinkId` but still use Asaas (`pending` → paid).
-  // Only free cortesia redemptions use `paymentMethod: "courtesy"` and/or `courtesyAttendeeId`.
-  const isFreeCourtesyRedeem =
-    order.paymentMethod === "courtesy" || order.courtesyAttendeeId != null;
-  const finalStatus: "paid" | "courtesy" = isFreeCourtesyRedeem
-    ? "courtesy"
-    : "paid";
-  await storage.updateOrder(order.id, { status: finalStatus });
+  await storage.updateOrder(order.id, { status: "paid" });
 
   if (order.courtesyLinkId) {
     await storage.incrementCourtesyLinkUsage(order.courtesyLinkId);
@@ -52,6 +46,11 @@ export async function finalizeOrderPaidLikeWebhook(
     await storage.updateEvent(event.id, {
       currentAttendees: (event.currentAttendees || 0) + 1,
     });
+
+    const outboundPaymentLabel =
+      order.paymentMethod === "courtesy"
+        ? "courtesy"
+        : paymentMeta.billingType || "unknown";
 
     (async () => {
       try {
@@ -68,8 +67,8 @@ export async function finalizeOrderPaidLikeWebhook(
           order: {
             id: order.id,
             amount: order.amount || paymentMeta.value || null,
-            status: finalStatus,
-            paymentMethod: paymentMeta.billingType || "unknown",
+            status: "paid",
+            paymentMethod: outboundPaymentLabel,
           },
         });
         console.log("✅ Forwarded structured data to Make.com successfully");
