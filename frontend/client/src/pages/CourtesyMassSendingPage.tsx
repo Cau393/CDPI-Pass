@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearch } from "wouter";
+import { FileSpreadsheet } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import EventSelector from "@/components/admin/EventSelector";
 import CourtesyLinkRedemptionsTable from "@/components/admin/CourtesyLinkRedemptionsTable";
+import { exportMassSendToXlsx } from "@/lib/exportMassSendExcel";
 import type { Event } from "@shared/schema";
 
 type MassSendRecipient = {
@@ -36,6 +38,8 @@ type MassSendRecipient = {
 };
 
 type MassSendRecipientsRes = { data: MassSendRecipient[]; total: number };
+
+const MAX_EXPORT_PAGES = 500;
 
 function tabFromSearch(search: string): "envio" | "visualizar" {
   const t = new URLSearchParams(
@@ -66,6 +70,7 @@ export default function CourtesyMassSendingPage() {
   const [searchText, setSearchText] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [exportingExcel, setExportingExcel] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchText), 300);
@@ -146,6 +151,44 @@ export default function CourtesyMassSendingPage() {
       }
     }
   }, [recipientsError, recipientsErr, toast]);
+
+  const handleExportExcel = useCallback(async () => {
+    if (!selectedEvent?.id) return;
+    setExportingExcel(true);
+    try {
+      const all: MassSendRecipient[] = [];
+      let pageNum = 1;
+      let total = Number.POSITIVE_INFINITY;
+      while (all.length < total && pageNum <= MAX_EXPORT_PAGES) {
+        const params = new URLSearchParams();
+        if (pageNum > 1) params.set("page", String(pageNum));
+        const s = debouncedSearch.trim().slice(0, 120);
+        if (s) params.set("search", s);
+        const q = params.toString();
+        const baseUrl = `/api/admin/events/${selectedEvent.id}/mass-send-recipients`;
+        const url = q.length > 0 ? `${baseUrl}?${q}` : baseUrl;
+        const res = await apiRequest("GET", url);
+        const body: MassSendRecipientsRes = await res.json();
+        total = body.total;
+        all.push(...body.data);
+        if (body.data.length === 0) break;
+        pageNum += 1;
+      }
+      exportMassSendToXlsx(all, selectedEvent.title);
+      toast({
+        title: "Arquivo gerado",
+        description: "O download do Excel foi iniciado.",
+      });
+    } catch {
+      toast({
+        title: "Erro ao exportar",
+        description: "Não foi possível gerar o arquivo.",
+        variant: "destructive",
+      });
+    } finally {
+      setExportingExcel(false);
+    }
+  }, [selectedEvent, debouncedSearch, toast]);
 
   const handleTabChange = useCallback(
     (v: string) => {
@@ -283,17 +326,31 @@ export default function CourtesyMassSendingPage() {
 
               {selectedEvent && view === "list" && (
                 <>
-                  <div>
-                    <Label htmlFor="ms-search" className="mb-1 block">
-                      Buscar por nome ou e-mail
-                    </Label>
-                    <Input
-                      id="ms-search"
-                      placeholder="Filtrar destinatários..."
-                      value={searchText}
-                      onChange={(e) => setSearchText(e.target.value)}
-                      className="max-w-md"
-                    />
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                    <div className="max-w-md flex-1 space-y-2">
+                      <Label htmlFor="ms-search" className="mb-1 block">
+                        Buscar por nome ou e-mail
+                      </Label>
+                      <Input
+                        id="ms-search"
+                        placeholder="Filtrar destinatários..."
+                        value={searchText}
+                        onChange={(e) => setSearchText(e.target.value)}
+                        className="w-full"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-fit shrink-0"
+                      disabled={recipientsLoading || exportingExcel}
+                      onClick={() => void handleExportExcel()}
+                      data-testid="mass-send-export-excel"
+                    >
+                      <FileSpreadsheet className="mr-2 h-4 w-4" />
+                      Exportar para Excel
+                    </Button>
                   </div>
 
                   <div className="rounded-md border">

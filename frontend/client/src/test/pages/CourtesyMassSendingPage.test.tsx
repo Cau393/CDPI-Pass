@@ -2,7 +2,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+vi.mock("wouter", () => ({
+  useSearch: () => "",
+  useLocation: () => ["/cortesia-envio-em-massa", () => {}],
+}));
+
+vi.mock("../../lib/exportMassSendExcel", () => ({
+  exportMassSendToXlsx: vi.fn(),
+}));
+
 import CourtesyMassSendingPage from "../../pages/CourtesyMassSendingPage";
+import { exportMassSendToXlsx } from "../../lib/exportMassSendExcel";
+
+const mockedExportMassSend = vi.mocked(exportMassSendToXlsx);
 
 const MOCK_EVENTS = [
   {
@@ -98,11 +111,6 @@ function Wrapper({ children }: { children: React.ReactNode }) {
   const qc = createQueryClient();
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
 }
-
-vi.mock("wouter", () => ({
-  useSearch: () => "",
-  useLocation: () => ["/cortesia-envio-em-massa", () => {}],
-}));
 
 beforeEach(() => {
   localStorage.setItem("token", "fake-token");
@@ -220,5 +228,83 @@ describe("CourtesyMassSendingPage (T-06+)", () => {
     await waitFor(() => {
       expect(screen.getByText("Caue")).toBeInTheDocument();
     });
+  });
+
+  it("does not show Exportar para Excel before selecting an event on Visualizar", async () => {
+    const user = userEvent.setup();
+    render(<CourtesyMassSendingPage />, { wrapper: Wrapper });
+    await user.click(screen.getByRole("tab", { name: "Visualizar" }));
+    expect(screen.queryByTestId("mass-send-export-excel")).toBeNull();
+  });
+
+  it("shows Exportar para Excel after selecting an event on Visualizar", async () => {
+    const user = userEvent.setup();
+    render(<CourtesyMassSendingPage />, { wrapper: Wrapper });
+    await user.click(screen.getByRole("tab", { name: "Visualizar" }));
+
+    const combobox = await screen.findByRole("combobox");
+    await user.click(combobox);
+    const option = await screen.findByText("Evento Massa", { exact: false });
+    await user.click(option);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mass-send-export-excel")).toBeInTheDocument();
+    });
+  });
+
+  it("hides Exportar para Excel on redeemers detail view and shows again after Voltar", async () => {
+    const user = userEvent.setup();
+    render(<CourtesyMassSendingPage />, { wrapper: Wrapper });
+    await user.click(screen.getByRole("tab", { name: "Visualizar" }));
+
+    const combobox = await screen.findByRole("combobox");
+    await user.click(combobox);
+    const option = await screen.findByText("Evento Massa", { exact: false });
+    await user.click(option);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mass-send-export-excel")).toBeInTheDocument();
+    });
+
+    const caueCell = screen.getByText("Caue");
+    const tr = caueCell.closest("tr");
+    expect(tr).toBeTruthy();
+    await user.click(tr!);
+
+    await waitFor(() => {
+      expect(screen.getByText("Maria")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("mass-send-export-excel")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /voltar/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mass-send-export-excel")).toBeInTheDocument();
+    });
+  });
+
+  it("calls exportMassSendToXlsx with fetched recipients when clicking Exportar para Excel", async () => {
+    const user = userEvent.setup();
+    render(<CourtesyMassSendingPage />, { wrapper: Wrapper });
+    await user.click(screen.getByRole("tab", { name: "Visualizar" }));
+
+    const combobox = await screen.findByRole("combobox");
+    await user.click(combobox);
+    const option = await screen.findByText("Evento Massa", { exact: false });
+    await user.click(option);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mass-send-export-excel")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("mass-send-export-excel"));
+
+    await waitFor(() => {
+      expect(mockedExportMassSend).toHaveBeenCalledTimes(1);
+    });
+    expect(mockedExportMassSend).toHaveBeenCalledWith(
+      MOCK_RECIPIENTS.data,
+      "Evento Massa",
+    );
   });
 });
