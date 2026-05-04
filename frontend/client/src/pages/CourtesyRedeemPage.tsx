@@ -7,11 +7,11 @@ import { z } from "zod";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Ticket, CheckCircle, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
+import { COURTESY_CODE_PARAM_REGEX } from "@/lib/authRedirect";
 import {
   Form,
   FormControl,
@@ -79,30 +79,29 @@ export default function CourtesyRedeemPage() {
     }
   }, [user, form]);
 
-  // Redirect to login if not authenticated
+  // Redirect to login with same post-auth pattern as promo (?next=)
   useEffect(() => {
     if (!authLoading && !isAuthenticated && code) {
       toast({
         title: "Login necessário",
-        description: "Faça login para resgatar sua cortesia",
+        description: "Faça login ou cadastre-se para continuar o resgate.",
         variant: "destructive",
       });
-      // Store the courtesy code in localStorage to return after login
-      localStorage.setItem("courtesyCode", code);
-      setLocation("/login");
+      const nextPath = `/cortesia?code=${encodeURIComponent(code)}`;
+      setLocation(`/login?next=${encodeURIComponent(nextPath)}`);
     }
   }, [authLoading, isAuthenticated, code, setLocation, toast]);
 
-  // Check for stored courtesy code after login
+  // One-time migration: old flow used localStorage("courtesyCode")
   useEffect(() => {
-    if (isAuthenticated && !code) {
-      const storedCode = localStorage.getItem("courtesyCode");
-      if (storedCode) {
-        localStorage.removeItem("courtesyCode");
-        setLocation(`/cortesia?code=${storedCode}`);
-      }
+    if (authLoading || !isAuthenticated || code) return;
+    const storedCode = localStorage.getItem("courtesyCode");
+    if (!storedCode) return;
+    localStorage.removeItem("courtesyCode");
+    if (COURTESY_CODE_PARAM_REGEX.test(storedCode)) {
+      setLocation(`/cortesia?code=${encodeURIComponent(storedCode)}`);
     }
-  }, [isAuthenticated, code, setLocation]);
+  }, [authLoading, isAuthenticated, code, setLocation]);
 
   // Fetch courtesy link details
   const { data: linkData, isLoading: linkLoading, error: linkError } = useQuery({
