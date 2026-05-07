@@ -47278,6 +47278,51 @@ async function registerRoutes(app2) {
       }
     }
   );
+  app2.patch(
+    "/api/admin/events/:eventId/mass-send-recipients",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({
+            success: false,
+            message: "Acesso negado. Apenas administradores."
+          });
+        }
+        const parsed = z2.string().uuid().safeParse(req.params.eventId);
+        if (!parsed.success) {
+          return res.status(400).json({ success: false, message: "eventId inv\xE1lido" });
+        }
+        const eventId = parsed.data;
+        const bodyParsed = z2.object({ isActive: z2.boolean() }).safeParse(req.body);
+        if (!bodyParsed.success) {
+          return res.status(400).json({
+            success: false,
+            message: "Body inv\xE1lido: informe { isActive: boolean }"
+          });
+        }
+        const massSendWhere = and2(
+          eq2(courtesyLinks.eventId, eventId),
+          isNotNull(courtesyLinks.recipientEmail),
+          isNotNull(courtesyLinks.recipientName)
+        );
+        const updatedRows = await db.update(courtesyLinks).set({
+          isActive: bodyParsed.data.isActive,
+          updatedAt: /* @__PURE__ */ new Date()
+        }).where(massSendWhere).returning({ id: courtesyLinks.id });
+        return res.json({ updated: updatedRows.length });
+      } catch (error) {
+        console.error(
+          "PATCH /api/admin/events/:eventId/mass-send-recipients:",
+          error
+        );
+        return res.status(500).json({
+          success: false,
+          message: "Erro interno ao atualizar envios de cortesia"
+        });
+      }
+    }
+  );
   app2.get(
     "/api/admin/courtesy-links/:linkId/redemptions",
     authenticateToken,
@@ -47547,16 +47592,39 @@ async function registerRoutes(app2) {
       if (!idParsed.success) {
         return res.status(400).json({ error: "id inv\xE1lido" });
       }
-      const bodyParsed = z2.object({ ticketCount: z2.coerce.number() }).safeParse(req.body);
+      const id = idParsed.data;
+      const bodyParsed = z2.object({
+        ticketCount: z2.coerce.number().optional(),
+        isActive: z2.boolean().optional()
+      }).strict().safeParse(req.body);
       if (!bodyParsed.success) {
-        return res.status(400).json({ error: "Payload inv\xE1lido: informe ticketCount" });
+        return res.status(400).json({ error: "Payload inv\xE1lido" });
       }
-      const ticketCount = bodyParsed.data.ticketCount;
-      if (!Number.isInteger(ticketCount)) {
+      const ticketCountRaw = bodyParsed.data.ticketCount;
+      const isActive = bodyParsed.data.isActive;
+      if (ticketCountRaw === void 0 && isActive === void 0) {
+        return res.status(400).json({
+          error: "Informe ao menos ticketCount ou isActive"
+        });
+      }
+      if (ticketCountRaw !== void 0 && !Number.isInteger(ticketCountRaw)) {
         return res.status(400).json({ error: "Informe um limite inteiro v\xE1lido." });
       }
       try {
-        const updated = await storage.updateCourtesyLinkTicketCount(idParsed.data, ticketCount);
+        let updated;
+        if (ticketCountRaw !== void 0) {
+          updated = await storage.updateCourtesyLinkTicketCount(id, ticketCountRaw);
+        }
+        if (isActive !== void 0) {
+          const withActive = await storage.updateCourtesyLink(id, { isActive });
+          if (!withActive) {
+            return res.status(404).json({ error: "Link de cortesia n\xE3o encontrado" });
+          }
+          updated = withActive;
+        }
+        if (!updated) {
+          return res.status(404).json({ error: "Link de cortesia n\xE3o encontrado" });
+        }
         res.json({
           link: {
             id: updated.id,

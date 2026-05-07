@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import EventSelector from "@/components/admin/EventSelector";
+import { CourtesyLinkActiveToggleButton } from "@/components/admin/CourtesyLinkActiveToggleButton";
 import CourtesyLinkRedemptionsTable from "@/components/admin/CourtesyLinkRedemptionsTable";
 import { exportMassSendToXlsx } from "@/lib/exportMassSendExcel";
 import type { Event } from "@shared/schema";
@@ -98,6 +99,32 @@ export default function CourtesyMassSendingPage() {
       toast({
         title: "Erro ao enviar e-mails",
         description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const bulkSetMassSendActiveMutation = useMutation({
+    mutationFn: async (isActive: boolean) => {
+      if (!selectedEvent?.id) throw new Error("no event");
+      const res = await apiRequest(
+        "PATCH",
+        `/api/admin/events/${selectedEvent.id}/mass-send-recipients`,
+        { isActive },
+      );
+      return res.json() as Promise<{ updated: number }>;
+    },
+    onSuccess: async (body, isActive) => {
+      toast({
+        title: isActive ? "Cortesias ativadas" : "Cortesias desativadas",
+        description: `${body.updated} link(s) atualizado(s).`,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["mass-send-recipients"] });
+    },
+    onError: (error: Error, isActive) => {
+      toast({
+        title: isActive ? "Erro ao ativar" : "Erro ao desativar",
+        description: parseApiErrorMessage(error),
         variant: "destructive",
       });
     },
@@ -326,7 +353,7 @@ export default function CourtesyMassSendingPage() {
 
               {selectedEvent && view === "list" && (
                 <>
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                     <div className="max-w-md flex-1 space-y-2">
                       <Label htmlFor="ms-search" className="mb-1 block">
                         Buscar por nome ou e-mail
@@ -339,18 +366,48 @@ export default function CourtesyMassSendingPage() {
                         className="w-full"
                       />
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="w-fit shrink-0"
-                      disabled={recipientsLoading || exportingExcel}
-                      onClick={() => void handleExportExcel()}
-                      data-testid="mass-send-export-excel"
-                    >
-                      <FileSpreadsheet className="mr-2 h-4 w-4" />
-                      Exportar para Excel
-                    </Button>
+                    <div className="flex flex-wrap gap-2 shrink-0">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="w-fit"
+                        disabled={
+                          recipientsLoading ||
+                          bulkSetMassSendActiveMutation.isPending ||
+                          (recipientsRes?.total ?? 0) === 0
+                        }
+                        onClick={() => bulkSetMassSendActiveMutation.mutate(true)}
+                      >
+                        Ativar todos
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="w-fit"
+                        disabled={
+                          recipientsLoading ||
+                          bulkSetMassSendActiveMutation.isPending ||
+                          (recipientsRes?.total ?? 0) === 0
+                        }
+                        onClick={() => bulkSetMassSendActiveMutation.mutate(false)}
+                      >
+                        Desativar todos
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="w-fit shrink-0"
+                        disabled={recipientsLoading || exportingExcel}
+                        onClick={() => void handleExportExcel()}
+                        data-testid="mass-send-export-excel"
+                      >
+                        <FileSpreadsheet className="mr-2 h-4 w-4" />
+                        Exportar para Excel
+                      </Button>
+                    </div>
                   </div>
 
                   <div className="rounded-md border">
@@ -364,13 +421,16 @@ export default function CourtesyMassSendingPage() {
                           <TableHead>Utilizadas</TableHead>
                           <TableHead>Restantes</TableHead>
                           <TableHead>Status</TableHead>
+                          <TableHead className="w-[1%] whitespace-nowrap">
+                            Ações
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {recipientsLoading ? (
                           Array.from({ length: 4 }).map((_, i) => (
                             <TableRow key={i}>
-                              {Array.from({ length: 7 }).map((__, j) => (
+                              {Array.from({ length: 8 }).map((__, j) => (
                                 <TableCell key={j}>
                                   <Skeleton className="h-4 w-full" />
                                 </TableCell>
@@ -380,7 +440,7 @@ export default function CourtesyMassSendingPage() {
                         ) : rows.length === 0 && !recipientsError ? (
                           <TableRow>
                             <TableCell
-                              colSpan={7}
+                              colSpan={8}
                               className="h-24 text-center text-muted-foreground"
                             >
                               Nenhum envio encontrado para este evento.
@@ -425,6 +485,21 @@ export default function CourtesyMassSendingPage() {
                                     Inativo
                                   </Badge>
                                 )}
+                              </TableCell>
+                              <TableCell
+                                className="text-right"
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => e.stopPropagation()}
+                              >
+                                <CourtesyLinkActiveToggleButton
+                                  linkId={r.id}
+                                  isActive={r.isActive}
+                                  onSuccess={() => {
+                                    void queryClient.invalidateQueries({
+                                      queryKey: ["mass-send-recipients"],
+                                    });
+                                  }}
+                                />
                               </TableCell>
                             </TableRow>
                           ))

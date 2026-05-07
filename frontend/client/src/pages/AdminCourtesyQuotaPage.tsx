@@ -26,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { parseApiErrorMessage } from "@/lib/eventForm";
+import { CourtesyLinkActiveToggleButton } from "@/components/admin/CourtesyLinkActiveToggleButton";
 
 interface CourtesyLinkSummary {
   id: string;
@@ -306,6 +307,26 @@ export default function AdminCourtesyQuotaPage() {
                 {data.link.isActive === false && (
                   <Badge variant="secondary">Inativo</Badge>
                 )}
+                <CourtesyLinkActiveToggleButton
+                  linkId={data.link.id}
+                  isActive={data.link.isActive ?? true}
+                  className="w-full sm:ml-auto sm:w-auto"
+                  onSuccess={(next) => {
+                    queryClient.setQueryData<LookupResponse>(
+                      ["/api/admin/courtesy-links/by-code", submittedCode],
+                      (prev) =>
+                        prev
+                          ? { ...prev, link: { ...prev.link, isActive: next } }
+                          : prev,
+                    );
+                    void queryClient.invalidateQueries({
+                      queryKey: ["/api/courtesy-links"],
+                    });
+                    void queryClient.invalidateQueries({
+                      queryKey: ["courtesy-link-redemptions", data.link.id],
+                    });
+                  }}
+                />
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">

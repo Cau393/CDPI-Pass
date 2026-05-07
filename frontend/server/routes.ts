@@ -979,6 +979,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
+  app.patch(
+    "/api/admin/events/:eventId/mass-send-recipients",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({
+            success: false,
+            message: "Acesso negado. Apenas administradores.",
+          });
+        }
+        const parsed = z.string().uuid().safeParse(req.params.eventId);
+        if (!parsed.success) {
+          return res
+            .status(400)
+            .json({ success: false, message: "eventId inválido" });
+        }
+        const eventId = parsed.data;
+        const bodyParsed = z
+          .object({ isActive: z.boolean() })
+          .safeParse(req.body);
+        if (!bodyParsed.success) {
+          return res.status(400).json({
+            success: false,
+            message: "Body inválido: informe { isActive: boolean }",
+          });
+        }
+        const massSendWhere = and(
+          eq(courtesyLinks.eventId, eventId),
+          isNotNull(courtesyLinks.recipientEmail),
+          isNotNull(courtesyLinks.recipientName),
+        );
+        const updatedRows = await db
+          .update(courtesyLinks)
+          .set({
+            isActive: bodyParsed.data.isActive,
+            updatedAt: new Date(),
+          })
+          .where(massSendWhere!)
+          .returning({ id: courtesyLinks.id });
+        return res.json({ updated: updatedRows.length });
+      } catch (error) {
+        console.error(
+          "PATCH /api/admin/events/:eventId/mass-send-recipients:",
+          error,
+        );
+        return res.status(500).json({
+          success: false,
+          message: "Erro interno ao atualizar envios de cortesia",
+        });
+      }
+    },
+  );
+
   app.get(
     "/api/admin/courtesy-links/:linkId/redemptions",
     authenticateToken,
@@ -1301,20 +1355,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!idParsed.success) {
         return res.status(400).json({ error: "id inválido" });
       }
+      const id = idParsed.data;
 
       const bodyParsed = z
-        .object({ ticketCount: z.coerce.number() })
+        .object({
+          ticketCount: z.coerce.number().optional(),
+          isActive: z.boolean().optional(),
+        })
+        .strict()
         .safeParse(req.body);
       if (!bodyParsed.success) {
-        return res.status(400).json({ error: "Payload inválido: informe ticketCount" });
+        return res.status(400).json({ error: "Payload inválido" });
       }
-      const ticketCount = bodyParsed.data.ticketCount;
-      if (!Number.isInteger(ticketCount)) {
+
+      const ticketCountRaw = bodyParsed.data.ticketCount;
+      const isActive = bodyParsed.data.isActive;
+
+      if (ticketCountRaw === undefined && isActive === undefined) {
+        return res.status(400).json({
+          error: "Informe ao menos ticketCount ou isActive",
+        });
+      }
+
+      if (ticketCountRaw !== undefined && !Number.isInteger(ticketCountRaw)) {
         return res.status(400).json({ error: "Informe um limite inteiro válido." });
       }
 
       try {
-        const updated = await storage.updateCourtesyLinkTicketCount(idParsed.data, ticketCount);
+        let updated:
+          | Awaited<ReturnType<typeof storage.updateCourtesyLinkTicketCount>>
+          | NonNullable<Awaited<ReturnType<typeof storage.updateCourtesyLink>>>
+          | undefined;
+
+        if (ticketCountRaw !== undefined) {
+          updated = await storage.updateCourtesyLinkTicketCount(id, ticketCountRaw);
+        }
+        if (isActive !== undefined) {
+          const withActive = await storage.updateCourtesyLink(id, { isActive });
+          if (!withActive) {
+            return res.status(404).json({ error: "Link de cortesia não encontrado" });
+          }
+          updated = withActive;
+        }
+
+        if (!updated) {
+          return res.status(404).json({ error: "Link de cortesia não encontrado" });
+        }
+
         res.json({
           link: {
             id: updated.id,
