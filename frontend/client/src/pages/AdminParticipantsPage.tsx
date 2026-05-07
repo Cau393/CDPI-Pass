@@ -44,9 +44,12 @@ interface Participant {
   phone: string;
   ticketId: string;
   orderStatus: "paid" | "courtesy" | "cancelled";
+  occupation: string | null;
+  partnerCompany: string | null;
   amntUsed: number;
   maxUses: number;
   checkedIn: boolean;
+  qrCodeUsed: boolean;
   checkedInAt: string | null;
 }
 
@@ -155,6 +158,7 @@ export default function AdminParticipantsPage() {
                   ? {
                       ...row,
                       checkedIn: true,
+                      qrCodeUsed: true,
                       checkedInAt: at,
                       ...(maxU !== undefined ? { maxUses: maxU } : {}),
                       ...(used !== undefined ? { amntUsed: used } : {}),
@@ -197,6 +201,7 @@ export default function AdminParticipantsPage() {
                 ? {
                     ...row,
                     checkedIn,
+                    qrCodeUsed: true,
                     checkedInAt,
                     ...(amntUsed !== undefined ? { amntUsed } : {}),
                     ...(maxUses !== undefined ? { maxUses } : {}),
@@ -244,7 +249,12 @@ export default function AdminParticipantsPage() {
         );
       }
       const data = body.data as
-        | { checkedIn: boolean; amntUsed: number; maxUses: number }
+        | {
+            checkedIn: boolean;
+            amntUsed: number;
+            maxUses: number;
+            qrCodeUsed?: boolean;
+          }
         | undefined;
       if (!data) {
         await queryClient.invalidateQueries({
@@ -264,6 +274,10 @@ export default function AdminParticipantsPage() {
                       amntUsed: data.amntUsed,
                       maxUses: data.maxUses,
                       checkedIn: data.checkedIn,
+                      qrCodeUsed:
+                        typeof data.qrCodeUsed === "boolean"
+                          ? data.qrCodeUsed
+                          : data.checkedIn,
                       checkedInAt: data.checkedIn ? row.checkedInAt : null,
                     }
                   : row,
@@ -343,6 +357,13 @@ export default function AdminParticipantsPage() {
           cpf: p.cpf,
           email: p.email,
           phone: p.phone,
+          cargoQueOcupa:
+            p.orderStatus === "paid" ? "" : (p.occupation ?? ""),
+          empresaQueTrabalha:
+            p.orderStatus === "paid" ? "" : (p.partnerCompany ?? ""),
+          presenca: p.qrCodeUsed
+            ? "Presente"
+            : "Não confirmou presença",
           orderStatus: p.orderStatus,
         })),
         selectedEvent.title,

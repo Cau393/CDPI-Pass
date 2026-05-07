@@ -5,10 +5,22 @@ export type ParticipantExportRow = {
   cpf: string;
   email: string;
   phone: string;
+  cargoQueOcupa: string;
+  empresaQueTrabalha: string;
+  presenca: string;
   orderStatus: "paid" | "courtesy" | "cancelled";
 };
 
-const HEADERS = ["Nome", "CPF", "E-mail", "Telefone", "Status"] as const;
+const HEADERS = [
+  "Nome",
+  "CPF",
+  "E-mail",
+  "Telefone",
+  "Cargo que ocupa",
+  "Empresa que trabalha",
+  "Presença",
+  "Status",
+] as const;
 
 /** Rótulos de Status para Excel: apenas pagamento e cortesia (demais ficam em branco). */
 export function statusLabelForExcel(
@@ -28,6 +40,9 @@ export function buildParticipantSheetRows(
     CPF: p.cpf,
     "E-mail": p.email,
     Telefone: p.phone,
+    "Cargo que ocupa": p.cargoQueOcupa,
+    "Empresa que trabalha": p.empresaQueTrabalha,
+    Presença: p.presenca,
     Status: statusLabelForExcel(p.orderStatus),
   }));
 }

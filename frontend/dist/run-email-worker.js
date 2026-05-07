@@ -124,7 +124,7 @@ var orders = pgTable("orders", {
   courtesyAttendeeId: varchar("courtesy_attendee_id").references(() => courtesyAttendees.id),
   cpf: varchar("cpf", { length: 14 }).notNull(),
   status: varchar("status", { length: 50 }).notNull().default("pending"),
-  // pending, paid, cancelled, courtesy
+  // pending, paid, cancelled
   paymentMethod: varchar("payment_method", { length: 50 }).notNull(),
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
   asaasPaymentId: varchar("asaas_payment_id", { length: 255 }),
@@ -346,7 +346,7 @@ var pool = new Pool({ connectionString: process.env.DATABASE_URL });
 var db = drizzle({ client: pool, schema: schema_exports });
 
 // server/storage.ts
-import { eq, desc, sql as sql2, asc, count, and } from "drizzle-orm";
+import { eq, ne, desc, sql as sql2, asc, count, and } from "drizzle-orm";
 
 // server/services/s3Service.ts
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -630,7 +630,8 @@ var DatabaseStorage = class {
     const existingOrder = await db.select().from(orders).where(
       and(
         eq(orders.cpf, cpf),
-        eq(orders.eventId, eventId)
+        eq(orders.eventId, eventId),
+        ne(orders.status, "cancelled")
       )
     ).limit(1);
     return existingOrder.length > 0;
@@ -718,7 +719,7 @@ var DatabaseStorage = class {
     if (order.status === "cancelled") {
       return { ok: false, code: "already_cancelled", order };
     }
-    if (order.status !== "pending" && order.status !== "paid" && order.status !== "courtesy") {
+    if (order.status !== "pending" && order.status !== "paid") {
       return { ok: false, code: "invalid_status", status: order.status };
     }
     if (order.qr_code_s3_url) {
@@ -943,6 +944,7 @@ if (process.env.SENDGRID_API_KEY) {
   mailService.setApiKey(process.env.SENDGRID_API_KEY);
 }
 var FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || "relacionamento.mkt@cdpipharma.com.br";
+var EVENT_TZ = "America/Sao_Paulo";
 function courtesyMessageHtmlToPlainText(html) {
   return html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n\n").replace(/<\/li>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 }
@@ -1002,6 +1004,7 @@ var EmailService = class {
   }
   async sendTicketEmail(email, data) {
     const eventDate = new Date(data.eventDate).toLocaleDateString("pt-BR", {
+      timeZone: EVENT_TZ,
       weekday: "long",
       year: "numeric",
       month: "long",
@@ -1423,6 +1426,7 @@ var EmailWorker = class {
         return ev;
       };
       const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
         day: "2-digit",
         month: "2-digit",
         year: "numeric"

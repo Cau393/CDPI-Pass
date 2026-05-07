@@ -848,6 +848,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           paymentMethod: orders.paymentMethod,
           courtesyLinkId: orders.courtesyLinkId,
           courtesyAttendeeId: orders.courtesyAttendeeId,
+          occupation: courtesyAttendees.occupation,
+          partnerCompany: courtesyAttendees.partnerCompany,
           amntUsed: orders.amntUsed,
           maxUses: orders.maxUses,
           qrCodeUsed: orders.qrCodeUsed,
@@ -855,6 +857,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
         .from(orders)
         .innerJoin(users, eq(orders.userId, users.id))
+        .leftJoin(
+          courtesyAttendees,
+          eq(orders.courtesyAttendeeId, courtesyAttendees.id),
+        )
         .where(
           and(
             eq(orders.eventId, eventId),
@@ -879,9 +885,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           phone: r.phone,
           ticketId: r.ticketId,
           orderStatus,
+          occupation: r.occupation ?? null,
+          partnerCompany: r.partnerCompany ?? null,
           amntUsed: used,
           maxUses: maxU,
           checkedIn: used > 0,
+          qrCodeUsed: Boolean(r.qrCodeUsed),
           checkedInAt: r.qrCodeUsedAt
             ? r.qrCodeUsedAt instanceof Date
               ? r.qrCodeUsedAt.toISOString()
@@ -1553,6 +1562,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           checkedIn: amntUsed > 0,
           amntUsed,
           maxUses,
+          qrCodeUsed: Boolean(updated.qrCodeUsed),
         },
       });
     } catch (error: unknown) {
