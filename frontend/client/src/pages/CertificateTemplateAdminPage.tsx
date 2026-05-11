@@ -16,6 +16,15 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { Link } from "wouter";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 import type { Event } from "@shared/schema";
 
 function normalizeForSearch(s: string): string {
@@ -33,7 +42,11 @@ function eventMatchesQuery(title: string, query: string): boolean {
   return tokens.every((t) => nt.includes(t));
 }
 
-export default function CertificateTemplateAdminPage() {
+export default function CertificateTemplateAdminPage({
+  embeddedInHub = false,
+}: {
+  embeddedInHub?: boolean;
+} = {}) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -79,7 +92,7 @@ export default function CertificateTemplateAdminPage() {
     try {
       const res = await apiRequest(
         "POST",
-        `/api/events/${selected.id}/certificate-template`,
+        `/api/admin/events/${selected.id}/certificate-template`,
         fd,
       );
       const data = (await res.json()) as { event: Event };
@@ -101,7 +114,26 @@ export default function CertificateTemplateAdminPage() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8">
+    <div
+      className={
+        embeddedInHub ? "mx-auto max-w-2xl px-0 py-2" : "mx-auto max-w-2xl px-4 py-8"
+      }
+    >
+      {!embeddedInHub && (
+        <Breadcrumb className="mb-6">
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink asChild>
+                <Link href="/admin/events?tab=list">Eventos</Link>
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage>Template certificado</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
+      )}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

@@ -28,6 +28,9 @@ function courtesyMessageHtmlToPlainText(html: string): string {
     .trim();
 }
 
+/** Outer HTML shell for courtesy transactional mail: invite (mass-send) vs pending-redemption reminder. */
+export type CourtesyMassEmailLayout = "courtesy_invite" | "courtesy_reminder";
+
 interface TicketEmailData {
   userName: string;
   eventTitle: string;
@@ -46,6 +49,11 @@ class EmailService {
     text?: string,
     attachments?: Array<{ filename: string; content: string; type: string }>
   ): Promise<boolean> {
+    if (!to?.trim?.()) {
+      console.warn("EmailService.sendEmail: skipped — missing or empty recipient (to)");
+      return false;
+    }
+
     if (!process.env.SENDGRID_API_KEY) {
       console.log("SendGrid not configured, queuing email:", { to, subject });
       await storage.addEmailToQueue({
@@ -293,6 +301,8 @@ class EmailService {
    * Sends the standard courtesy mass email layout. Header, CTA, notice box, and footer are fixed.
    * @param customMessageBoxHtml - If set (already-interpolated HTML), replaces only the dynamic paragraphs
    * inside `.message-box` before the static "Para resgatar..." line. Use placeholders resolved upstream.
+   * @param layout - Invite (default) vs reminder: only the header `<h1>` title changes.
+   * @param renderedSubject - Optional fully rendered subject (plain text). When empty/omitted, uses default "Sua cortesia para o evento …".
    */
   async sendCourtesyMassEmail(
     email: string,
@@ -302,9 +312,19 @@ class EmailService {
     eventDate: Date,
     attachments?: Array<{ filename: string; content: string; type: string }>,
     customMessageBoxHtml?: string,
+    layout: CourtesyMassEmailLayout = "courtesy_invite",
+    renderedSubject?: string | null,
   ): Promise<boolean> {
     const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${courtesyCode}`;
-    const subject = `Sua cortesia para o evento ${eventName}`;
+    const defaultSubject = `Sua cortesia para o evento ${eventName}`;
+    const subject =
+      renderedSubject != null && String(renderedSubject).trim() !== ""
+        ? String(renderedSubject).trim()
+        : defaultSubject;
+    const headerHeading =
+      layout === "courtesy_reminder"
+        ? "Lembrete para Resgate de Cortesia!"
+        : "🎁 Você Recebeu uma Cortesia!";
 
     const defaultMessageInner = `
               <p style="font-size: 18px;">Olá, <strong>${name}</strong>!</p>
@@ -354,7 +374,7 @@ class EmailService {
       <body>
         <div class="container">
           <div class="header">
-            <h1>🎁 Você Recebeu uma Cortesia!</h1>
+            <h1>${headerHeading}</h1>
             <h2>CDPI Pass</h2>
           </div>
           <div class="content">

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Search } from "lucide-react";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -21,10 +21,16 @@ import {
 } from "@/components/ui/table";
 import type { Event } from "@shared/schema";
 import { eventDescriptionPlainText } from "@/lib/eventDescriptionHtml";
+import { useToast } from "@/hooks/use-toast";
 
 const PAGE_SIZE = 10;
 
-export default function AdminEventsListPage() {
+export default function AdminEventsListPage({
+  variant = "standalone",
+}: {
+  variant?: "standalone" | "hub";
+} = {}) {
+  const { toast } = useToast();
   const [page, setPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState("");
 
@@ -85,7 +91,7 @@ export default function AdminEventsListPage() {
   if (isLoading) {
     tableBodyRows = (
       <TableRow>
-        <TableCell colSpan={3} className="text-muted-foreground">
+        <TableCell colSpan={4} className="text-muted-foreground">
           Carregando...
         </TableCell>
       </TableRow>
@@ -93,7 +99,7 @@ export default function AdminEventsListPage() {
   } else if (emptyMessage) {
     tableBodyRows = (
       <TableRow>
-        <TableCell colSpan={3} className="text-muted-foreground">
+        <TableCell colSpan={4} className="text-muted-foreground">
           {emptyMessage}
         </TableCell>
       </TableRow>
@@ -112,23 +118,56 @@ export default function AdminEventsListPage() {
         </TableCell>
         <TableCell className="hidden tabular-nums sm:table-cell">{formatRowDate(ev)}</TableCell>
         <TableCell className="hidden max-w-[220px] truncate md:table-cell">{ev.location}</TableCell>
+        <TableCell className="hidden w-[52px] p-1 md:table-cell">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+            aria-label={`Copiar event_id (${ev.title})`}
+            title="Copiar UUID do evento (event_id)"
+            data-testid={`copy-event-id-${ev.id}`}
+            onClick={(e) => {
+              e.preventDefault();
+              void navigator.clipboard.writeText(ev.id);
+              toast({
+                title: "Copiado",
+                description: "O event_id foi copiado para a área de transferência.",
+              });
+            }}
+          >
+            <Copy className="h-4 w-4" />
+          </Button>
+        </TableCell>
       </TableRow>
     ));
   }
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbPage>Eventos</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
+    <div
+      className={
+        variant === "hub"
+          ? "mx-auto flex max-w-5xl flex-col gap-6 p-0"
+          : "mx-auto flex max-w-5xl flex-col gap-6 p-6"
+      }
+    >
+      {variant === "standalone" ? (
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbPage>Eventos</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
+      ) : null}
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Eventos</h1>
+          {variant === "hub" ? (
+            <h2 className="text-xl font-bold tracking-tight">Lista de eventos</h2>
+          ) : (
+            <h1 className="text-2xl font-bold tracking-tight">Eventos</h1>
+          )}
           <p className="text-sm text-muted-foreground">
             Gerencie eventos cadastrados ({allEvents.length} total).
             {searchTerm.trim() && !isLoading
@@ -137,7 +176,7 @@ export default function AdminEventsListPage() {
           </p>
         </div>
         <Button asChild>
-          <Link href="/admin/events/new">Novo evento</Link>
+          <Link href="/admin/events?tab=novo">Novo evento</Link>
         </Button>
       </div>
 
@@ -164,6 +203,7 @@ export default function AdminEventsListPage() {
               <TableHead>Título</TableHead>
               <TableHead className="hidden sm:table-cell">Data</TableHead>
               <TableHead className="hidden md:table-cell">Local</TableHead>
+              <TableHead className="hidden w-[52px] md:table-cell" aria-hidden />
             </TableRow>
           </TableHeader>
           <TableBody>{tableBodyRows}</TableBody>

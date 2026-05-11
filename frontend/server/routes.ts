@@ -38,6 +38,7 @@ import {
 import { validateCpf, validateEmail, formatCpf, formatPhone } from "./utils/validation";
 import { parseBrazilEventLocalDateTime } from "./utils/eventDateTime";
 import { sanitizeCourtesyTemplateHtml } from "./utils/courtesyTemplateSanitize";
+import { validateEmailSubjectTemplateInput } from "./utils/emailSubjectTemplate";
 import { mapCommercialSales } from "./utils/commercialSalesMapper";
 import {
   buildMassSendRecipientIlikePattern,
@@ -616,7 +617,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const eventId = parsedId.data;
 
-      const body = req.body as { template?: unknown };
+      const body = req.body as { template?: unknown; subject?: unknown };
       if (typeof body.template !== "string") {
         return res.status(400).json({ error: "template must be a string" });
       }
@@ -635,7 +636,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         trimmed === "" || trimmed === "<p></p>" || sanitized.replace(/\s/g, "") === "<p></p>";
       const toStore: string | null = isEmpty ? null : sanitized;
 
-      const updated = await storage.updateEvent(eventId, { courtesyTemplate: toStore });
+      const updates: Partial<Event> = { courtesyTemplate: toStore };
+
+      if (Object.prototype.hasOwnProperty.call(body, "subject")) {
+        const sub = validateEmailSubjectTemplateInput(body.subject);
+        if (!sub.ok) {
+          return res.status(400).json({ error: sub.error });
+        }
+        updates.courtesyEmailSubject = sub.value === "" ? null : sub.value;
+      }
+
+      const updated = await storage.updateEvent(eventId, updates);
       if (!updated) {
         return res.status(404).json({ error: "Event not found" });
       }
@@ -650,6 +661,151 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(500).json({ error: "Failed to save template" });
     }
   });
+
+  // ── Reminder template routes ────────────────────────────────────────────
+
+  app.get("/api/admin/events/:eventId/reminder-template", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsedId = z.string().uuid().safeParse(req.params.eventId);
+      if (!parsedId.success) {
+        return res.status(400).json({ error: "Invalid event id" });
+      }
+      const row = await storage.getReminderTemplate(parsedId.data);
+      return res.status(200).json({
+        body: row?.body ?? "",
+        subject: row?.subject ?? "",
+      });
+    } catch (error) {
+      console.error("GET /api/admin/events/:eventId/reminder-template:", error);
+      return res.status(500).json({ error: "Failed to fetch reminder template" });
+    }
+  });
+
+  app.patch("/api/admin/events/:eventId/reminder-template", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsedId = z.string().uuid().safeParse(req.params.eventId);
+      if (!parsedId.success) {
+        return res.status(400).json({ error: "Invalid event id" });
+      }
+      const eventId = parsedId.data;
+
+      const reqBody = req.body as { body?: unknown; subject?: unknown };
+      const { body, subject } = reqBody;
+      if (typeof body !== "string") {
+        return res.status(400).json({ error: "body must be a string" });
+      }
+      if (body.length > 50_000) {
+        return res.status(400).json({ error: "body exceeds maximum length" });
+      }
+
+      const event = await storage.getEvent(eventId);
+      if (!event) {
+        return res.status(404).json({ error: "Event not found" });
+      }
+
+      let subjectToPersist: string | undefined;
+      if (Object.prototype.hasOwnProperty.call(reqBody, "subject")) {
+        const sub = validateEmailSubjectTemplateInput(subject);
+        if (!sub.ok) {
+          return res.status(400).json({ error: sub.error });
+        }
+        subjectToPersist = sub.value;
+      }
+
+      const sanitized = sanitizeCourtesyTemplateHtml(body);
+      await storage.upsertReminderTemplate(eventId, sanitized, subjectToPersist);
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error("PATCH /api/admin/events/:eventId/reminder-template:", error);
+      return res.status(500).json({ error: "Failed to save reminder template" });
+    }
+  });
+
+  app.get(
+    "/api/admin/events/:eventId/courtesy-unredeemed-total",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+        }
+        const parsedId = z.string().uuid().safeParse(req.params.eventId);
+        if (!parsedId.success) {
+          return res.status(400).json({ error: "Invalid event id" });
+        }
+        const eventId = parsedId.data;
+        const event = await storage.getEvent(eventId);
+        if (!event) {
+          return res.status(404).json({ message: "Evento não encontrado." });
+        }
+        const totalRemainingSlots =
+          await storage.getCourtesyUnredeemedSlotTotalForEvent(eventId);
+        return res.status(200).json({ totalRemainingSlots });
+      } catch (error) {
+        console.error(
+          "GET /api/admin/events/:eventId/courtesy-unredeemed-total:",
+          error,
+        );
+        return res.status(500).json({ error: "Erro ao calcular cortesias não resgatadas." });
+      }
+    },
+  );
+
+  app.post(
+    "/api/admin/events/:eventId/reminder-send",
+    authenticateToken,
+    upload.fields([{ name: "attachment", maxCount: 1 }]),
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+        }
+        const parsedId = z.string().uuid().safeParse(req.params.eventId);
+        if (!parsedId.success) {
+          return res.status(400).json({ error: "Invalid event id" });
+        }
+        const eventId = parsedId.data;
+
+        const event = await storage.getEvent(eventId);
+        if (!event) {
+          return res.status(404).json({ message: "Evento não encontrado." });
+        }
+        if (!event.isActive) {
+          return res.status(422).json({ message: "Evento indisponível para envio." });
+        }
+
+        const attachmentFile = req.files?.attachment?.[0] ?? null;
+        const attachmentData = attachmentFile
+          ? JSON.stringify({
+              filename: attachmentFile.originalname,
+              content: attachmentFile.buffer.toString("base64"),
+              type: attachmentFile.mimetype,
+            })
+          : null;
+
+        await storage.addReminderJobToQueue({
+          eventId,
+          attachmentData,
+          createdBy: req.user.id,
+        });
+
+        return res.status(202).json({
+          message: "Lembretes enfileirados. Os e-mails serão enviados em breve.",
+        });
+      } catch (error) {
+        console.error("POST /api/admin/events/:eventId/reminder-send:", error);
+        return res.status(500).json({ error: "Erro ao enfileirar lembretes." });
+      }
+    },
+  );
+
+  // ── End reminder template routes ─────────────────────────────────────────
 
   app.patch(
     "/api/admin/events/:eventId",
@@ -1034,7 +1190,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
   app.get(
-    "/api/admin/courtesy-links/:linkId/redemptions",
+    "/api/admin/events/:eventId/courtesy-links/:linkId/redemptions",
     authenticateToken,
     async (req: any, res) => {
       try {
@@ -1044,12 +1200,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             message: "Acesso negado. Apenas administradores.",
           });
         }
+        const eventParsed = z.string().uuid().safeParse(req.params.eventId);
         const parsed = z.string().uuid().safeParse(req.params.linkId);
-        if (!parsed.success) {
+        if (!eventParsed.success || !parsed.success) {
           return res
             .status(400)
-            .json({ success: false, message: "linkId inválido" });
+            .json({ success: false, message: "eventId ou linkId inválido" });
         }
+        const eventIdRoute = eventParsed.data;
         const linkId = parsed.data;
 
         const [link] = await db
@@ -1058,6 +1216,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .where(eq(courtesyLinks.id, linkId));
 
         if (!link) {
+          return res.status(404).json({
+            success: false,
+            message: "Link de cortesia não encontrado",
+          });
+        }
+        if (link.eventId !== eventIdRoute) {
           return res.status(404).json({
             success: false,
             message: "Link de cortesia não encontrado",
@@ -1117,7 +1281,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           total: data.length,
         });
       } catch (error) {
-        console.error("GET /api/admin/courtesy-links/:linkId/redemptions:", error);
+        console.error(
+          "GET /api/admin/events/:eventId/courtesy-links/:linkId/redemptions:",
+          error,
+        );
         return res.status(500).json({
           success: false,
           message: "Erro interno ao carregar resgates",
@@ -1303,59 +1470,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get(
-    "/api/admin/courtesy-links/by-code/:code",
-    authenticateToken,
-    async (req: any, res) => {
-      try {
-        if (!req.user.isAdmin) {
-          return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
-        }
-        let raw = req.params.code ?? "";
-        try {
-          raw = decodeURIComponent(raw);
-        } catch {
-          return res.status(400).json({ error: "Código inválido" });
-        }
-        const code = raw.trim();
-        if (!code) {
-          return res.status(400).json({ error: "Código inválido" });
-        }
-
-        const link = await storage.getCourtesyLinkByCode(code);
-        if (!link) {
-          return res.status(404).json({ error: "Link de cortesia não encontrado" });
-        }
-
-        const event = await storage.getEvent(link.eventId);
-        res.json({
-          link: {
-            id: link.id,
-            code: link.code,
-            eventId: link.eventId,
-            ticketCount: link.ticketCount,
-            usedCount: link.usedCount ?? 0,
-            isActive: link.isActive,
-          },
-          eventTitle: event?.title ?? null,
-        });
-      } catch (error) {
-        console.error("GET /api/admin/courtesy-links/by-code/:code:", error);
-        res.status(500).json({ error: "Erro ao buscar link de cortesia" });
-      }
-    },
-  );
-
-  app.patch("/api/admin/courtesy-links/:id", authenticateToken, async (req: any, res) => {
+  /** Lookup by promo code — query `code` required (admins only). */
+  app.get("/api/admin/courtesy-links", authenticateToken, async (req: any, res) => {
     try {
       if (!req.user.isAdmin) {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
       }
-      const idParsed = z.string().uuid().safeParse(req.params.id);
-      if (!idParsed.success) {
-        return res.status(400).json({ error: "id inválido" });
+      let raw = typeof req.query.code === "string" ? req.query.code : "";
+      try {
+        raw = decodeURIComponent(raw.trim());
+      } catch {
+        return res.status(400).json({ error: "Código inválido" });
       }
-      const id = idParsed.data;
+      const code = raw.trim();
+      if (!code) {
+        return res.status(400).json({ error: "Informe o parâmetro code na query string" });
+      }
+
+      const link = await storage.getCourtesyLinkByCode(code);
+      if (!link) {
+        return res.status(404).json({ error: "Link de cortesia não encontrado" });
+      }
+
+      const event = await storage.getEvent(link.eventId);
+      res.json({
+        link: {
+          id: link.id,
+          code: link.code,
+          eventId: link.eventId,
+          ticketCount: link.ticketCount,
+          usedCount: link.usedCount ?? 0,
+          isActive: link.isActive,
+        },
+        eventTitle: event?.title ?? null,
+      });
+    } catch (error) {
+      console.error("GET /api/admin/courtesy-links:", error);
+      res.status(500).json({ error: "Erro ao buscar link de cortesia" });
+    }
+  });
+
+  app.patch(
+    "/api/admin/events/:eventId/courtesy-links/:linkId",
+    authenticateToken,
+    async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const eventIdParsed = z.string().uuid().safeParse(req.params.eventId);
+      const linkIdParsed = z.string().uuid().safeParse(req.params.linkId);
+      if (!eventIdParsed.success || !linkIdParsed.success) {
+        return res.status(400).json({ error: "eventId ou linkId inválido" });
+      }
+      const eventId = eventIdParsed.data;
+      const id = linkIdParsed.data;
+
+      const [existingLink] = await db
+        .select()
+        .from(courtesyLinks)
+        .where(eq(courtesyLinks.id, id));
+      if (!existingLink) {
+        return res.status(404).json({ error: "Link de cortesia não encontrado" });
+      }
+      if (existingLink.eventId !== eventId) {
+        return res.status(404).json({ error: "Link de cortesia não encontrado" });
+      }
 
       const bodyParsed = z
         .object({
@@ -1420,7 +1600,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: msg });
       }
     } catch (error) {
-      console.error("PATCH /api/admin/courtesy-links/:id:", error);
+      console.error("PATCH /api/admin/events/:eventId/courtesy-links/:linkId:", error);
       res.status(500).json({ error: "Erro ao atualizar link de cortesia" });
     }
   });
@@ -1671,7 +1851,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
   app.post(
-    "/api/events/:id/certificate-template",
+    "/api/admin/events/:eventId/certificate-template",
     authenticateToken,
     upload.single("file"),
     async (req: any, res) => {
@@ -1679,7 +1859,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!req.user.isAdmin) {
           return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
         }
-        const { id } = req.params;
+        const idParsed = z.string().uuid().safeParse(req.params.eventId);
+        if (!idParsed.success) {
+          return res.status(400).json({ message: "eventId inválido" });
+        }
+        const eventIdCert = idParsed.data;
         const file = req.file as { buffer: Buffer; originalname?: string; mimetype: string } | undefined;
         if (!file?.buffer) {
           return res.status(400).json({ message: "Envie um arquivo .docx" });
@@ -1690,26 +1874,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ message: "Apenas arquivos .docx são permitidos" });
         }
 
-        const event = await storage.getEvent(id);
+        const event = await storage.getEvent(eventIdCert);
         if (!event) {
           return res.status(404).json({ message: "Evento não encontrado" });
         }
 
-        const key = `certificate-templates/${id}/${randomUUID()}.docx`;
+        const key = `certificate-templates/${eventIdCert}/${randomUUID()}.docx`;
         const certificateTemplateUrl = await s3Service.uploadBuffer(
           file.buffer,
           key,
           DOCX_MIME,
         );
 
-        const updated = await storage.updateEvent(id, { certificateTemplateUrl });
+        const updated = await storage.updateEvent(eventIdCert, { certificateTemplateUrl });
         if (!updated) {
           return res.status(500).json({ message: "Erro ao salvar URL do template" });
         }
 
         res.status(201).json({ event: updated, certificateTemplateUrl });
       } catch (error) {
-        console.error("POST certificate-template error:", error);
+        console.error("POST /api/admin/events/:eventId/certificate-template error:", error);
         res.status(500).json({ message: "Erro ao enviar template" });
       }
     },
@@ -2600,44 +2784,108 @@ export async function registerRoutes(app: Express): Promise<Server> {
   return ','; // Default to comma
 }
 
-  app.post('/api/courtesy/mass-send', authenticateToken, upload.fields([
-    { name: 'csvFile', maxCount: 1 },
-    { name: 'attachment', maxCount: 1 }
-  ]), async (req: any, res) => {
-    if (!req.user.isAdmin) {
-      return res.status(403).json({ message: 'Acesso negado.' });
-    }
-    if (!req.files?.csvFile) {
-      return res.status(400).json({ message: 'Nenhum arquivo CSV enviado.' });
-    }
+  app.post(
+    "/api/admin/events/:eventId/courtesy/mass-send",
+    authenticateToken,
+    upload.fields([
+      { name: "csvFile", maxCount: 1 },
+      { name: "attachment", maxCount: 1 },
+    ]),
+    async (req: any, res) => {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado." });
+      }
+      const eventParsed = z.string().uuid().safeParse(req.params.eventId);
+      if (!eventParsed.success) {
+        return res.status(400).json({ message: "eventId inválido." });
+      }
+      const routeEventId = eventParsed.data;
+      const eventMs = await storage.getEvent(routeEventId);
+      if (!eventMs) {
+        return res.status(404).json({ message: "Evento não encontrado." });
+      }
+      if (!req.files?.csvFile) {
+        return res.status(400).json({ message: "Nenhum arquivo CSV enviado." });
+      }
 
-    try {
-      const csvBuffer = req.files.csvFile[0].buffer;
-      const attachmentFile = req.files?.attachment ? req.files.attachment[0] : null;
+      try {
+        const csvBuffer = req.files.csvFile[0].buffer;
+        const attachmentFile = req.files?.attachment ? req.files.attachment[0] : null;
 
-      // 1. Prepare attachment data to be stored
-      const attachmentData = attachmentFile ? {
-        filename: attachmentFile.originalname,
-        content: attachmentFile.buffer.toString('base64'),
-        type: attachmentFile.mimetype
-      } : null;
+        // 1. Prepare attachment data to be stored
+        const attachmentData = attachmentFile
+          ? {
+              filename: attachmentFile.originalname,
+              content: attachmentFile.buffer.toString("base64"),
+              type: attachmentFile.mimetype,
+            }
+          : null;
 
-      // 2. Add the job to the database queue (you'll need to create this in 'storage')
-      await storage.addMassSendJobToQueue({
-        csvData: csvBuffer.toString('utf-8'), // Store CSV as text
-        attachmentData: attachmentData ? JSON.stringify(attachmentData) : null,
-        createdBy: req.user.id,
-      });
+        // 2. Add the job to the database queue
+        await storage.addMassSendJobToQueue({
+          csvData: csvBuffer.toString("utf-8"),
+          attachmentData: attachmentData ? JSON.stringify(attachmentData) : null,
+          createdBy: req.user.id,
+        });
 
-      // 3. Respond IMMEDIATELY
-      console.log('Mass send job has been queued.');
-      res.status(202).json({ message: 'Processamento do CSV iniciado. Os e-mails serão enviados em segundo plano.' });
+        // 3. Respond IMMEDIATELY
+        console.log("Mass send job has been queued.");
+        res.status(202).json({
+          message:
+            "Processamento do CSV iniciado. Os e-mails serão enviados em segundo plano.",
+        });
+      } catch (error) {
+        console.error("Error queuing CSV job:", error);
+        res.status(500).json({ message: "Erro ao enfileirar o processamento." });
+      }
+    },
+  );
 
-    } catch (error) {
-      console.error('Error queuing CSV job:', error);
-      res.status(500).json({ message: 'Erro ao enfileirar o processamento.' });
-    }
-  });
+  /** Same as `/api/admin/events/:eventId/courtesy/mass-send` — CSV rows supply `event_id`; URL event is unused by the worker. */
+  app.post(
+    "/api/admin/courtesy/mass-send",
+    authenticateToken,
+    upload.fields([
+      { name: "csvFile", maxCount: 1 },
+      { name: "attachment", maxCount: 1 },
+    ]),
+    async (req: any, res) => {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado." });
+      }
+      if (!req.files?.csvFile) {
+        return res.status(400).json({ message: "Nenhum arquivo CSV enviado." });
+      }
+
+      try {
+        const csvBuffer = req.files.csvFile[0].buffer;
+        const attachmentFile = req.files?.attachment ? req.files.attachment[0] : null;
+
+        const attachmentData = attachmentFile
+          ? {
+              filename: attachmentFile.originalname,
+              content: attachmentFile.buffer.toString("base64"),
+              type: attachmentFile.mimetype,
+            }
+          : null;
+
+        await storage.addMassSendJobToQueue({
+          csvData: csvBuffer.toString("utf-8"),
+          attachmentData: attachmentData ? JSON.stringify(attachmentData) : null,
+          createdBy: req.user.id,
+        });
+
+        console.log("Mass send job has been queued.");
+        res.status(202).json({
+          message:
+            "Processamento do CSV iniciado. Os e-mails serão enviados em segundo plano.",
+        });
+      } catch (error) {
+        console.error("Error queuing CSV job:", error);
+        res.status(500).json({ message: "Erro ao enfileirar o processamento." });
+      }
+    },
+  );
 
   /**
    * Certificates: PDF generation is delegated to AWS Lambda (`AWS_LAMBDA_ARN`, synchronous Invoke).

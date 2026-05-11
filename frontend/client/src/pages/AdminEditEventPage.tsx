@@ -225,7 +225,7 @@ export default function AdminEditEventPage() {
       toast({ title: "Evento excluído", description: "O evento e registros vinculados foram removidos." });
       await queryClient.invalidateQueries({ queryKey: ["admin-events-paginated"] });
       setDeleteOpen(false);
-      setLocation("/admin/events");
+      setLocation("/admin/events?tab=list");
     } catch (err) {
       toast({
         title: "Erro ao excluir",
@@ -263,7 +263,7 @@ export default function AdminEditEventPage() {
       <div className="p-6">
         <p className="text-sm text-destructive">Evento não encontrado ou erro ao carregar.</p>
         <Button asChild variant="outline" className="mt-4">
-          <Link href="/admin/events">Voltar à lista</Link>
+          <Link href="/admin/events?tab=list">Voltar à lista</Link>
         </Button>
       </div>
     );
@@ -275,7 +275,7 @@ export default function AdminEditEventPage() {
         <BreadcrumbList>
           <BreadcrumbItem>
             <BreadcrumbLink asChild>
-              <Link href="/admin/events">Eventos</Link>
+              <Link href="/admin/events?tab=list">Eventos</Link>
             </BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator />

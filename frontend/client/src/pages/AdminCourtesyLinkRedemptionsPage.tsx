@@ -50,7 +50,7 @@ export default function AdminCourtesyLinkRedemptionsPage() {
           <BreadcrumbList>
             <BreadcrumbItem>
               <BreadcrumbLink asChild>
-                <Link href="/cortesia-admin">Cortesias</Link>
+                <Link href="/admin/cortesias">Cortesias</Link>
               </BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
@@ -61,7 +61,7 @@ export default function AdminCourtesyLinkRedemptionsPage() {
         </Breadcrumb>
         <p className="text-sm text-muted-foreground">
           Link ou evento inválido. Volte ao{" "}
-          <Link className="underline" href="/admin/courtesy-quota">
+          <Link className="underline" href="/admin/cortesias?tab=limite">
             limite por código
           </Link>{" "}
           e abra a lista a partir da busca por código.
@@ -76,13 +76,13 @@ export default function AdminCourtesyLinkRedemptionsPage() {
         <BreadcrumbList>
           <BreadcrumbItem>
             <BreadcrumbLink asChild>
-              <Link href="/cortesia-admin">Cortesias</Link>
+              <Link href="/admin/cortesias">Cortesias</Link>
             </BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
             <BreadcrumbLink asChild>
-              <Link href="/admin/courtesy-quota">Limite por código</Link>
+              <Link href="/admin/cortesias?tab=limite">Limite por código</Link>
             </BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator />
@@ -104,10 +104,10 @@ export default function AdminCourtesyLinkRedemptionsPage() {
       <CourtesyLinkRedemptionsTable
         link={{ id: linkId, code }}
         eventId={eventId}
-        onBack={() => navigate("/admin/courtesy-quota")}
+        onBack={() => navigate("/admin/cortesias?tab=limite")}
         onCancellationSuccess={() =>
           queryClient.invalidateQueries({
-            queryKey: ["/api/admin/courtesy-links/by-code"],
+            queryKey: ["/api/admin/courtesy-links", "lookup"],
           })
         }
       />

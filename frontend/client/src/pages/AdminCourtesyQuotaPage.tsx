@@ -42,7 +42,11 @@ interface LookupResponse {
   eventTitle: string | null;
 }
 
-export default function AdminCourtesyQuotaPage() {
+export default function AdminCourtesyQuotaPage({
+  variant = "default",
+}: {
+  variant?: "default" | "hub";
+}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [codeInput, setCodeInput] = useState("");
@@ -57,7 +61,7 @@ export default function AdminCourtesyQuotaPage() {
     refetch,
     isFetching,
   } = useQuery({
-    queryKey: ["/api/admin/courtesy-links/by-code", submittedCode],
+    queryKey: ["/api/admin/courtesy-links", "lookup", submittedCode],
     enabled: Boolean(submittedCode && submittedCode.length > 0),
     queryFn: async (): Promise<LookupResponse> => {
       const c = submittedCode;
@@ -66,7 +70,7 @@ export default function AdminCourtesyQuotaPage() {
       }
       const res = await apiRequest(
         "GET",
-        `/api/admin/courtesy-links/by-code/${encodeURIComponent(c)}`,
+        `/api/admin/courtesy-links?code=${encodeURIComponent(c)}`,
       );
       return res.json() as Promise<LookupResponse>;
     },
@@ -79,15 +83,21 @@ export default function AdminCourtesyQuotaPage() {
   }, [data?.link?.id, data?.link?.ticketCount]);
 
   const saveMutation = useMutation({
-    mutationFn: async (payload: { id: string; ticketCount: number }) => {
-      const res = await apiRequest("PATCH", `/api/admin/courtesy-links/${payload.id}`, {
-        ticketCount: payload.ticketCount,
-      });
+    mutationFn: async (payload: {
+      eventId: string;
+      id: string;
+      ticketCount: number;
+    }) => {
+      const res = await apiRequest(
+        "PATCH",
+        `/api/admin/events/${payload.eventId}/courtesy-links/${payload.id}`,
+        { ticketCount: payload.ticketCount },
+      );
       return res.json() as Promise<{ link: CourtesyLinkSummary }>;
     },
     onSuccess: (result) => {
       queryClient.setQueryData<LookupResponse>(
-        ["/api/admin/courtesy-links/by-code", submittedCode],
+        ["/api/admin/courtesy-links", "lookup", submittedCode],
         (prev) =>
           prev
             ? { ...prev, link: result.link }
@@ -97,7 +107,7 @@ export default function AdminCourtesyQuotaPage() {
       void queryClient.invalidateQueries({ queryKey: ["/api/courtesy-links"] });
       if (result.link.id) {
         void queryClient.invalidateQueries({
-          queryKey: ["courtesy-link-redemptions", result.link.id],
+          queryKey: ["courtesy-link-redemptions", result.link.eventId, result.link.id],
         });
       }
       toast({
@@ -127,7 +137,7 @@ export default function AdminCourtesyQuotaPage() {
     if (t === submittedCode) {
       if (data?.link?.id) {
         void queryClient.invalidateQueries({
-          queryKey: ["courtesy-link-redemptions", data.link.id],
+          queryKey: ["courtesy-link-redemptions", data.link.eventId, data.link.id],
         });
       }
       void refetch();
@@ -141,7 +151,7 @@ export default function AdminCourtesyQuotaPage() {
     setCodeInput("");
     setNewTicketCount("");
     queryClient.removeQueries({
-      queryKey: ["/api/admin/courtesy-links/by-code"],
+      queryKey: ["/api/admin/courtesy-links", "lookup"],
     });
     queryClient.removeQueries({
       queryKey: ["courtesy-link-redemptions"],
@@ -171,7 +181,11 @@ export default function AdminCourtesyQuotaPage() {
       });
       return;
     }
-    saveMutation.mutate({ id: data.link.id, ticketCount: n });
+    saveMutation.mutate({
+      eventId: data.link.eventId,
+      id: data.link.id,
+      ticketCount: n,
+    });
   };
 
   const lookupErrorMessage =
@@ -198,7 +212,7 @@ export default function AdminCourtesyQuotaPage() {
     !saveMutation.isPending;
 
   const resgatantesHref = data?.link
-    ? `/admin/courtesy-quota/resgates/${
+    ? `/admin/cortesias/resgates/${
         data.link.id
       }?${new URLSearchParams({
         code: data.link.code,
@@ -206,21 +220,26 @@ export default function AdminCourtesyQuotaPage() {
       }).toString()}`
     : "";
 
+  const shellClass =
+    variant === "hub" ? "mx-auto w-full max-w-none" : "mx-auto max-w-6xl px-4 py-8";
+
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8">
-      <Breadcrumb className="mb-4">
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink asChild>
-              <Link href="/cortesia-admin">Cortesias</Link>
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Limite por código</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
+    <div className={shellClass}>
+      {variant !== "hub" && (
+        <Breadcrumb className="mb-4">
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink asChild>
+                <Link href="/admin/cortesias">Cortesias</Link>
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage>Limite por código</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
+      )}
 
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">Editar limite de cortesia</h1>
@@ -308,12 +327,13 @@ export default function AdminCourtesyQuotaPage() {
                   <Badge variant="secondary">Inativo</Badge>
                 )}
                 <CourtesyLinkActiveToggleButton
+                  eventId={data.link.eventId}
                   linkId={data.link.id}
                   isActive={data.link.isActive ?? true}
                   className="w-full sm:ml-auto sm:w-auto"
                   onSuccess={(next) => {
                     queryClient.setQueryData<LookupResponse>(
-                      ["/api/admin/courtesy-links/by-code", submittedCode],
+                      ["/api/admin/courtesy-links", "lookup", submittedCode],
                       (prev) =>
                         prev
                           ? { ...prev, link: { ...prev.link, isActive: next } }
@@ -323,7 +343,11 @@ export default function AdminCourtesyQuotaPage() {
                       queryKey: ["/api/courtesy-links"],
                     });
                     void queryClient.invalidateQueries({
-                      queryKey: ["courtesy-link-redemptions", data.link.id],
+                      queryKey: [
+                        "courtesy-link-redemptions",
+                        data.link.eventId,
+                        data.link.id,
+                      ],
                     });
                   }}
                 />

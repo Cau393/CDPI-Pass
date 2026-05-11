@@ -60,7 +60,7 @@ describe("AdminCourtesyQuotaPage", () => {
     localStorage.setItem("token", "t");
     apiRequest.mockImplementation(async (_method, url) => {
       const u = String(url);
-      if (u.includes("/by-code/")) {
+      if (u.includes("/api/admin/courtesy-links") && u.includes("code=")) {
         return jsonResponse(LOOKUP);
       }
       return jsonResponse({});
@@ -87,7 +87,7 @@ describe("AdminCourtesyQuotaPage", () => {
     await waitFor(() => {
       expect(apiRequest).toHaveBeenCalledWith(
         "GET",
-        "/api/admin/courtesy-links/by-code/CODE1",
+        "/api/admin/courtesy-links?code=CODE1",
       );
     });
 
@@ -106,7 +106,7 @@ describe("AdminCourtesyQuotaPage", () => {
     });
     expect(lista).toHaveAttribute(
       "href",
-      `/admin/courtesy-quota/resgates/${
+      `/admin/cortesias/resgates/${
         LOOKUP.link.id
       }?code=CODE1&eventId=${encodeURIComponent(LOOKUP.link.eventId)}`,
     );

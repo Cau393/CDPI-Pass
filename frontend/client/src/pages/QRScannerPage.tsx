@@ -14,8 +14,8 @@ export default function QRScannerPage() {
   const [pathname] = useLocation();
 
   useEffect(() => {
-    // Only start if on /verificar path
-    if (pathname === "/verificar") {
+    // Only start on admin QR verify route
+    if (pathname === "/admin/verificar") {
       startScanner();
     } else {
       // Stop scanner when navigating away
@@ -154,8 +154,7 @@ export default function QRScannerPage() {
     // Ignore scan errors silently
   };
 
-  // Don't render if not on the correct path
-  if (pathname !== "/verificar") {
+  if (pathname !== "/admin/verificar") {
     return null;
   }
 

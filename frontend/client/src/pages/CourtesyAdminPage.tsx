@@ -49,7 +49,11 @@ interface CourtesyLink {
   remainingTickets?: number;
 }
 
-export default function CourtesyAdminPage() {
+export default function CourtesyAdminPage({
+  variant = "default",
+}: {
+  variant?: "default" | "hub";
+}) {
   const [eventComboOpen, setEventComboOpen] = useState(false);
   const [eventSearch, setEventSearch] = useState("");
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
@@ -144,10 +148,8 @@ export default function CourtesyAdminPage() {
     }
   };
 
-  return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold mb-8">Gerenciar Links de Cortesia</h1>
-      
+  const inner = (
+    <>
       {/* Create New Link */}
       <Card className="mb-8">
         <CardHeader>
@@ -359,6 +361,17 @@ export default function CourtesyAdminPage() {
           )}
         </CardContent>
       </Card>
+    </>
+  );
+
+  if (variant === "hub") {
+    return <div className="max-w-7xl">{inner}</div>;
+  }
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-8">
+      <h1 className="mb-8 text-3xl font-bold">Gerenciar Links de Cortesia</h1>
+      {inner}
     </div>
   );
 }

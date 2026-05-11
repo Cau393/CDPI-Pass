@@ -75,6 +75,8 @@ __export(schema_exports, {
   orders: () => orders,
   ordersRelations: () => ordersRelations,
   printJobs: () => printJobs,
+  reminderJobs: () => reminderJobs,
+  reminderTemplates: () => reminderTemplates,
   users: () => users,
   usersRelations: () => usersRelations
 });
@@ -94,7 +96,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-var users, events, certificates, courtesyLinks, orders, emailQueue, courtesyAttendees, massSendJobs, eventPrintSettings, printJobs, usersRelations, eventsRelations, certificatesRelations, ordersRelations, courtesyLinksRelations, eventPrintSettingsRelations, insertUserSchema, insertEventSchema, insertOrderSchema, insertEmailQueueSchema, insertCourtesyLinkSchema, insertCourtesyAttendeeSchema, loginSchema, courtesyRedemptionSchema;
+var users, events, certificates, courtesyLinks, orders, emailQueue, courtesyAttendees, massSendJobs, reminderTemplates, reminderJobs, eventPrintSettings, printJobs, usersRelations, eventsRelations, certificatesRelations, ordersRelations, courtesyLinksRelations, eventPrintSettingsRelations, insertUserSchema, insertEventSchema, insertOrderSchema, insertEmailQueueSchema, insertCourtesyLinkSchema, insertCourtesyAttendeeSchema, loginSchema, courtesyRedemptionSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -132,7 +134,9 @@ var init_schema = __esm({
       /** S3 URL of the .docx certificate template (filled to PDF by AWS Lambda). */
       certificateTemplateUrl: text("certificate_template_url"),
       /** Custom HTML for courtesy mass-send emails; placeholders {nome}, {evento}, {data}, {link}. */
-      courtesyTemplate: text("courtesy_template")
+      courtesyTemplate: text("courtesy_template"),
+      /** Plain-text subject template for courtesy mass-send; same placeholders; null = use default subject. */
+      courtesyEmailSubject: text("courtesy_email_subject")
     });
     certificates = pgTable(
       "certificates",
@@ -185,7 +189,7 @@ var init_schema = __esm({
     emailQueue = pgTable("email_queue", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       to: varchar("to", { length: 255 }).notNull(),
-      subject: varchar("subject", { length: 255 }).notNull(),
+      subject: text("subject").notNull(),
       html: text("html"),
       text: text("text"),
       attachments: text("attachments"),
@@ -215,6 +219,22 @@ var init_schema = __esm({
       csvData: text("csv_data").notNull(),
       attachmentData: text("attachment_data"),
       // Storing as JSON string
+      createdBy: text("created_by").notNull().references(() => users.id),
+      createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+      updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+    });
+    reminderTemplates = pgTable("reminder_templates", {
+      eventId: varchar("event_id").primaryKey().references(() => events.id, { onDelete: "cascade" }),
+      body: text("body").notNull().default(""),
+      /** Plain-text subject line template; same {nome},{evento},{data},{link} placeholders; empty = default subject. */
+      subject: text("subject").notNull().default(""),
+      updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+    });
+    reminderJobs = pgTable("reminder_jobs", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      status: text("status", { enum: ["pending", "processing", "completed", "failed"] }).default("pending").notNull(),
+      eventId: varchar("event_id").notNull().references(() => events.id),
+      attachmentData: text("attachment_data"),
       createdBy: text("created_by").notNull().references(() => users.id),
       createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
       updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
@@ -562,7 +582,7 @@ var init_printJobPolicy = __esm({
 });
 
 // server/storage.ts
-import { eq, ne, desc, sql as sql2, asc, count, and } from "drizzle-orm";
+import { eq, ne, desc, sql as sql2, asc, count, and, isNull } from "drizzle-orm";
 var DatabaseStorage, storage;
 var init_storage = __esm({
   "server/storage.ts"() {
@@ -1020,6 +1040,74 @@ var init_storage = __esm({
           status,
           updatedAt: /* @__PURE__ */ new Date()
         }).where(eq(massSendJobs.id, jobId));
+      }
+      async getReminderTemplate(eventId) {
+        const [row] = await db.select({
+          body: reminderTemplates.body,
+          subject: reminderTemplates.subject
+        }).from(reminderTemplates).where(eq(reminderTemplates.eventId, eventId));
+        return row ?? null;
+      }
+      async upsertReminderTemplate(eventId, body, subject) {
+        await db.insert(reminderTemplates).values({
+          eventId,
+          body,
+          subject: subject ?? ""
+        }).onConflictDoUpdate({
+          target: reminderTemplates.eventId,
+          set: {
+            body,
+            ...subject !== void 0 ? { subject } : {},
+            updatedAt: /* @__PURE__ */ new Date()
+          }
+        });
+      }
+      async addReminderJobToQueue(jobData) {
+        const [job] = await db.insert(reminderJobs).values({
+          status: "pending",
+          eventId: jobData.eventId,
+          attachmentData: jobData.attachmentData,
+          createdBy: jobData.createdBy
+        }).returning();
+        return job;
+      }
+      async getPendingReminderJobs(limit = 1) {
+        return db.select().from(reminderJobs).where(eq(reminderJobs.status, "pending")).orderBy(asc(reminderJobs.createdAt)).limit(limit);
+      }
+      async updateReminderJobStatus(jobId, status) {
+        return db.update(reminderJobs).set({ status, updatedAt: /* @__PURE__ */ new Date() }).where(eq(reminderJobs.id, jobId));
+      }
+      async getEligibleReminderLinks(eventId) {
+        return db.select({
+          id: courtesyLinks.id,
+          eventId: courtesyLinks.eventId,
+          code: courtesyLinks.code,
+          recipientEmail: courtesyLinks.recipientEmail,
+          recipientName: courtesyLinks.recipientName,
+          ticketCount: courtesyLinks.ticketCount,
+          usedCount: courtesyLinks.usedCount,
+          isActive: courtesyLinks.isActive,
+          createdAt: courtesyLinks.createdAt
+        }).from(courtesyLinks).where(
+          and(
+            eq(courtesyLinks.eventId, eventId),
+            eq(courtesyLinks.isActive, true)
+          )
+        );
+      }
+      /** Sum of max(0, ticketCount - usedCount) over active FREE cortesy links only (exclude promotional override_price rows). */
+      async getCourtesyUnredeemedSlotTotalForEvent(eventId) {
+        const [row] = await db.select({
+          total: sql2`COALESCE(SUM(GREATEST(${courtesyLinks.ticketCount} - COALESCE(${courtesyLinks.usedCount}, 0), 0)), 0)`
+        }).from(courtesyLinks).where(
+          and(
+            eq(courtesyLinks.eventId, eventId),
+            eq(courtesyLinks.isActive, true),
+            isNull(courtesyLinks.overridePrice)
+          )
+        );
+        const n2 = row?.total;
+        return typeof n2 === "bigint" ? Number(n2) : Number(n2 ?? 0);
       }
     };
     storage = new DatabaseStorage();
@@ -45608,6 +45696,26 @@ function sanitizeCourtesyTemplateHtml(template) {
   });
 }
 
+// server/utils/emailSubjectTemplate.ts
+init_esm_shims();
+var MAX_EMAIL_SUBJECT_TEMPLATE_CHARS = 998;
+function validateEmailSubjectTemplateInput(raw) {
+  if (typeof raw !== "string") {
+    return { ok: false, error: "subject must be a string" };
+  }
+  const trimmed = raw.trim();
+  if (raw.includes("<")) {
+    return { ok: false, error: "subject must be plain text (no HTML)" };
+  }
+  if (/[\r\n]/.test(trimmed)) {
+    return { ok: false, error: "subject must be a single line" };
+  }
+  if (trimmed.length > MAX_EMAIL_SUBJECT_TEMPLATE_CHARS) {
+    return { ok: false, error: "subject exceeds maximum length" };
+  }
+  return { ok: true, value: trimmed };
+}
+
 // server/utils/commercialSalesMapper.ts
 init_esm_shims();
 function mapCommercialSales(rows) {
@@ -45735,6 +45843,10 @@ function courtesyMessageHtmlToPlainText(html) {
 }
 var EmailService = class {
   async sendEmail(to, subject, html, text2, attachments) {
+    if (!to?.trim?.()) {
+      console.warn("EmailService.sendEmail: skipped \u2014 missing or empty recipient (to)");
+      return false;
+    }
     if (!process.env.SENDGRID_API_KEY) {
       console.log("SendGrid not configured, queuing email:", { to, subject });
       await storage.addEmailToQueue({
@@ -45953,10 +46065,14 @@ var EmailService = class {
    * Sends the standard courtesy mass email layout. Header, CTA, notice box, and footer are fixed.
    * @param customMessageBoxHtml - If set (already-interpolated HTML), replaces only the dynamic paragraphs
    * inside `.message-box` before the static "Para resgatar..." line. Use placeholders resolved upstream.
+   * @param layout - Invite (default) vs reminder: only the header `<h1>` title changes.
+   * @param renderedSubject - Optional fully rendered subject (plain text). When empty/omitted, uses default "Sua cortesia para o evento …".
    */
-  async sendCourtesyMassEmail(email, name, eventName, courtesyCode, eventDate, attachments, customMessageBoxHtml) {
+  async sendCourtesyMassEmail(email, name, eventName, courtesyCode, eventDate, attachments, customMessageBoxHtml, layout = "courtesy_invite", renderedSubject) {
     const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${courtesyCode}`;
-    const subject = `Sua cortesia para o evento ${eventName}`;
+    const defaultSubject = `Sua cortesia para o evento ${eventName}`;
+    const subject = renderedSubject != null && String(renderedSubject).trim() !== "" ? String(renderedSubject).trim() : defaultSubject;
+    const headerHeading = layout === "courtesy_reminder" ? "Lembrete para Resgate de Cortesia!" : "\u{1F381} Voc\xEA Recebeu uma Cortesia!";
     const defaultMessageInner = `
               <p style="font-size: 18px;">Ol\xE1, <strong>${name}</strong>!</p>
               <p>Voc\xEA recebeu uma cortesia para o <strong>${eventName}</strong> nas datas <strong>quarta-feira e quinta-feira, 04 e 05 de mar\xE7o de 2026!</strong>!</p>
@@ -46000,7 +46116,7 @@ var EmailService = class {
       <body>
         <div class="container">
           <div class="header">
-            <h1>\u{1F381} Voc\xEA Recebeu uma Cortesia!</h1>
+            <h1>${headerHeading}</h1>
             <h2>CDPI Pass</h2>
           </div>
           <div class="content">
@@ -46999,7 +47115,15 @@ async function registerRoutes(app2) {
       const trimmed = sanitized.trim();
       const isEmpty = trimmed === "" || trimmed === "<p></p>" || sanitized.replace(/\s/g, "") === "<p></p>";
       const toStore = isEmpty ? null : sanitized;
-      const updated = await storage.updateEvent(eventId, { courtesyTemplate: toStore });
+      const updates = { courtesyTemplate: toStore };
+      if (Object.prototype.hasOwnProperty.call(body, "subject")) {
+        const sub = validateEmailSubjectTemplateInput(body.subject);
+        if (!sub.ok) {
+          return res.status(400).json({ error: sub.error });
+        }
+        updates.courtesyEmailSubject = sub.value === "" ? null : sub.value;
+      }
+      const updated = await storage.updateEvent(eventId, updates);
       if (!updated) {
         return res.status(404).json({ error: "Event not found" });
       }
@@ -47013,6 +47137,132 @@ async function registerRoutes(app2) {
       return res.status(500).json({ error: "Failed to save template" });
     }
   });
+  app2.get("/api/admin/events/:eventId/reminder-template", authenticateToken, async (req, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsedId = z2.string().uuid().safeParse(req.params.eventId);
+      if (!parsedId.success) {
+        return res.status(400).json({ error: "Invalid event id" });
+      }
+      const row = await storage.getReminderTemplate(parsedId.data);
+      return res.status(200).json({
+        body: row?.body ?? "",
+        subject: row?.subject ?? ""
+      });
+    } catch (error) {
+      console.error("GET /api/admin/events/:eventId/reminder-template:", error);
+      return res.status(500).json({ error: "Failed to fetch reminder template" });
+    }
+  });
+  app2.patch("/api/admin/events/:eventId/reminder-template", authenticateToken, async (req, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsedId = z2.string().uuid().safeParse(req.params.eventId);
+      if (!parsedId.success) {
+        return res.status(400).json({ error: "Invalid event id" });
+      }
+      const eventId = parsedId.data;
+      const reqBody = req.body;
+      const { body, subject } = reqBody;
+      if (typeof body !== "string") {
+        return res.status(400).json({ error: "body must be a string" });
+      }
+      if (body.length > 5e4) {
+        return res.status(400).json({ error: "body exceeds maximum length" });
+      }
+      const event = await storage.getEvent(eventId);
+      if (!event) {
+        return res.status(404).json({ error: "Event not found" });
+      }
+      let subjectToPersist;
+      if (Object.prototype.hasOwnProperty.call(reqBody, "subject")) {
+        const sub = validateEmailSubjectTemplateInput(subject);
+        if (!sub.ok) {
+          return res.status(400).json({ error: sub.error });
+        }
+        subjectToPersist = sub.value;
+      }
+      const sanitized = sanitizeCourtesyTemplateHtml(body);
+      await storage.upsertReminderTemplate(eventId, sanitized, subjectToPersist);
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error("PATCH /api/admin/events/:eventId/reminder-template:", error);
+      return res.status(500).json({ error: "Failed to save reminder template" });
+    }
+  });
+  app2.get(
+    "/api/admin/events/:eventId/courtesy-unredeemed-total",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+        }
+        const parsedId = z2.string().uuid().safeParse(req.params.eventId);
+        if (!parsedId.success) {
+          return res.status(400).json({ error: "Invalid event id" });
+        }
+        const eventId = parsedId.data;
+        const event = await storage.getEvent(eventId);
+        if (!event) {
+          return res.status(404).json({ message: "Evento n\xE3o encontrado." });
+        }
+        const totalRemainingSlots = await storage.getCourtesyUnredeemedSlotTotalForEvent(eventId);
+        return res.status(200).json({ totalRemainingSlots });
+      } catch (error) {
+        console.error(
+          "GET /api/admin/events/:eventId/courtesy-unredeemed-total:",
+          error
+        );
+        return res.status(500).json({ error: "Erro ao calcular cortesias n\xE3o resgatadas." });
+      }
+    }
+  );
+  app2.post(
+    "/api/admin/events/:eventId/reminder-send",
+    authenticateToken,
+    upload.fields([{ name: "attachment", maxCount: 1 }]),
+    async (req, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+        }
+        const parsedId = z2.string().uuid().safeParse(req.params.eventId);
+        if (!parsedId.success) {
+          return res.status(400).json({ error: "Invalid event id" });
+        }
+        const eventId = parsedId.data;
+        const event = await storage.getEvent(eventId);
+        if (!event) {
+          return res.status(404).json({ message: "Evento n\xE3o encontrado." });
+        }
+        if (!event.isActive) {
+          return res.status(422).json({ message: "Evento indispon\xEDvel para envio." });
+        }
+        const attachmentFile = req.files?.attachment?.[0] ?? null;
+        const attachmentData = attachmentFile ? JSON.stringify({
+          filename: attachmentFile.originalname,
+          content: attachmentFile.buffer.toString("base64"),
+          type: attachmentFile.mimetype
+        }) : null;
+        await storage.addReminderJobToQueue({
+          eventId,
+          attachmentData,
+          createdBy: req.user.id
+        });
+        return res.status(202).json({
+          message: "Lembretes enfileirados. Os e-mails ser\xE3o enviados em breve."
+        });
+      } catch (error) {
+        console.error("POST /api/admin/events/:eventId/reminder-send:", error);
+        return res.status(500).json({ error: "Erro ao enfileirar lembretes." });
+      }
+    }
+  );
   app2.patch(
     "/api/admin/events/:eventId",
     authenticateToken,
@@ -47324,7 +47574,7 @@ async function registerRoutes(app2) {
     }
   );
   app2.get(
-    "/api/admin/courtesy-links/:linkId/redemptions",
+    "/api/admin/events/:eventId/courtesy-links/:linkId/redemptions",
     authenticateToken,
     async (req, res) => {
       try {
@@ -47334,13 +47584,21 @@ async function registerRoutes(app2) {
             message: "Acesso negado. Apenas administradores."
           });
         }
+        const eventParsed = z2.string().uuid().safeParse(req.params.eventId);
         const parsed = z2.string().uuid().safeParse(req.params.linkId);
-        if (!parsed.success) {
-          return res.status(400).json({ success: false, message: "linkId inv\xE1lido" });
+        if (!eventParsed.success || !parsed.success) {
+          return res.status(400).json({ success: false, message: "eventId ou linkId inv\xE1lido" });
         }
+        const eventIdRoute = eventParsed.data;
         const linkId = parsed.data;
         const [link] = await db.select().from(courtesyLinks).where(eq2(courtesyLinks.id, linkId));
         if (!link) {
+          return res.status(404).json({
+            success: false,
+            message: "Link de cortesia n\xE3o encontrado"
+          });
+        }
+        if (link.eventId !== eventIdRoute) {
           return res.status(404).json({
             success: false,
             message: "Link de cortesia n\xE3o encontrado"
@@ -47389,7 +47647,10 @@ async function registerRoutes(app2) {
           total: data.length
         });
       } catch (error) {
-        console.error("GET /api/admin/courtesy-links/:linkId/redemptions:", error);
+        console.error(
+          "GET /api/admin/events/:eventId/courtesy-links/:linkId/redemptions:",
+          error
+        );
         return res.status(500).json({
           success: false,
           message: "Erro interno ao carregar resgates"
@@ -47543,110 +47804,119 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: "Erro ao carregar dados de vendas" });
     }
   });
-  app2.get(
-    "/api/admin/courtesy-links/by-code/:code",
+  app2.get("/api/admin/courtesy-links", authenticateToken, async (req, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      let raw = typeof req.query.code === "string" ? req.query.code : "";
+      try {
+        raw = decodeURIComponent(raw.trim());
+      } catch {
+        return res.status(400).json({ error: "C\xF3digo inv\xE1lido" });
+      }
+      const code = raw.trim();
+      if (!code) {
+        return res.status(400).json({ error: "Informe o par\xE2metro code na query string" });
+      }
+      const link = await storage.getCourtesyLinkByCode(code);
+      if (!link) {
+        return res.status(404).json({ error: "Link de cortesia n\xE3o encontrado" });
+      }
+      const event = await storage.getEvent(link.eventId);
+      res.json({
+        link: {
+          id: link.id,
+          code: link.code,
+          eventId: link.eventId,
+          ticketCount: link.ticketCount,
+          usedCount: link.usedCount ?? 0,
+          isActive: link.isActive
+        },
+        eventTitle: event?.title ?? null
+      });
+    } catch (error) {
+      console.error("GET /api/admin/courtesy-links:", error);
+      res.status(500).json({ error: "Erro ao buscar link de cortesia" });
+    }
+  });
+  app2.patch(
+    "/api/admin/events/:eventId/courtesy-links/:linkId",
     authenticateToken,
     async (req, res) => {
       try {
         if (!req.user.isAdmin) {
           return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
         }
-        let raw = req.params.code ?? "";
-        try {
-          raw = decodeURIComponent(raw);
-        } catch {
-          return res.status(400).json({ error: "C\xF3digo inv\xE1lido" });
+        const eventIdParsed = z2.string().uuid().safeParse(req.params.eventId);
+        const linkIdParsed = z2.string().uuid().safeParse(req.params.linkId);
+        if (!eventIdParsed.success || !linkIdParsed.success) {
+          return res.status(400).json({ error: "eventId ou linkId inv\xE1lido" });
         }
-        const code = raw.trim();
-        if (!code) {
-          return res.status(400).json({ error: "C\xF3digo inv\xE1lido" });
-        }
-        const link = await storage.getCourtesyLinkByCode(code);
-        if (!link) {
+        const eventId = eventIdParsed.data;
+        const id = linkIdParsed.data;
+        const [existingLink] = await db.select().from(courtesyLinks).where(eq2(courtesyLinks.id, id));
+        if (!existingLink) {
           return res.status(404).json({ error: "Link de cortesia n\xE3o encontrado" });
         }
-        const event = await storage.getEvent(link.eventId);
-        res.json({
-          link: {
-            id: link.id,
-            code: link.code,
-            eventId: link.eventId,
-            ticketCount: link.ticketCount,
-            usedCount: link.usedCount ?? 0,
-            isActive: link.isActive
-          },
-          eventTitle: event?.title ?? null
-        });
+        if (existingLink.eventId !== eventId) {
+          return res.status(404).json({ error: "Link de cortesia n\xE3o encontrado" });
+        }
+        const bodyParsed = z2.object({
+          ticketCount: z2.coerce.number().optional(),
+          isActive: z2.boolean().optional()
+        }).strict().safeParse(req.body);
+        if (!bodyParsed.success) {
+          return res.status(400).json({ error: "Payload inv\xE1lido" });
+        }
+        const ticketCountRaw = bodyParsed.data.ticketCount;
+        const isActive = bodyParsed.data.isActive;
+        if (ticketCountRaw === void 0 && isActive === void 0) {
+          return res.status(400).json({
+            error: "Informe ao menos ticketCount ou isActive"
+          });
+        }
+        if (ticketCountRaw !== void 0 && !Number.isInteger(ticketCountRaw)) {
+          return res.status(400).json({ error: "Informe um limite inteiro v\xE1lido." });
+        }
+        try {
+          let updated;
+          if (ticketCountRaw !== void 0) {
+            updated = await storage.updateCourtesyLinkTicketCount(id, ticketCountRaw);
+          }
+          if (isActive !== void 0) {
+            const withActive = await storage.updateCourtesyLink(id, { isActive });
+            if (!withActive) {
+              return res.status(404).json({ error: "Link de cortesia n\xE3o encontrado" });
+            }
+            updated = withActive;
+          }
+          if (!updated) {
+            return res.status(404).json({ error: "Link de cortesia n\xE3o encontrado" });
+          }
+          res.json({
+            link: {
+              id: updated.id,
+              code: updated.code,
+              eventId: updated.eventId,
+              ticketCount: updated.ticketCount,
+              usedCount: updated.usedCount ?? 0,
+              isActive: updated.isActive
+            }
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Erro ao atualizar";
+          if (msg === "LINK_NOT_FOUND") {
+            return res.status(404).json({ error: "Link de cortesia n\xE3o encontrado" });
+          }
+          return res.status(400).json({ error: msg });
+        }
       } catch (error) {
-        console.error("GET /api/admin/courtesy-links/by-code/:code:", error);
-        res.status(500).json({ error: "Erro ao buscar link de cortesia" });
+        console.error("PATCH /api/admin/events/:eventId/courtesy-links/:linkId:", error);
+        res.status(500).json({ error: "Erro ao atualizar link de cortesia" });
       }
     }
   );
-  app2.patch("/api/admin/courtesy-links/:id", authenticateToken, async (req, res) => {
-    try {
-      if (!req.user.isAdmin) {
-        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
-      }
-      const idParsed = z2.string().uuid().safeParse(req.params.id);
-      if (!idParsed.success) {
-        return res.status(400).json({ error: "id inv\xE1lido" });
-      }
-      const id = idParsed.data;
-      const bodyParsed = z2.object({
-        ticketCount: z2.coerce.number().optional(),
-        isActive: z2.boolean().optional()
-      }).strict().safeParse(req.body);
-      if (!bodyParsed.success) {
-        return res.status(400).json({ error: "Payload inv\xE1lido" });
-      }
-      const ticketCountRaw = bodyParsed.data.ticketCount;
-      const isActive = bodyParsed.data.isActive;
-      if (ticketCountRaw === void 0 && isActive === void 0) {
-        return res.status(400).json({
-          error: "Informe ao menos ticketCount ou isActive"
-        });
-      }
-      if (ticketCountRaw !== void 0 && !Number.isInteger(ticketCountRaw)) {
-        return res.status(400).json({ error: "Informe um limite inteiro v\xE1lido." });
-      }
-      try {
-        let updated;
-        if (ticketCountRaw !== void 0) {
-          updated = await storage.updateCourtesyLinkTicketCount(id, ticketCountRaw);
-        }
-        if (isActive !== void 0) {
-          const withActive = await storage.updateCourtesyLink(id, { isActive });
-          if (!withActive) {
-            return res.status(404).json({ error: "Link de cortesia n\xE3o encontrado" });
-          }
-          updated = withActive;
-        }
-        if (!updated) {
-          return res.status(404).json({ error: "Link de cortesia n\xE3o encontrado" });
-        }
-        res.json({
-          link: {
-            id: updated.id,
-            code: updated.code,
-            eventId: updated.eventId,
-            ticketCount: updated.ticketCount,
-            usedCount: updated.usedCount ?? 0,
-            isActive: updated.isActive
-          }
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Erro ao atualizar";
-        if (msg === "LINK_NOT_FOUND") {
-          return res.status(404).json({ error: "Link de cortesia n\xE3o encontrado" });
-        }
-        return res.status(400).json({ error: msg });
-      }
-    } catch (error) {
-      console.error("PATCH /api/admin/courtesy-links/:id:", error);
-      res.status(500).json({ error: "Erro ao atualizar link de cortesia" });
-    }
-  });
   app2.post("/api/admin/tickets/:ticketId/check-in", authenticateToken, async (req, res) => {
     try {
       if (!req.user.isAdmin) {
@@ -47864,7 +48134,7 @@ async function registerRoutes(app2) {
   });
   const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   app2.post(
-    "/api/events/:id/certificate-template",
+    "/api/admin/events/:eventId/certificate-template",
     authenticateToken,
     upload.single("file"),
     async (req, res) => {
@@ -47872,7 +48142,11 @@ async function registerRoutes(app2) {
         if (!req.user.isAdmin) {
           return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
         }
-        const { id } = req.params;
+        const idParsed = z2.string().uuid().safeParse(req.params.eventId);
+        if (!idParsed.success) {
+          return res.status(400).json({ message: "eventId inv\xE1lido" });
+        }
+        const eventIdCert = idParsed.data;
         const file = req.file;
         if (!file?.buffer) {
           return res.status(400).json({ message: "Envie um arquivo .docx" });
@@ -47882,23 +48156,23 @@ async function registerRoutes(app2) {
         if (!extOk && !mimeOk) {
           return res.status(400).json({ message: "Apenas arquivos .docx s\xE3o permitidos" });
         }
-        const event = await storage.getEvent(id);
+        const event = await storage.getEvent(eventIdCert);
         if (!event) {
           return res.status(404).json({ message: "Evento n\xE3o encontrado" });
         }
-        const key = `certificate-templates/${id}/${randomUUID2()}.docx`;
+        const key = `certificate-templates/${eventIdCert}/${randomUUID2()}.docx`;
         const certificateTemplateUrl = await s3Service.uploadBuffer(
           file.buffer,
           key,
           DOCX_MIME
         );
-        const updated = await storage.updateEvent(id, { certificateTemplateUrl });
+        const updated = await storage.updateEvent(eventIdCert, { certificateTemplateUrl });
         if (!updated) {
           return res.status(500).json({ message: "Erro ao salvar URL do template" });
         }
         res.status(201).json({ event: updated, certificateTemplateUrl });
       } catch (error) {
-        console.error("POST certificate-template error:", error);
+        console.error("POST /api/admin/events/:eventId/certificate-template error:", error);
         res.status(500).json({ message: "Erro ao enviar template" });
       }
     }
@@ -48560,37 +48834,89 @@ async function registerRoutes(app2) {
     }
     return ",";
   }
-  app2.post("/api/courtesy/mass-send", authenticateToken, upload.fields([
-    { name: "csvFile", maxCount: 1 },
-    { name: "attachment", maxCount: 1 }
-  ]), async (req, res) => {
-    if (!req.user.isAdmin) {
-      return res.status(403).json({ message: "Acesso negado." });
+  app2.post(
+    "/api/admin/events/:eventId/courtesy/mass-send",
+    authenticateToken,
+    upload.fields([
+      { name: "csvFile", maxCount: 1 },
+      { name: "attachment", maxCount: 1 }
+    ]),
+    async (req, res) => {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado." });
+      }
+      const eventParsed = z2.string().uuid().safeParse(req.params.eventId);
+      if (!eventParsed.success) {
+        return res.status(400).json({ message: "eventId inv\xE1lido." });
+      }
+      const routeEventId = eventParsed.data;
+      const eventMs = await storage.getEvent(routeEventId);
+      if (!eventMs) {
+        return res.status(404).json({ message: "Evento n\xE3o encontrado." });
+      }
+      if (!req.files?.csvFile) {
+        return res.status(400).json({ message: "Nenhum arquivo CSV enviado." });
+      }
+      try {
+        const csvBuffer = req.files.csvFile[0].buffer;
+        const attachmentFile = req.files?.attachment ? req.files.attachment[0] : null;
+        const attachmentData = attachmentFile ? {
+          filename: attachmentFile.originalname,
+          content: attachmentFile.buffer.toString("base64"),
+          type: attachmentFile.mimetype
+        } : null;
+        await storage.addMassSendJobToQueue({
+          csvData: csvBuffer.toString("utf-8"),
+          attachmentData: attachmentData ? JSON.stringify(attachmentData) : null,
+          createdBy: req.user.id
+        });
+        console.log("Mass send job has been queued.");
+        res.status(202).json({
+          message: "Processamento do CSV iniciado. Os e-mails ser\xE3o enviados em segundo plano."
+        });
+      } catch (error) {
+        console.error("Error queuing CSV job:", error);
+        res.status(500).json({ message: "Erro ao enfileirar o processamento." });
+      }
     }
-    if (!req.files?.csvFile) {
-      return res.status(400).json({ message: "Nenhum arquivo CSV enviado." });
+  );
+  app2.post(
+    "/api/admin/courtesy/mass-send",
+    authenticateToken,
+    upload.fields([
+      { name: "csvFile", maxCount: 1 },
+      { name: "attachment", maxCount: 1 }
+    ]),
+    async (req, res) => {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado." });
+      }
+      if (!req.files?.csvFile) {
+        return res.status(400).json({ message: "Nenhum arquivo CSV enviado." });
+      }
+      try {
+        const csvBuffer = req.files.csvFile[0].buffer;
+        const attachmentFile = req.files?.attachment ? req.files.attachment[0] : null;
+        const attachmentData = attachmentFile ? {
+          filename: attachmentFile.originalname,
+          content: attachmentFile.buffer.toString("base64"),
+          type: attachmentFile.mimetype
+        } : null;
+        await storage.addMassSendJobToQueue({
+          csvData: csvBuffer.toString("utf-8"),
+          attachmentData: attachmentData ? JSON.stringify(attachmentData) : null,
+          createdBy: req.user.id
+        });
+        console.log("Mass send job has been queued.");
+        res.status(202).json({
+          message: "Processamento do CSV iniciado. Os e-mails ser\xE3o enviados em segundo plano."
+        });
+      } catch (error) {
+        console.error("Error queuing CSV job:", error);
+        res.status(500).json({ message: "Erro ao enfileirar o processamento." });
+      }
     }
-    try {
-      const csvBuffer = req.files.csvFile[0].buffer;
-      const attachmentFile = req.files?.attachment ? req.files.attachment[0] : null;
-      const attachmentData = attachmentFile ? {
-        filename: attachmentFile.originalname,
-        content: attachmentFile.buffer.toString("base64"),
-        type: attachmentFile.mimetype
-      } : null;
-      await storage.addMassSendJobToQueue({
-        csvData: csvBuffer.toString("utf-8"),
-        // Store CSV as text
-        attachmentData: attachmentData ? JSON.stringify(attachmentData) : null,
-        createdBy: req.user.id
-      });
-      console.log("Mass send job has been queued.");
-      res.status(202).json({ message: "Processamento do CSV iniciado. Os e-mails ser\xE3o enviados em segundo plano." });
-    } catch (error) {
-      console.error("Error queuing CSV job:", error);
-      res.status(500).json({ message: "Erro ao enfileirar o processamento." });
-    }
-  });
+  );
   const certificateTemplateReady = and2(
     isNotNull(events.certificateTemplateUrl),
     sql3`trim(${events.certificateTemplateUrl}) <> ''`

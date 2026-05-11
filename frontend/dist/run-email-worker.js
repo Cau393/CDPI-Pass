@@ -36,6 +36,8 @@ __export(schema_exports, {
   orders: () => orders,
   ordersRelations: () => ordersRelations,
   printJobs: () => printJobs,
+  reminderJobs: () => reminderJobs,
+  reminderTemplates: () => reminderTemplates,
   users: () => users,
   usersRelations: () => usersRelations
 });
@@ -88,7 +90,9 @@ var events = pgTable("events", {
   /** S3 URL of the .docx certificate template (filled to PDF by AWS Lambda). */
   certificateTemplateUrl: text("certificate_template_url"),
   /** Custom HTML for courtesy mass-send emails; placeholders {nome}, {evento}, {data}, {link}. */
-  courtesyTemplate: text("courtesy_template")
+  courtesyTemplate: text("courtesy_template"),
+  /** Plain-text subject template for courtesy mass-send; same placeholders; null = use default subject. */
+  courtesyEmailSubject: text("courtesy_email_subject")
 });
 var certificates = pgTable(
   "certificates",
@@ -141,7 +145,7 @@ var orders = pgTable("orders", {
 var emailQueue = pgTable("email_queue", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   to: varchar("to", { length: 255 }).notNull(),
-  subject: varchar("subject", { length: 255 }).notNull(),
+  subject: text("subject").notNull(),
   html: text("html"),
   text: text("text"),
   attachments: text("attachments"),
@@ -171,6 +175,22 @@ var massSendJobs = pgTable("mass_send_jobs", {
   csvData: text("csv_data").notNull(),
   attachmentData: text("attachment_data"),
   // Storing as JSON string
+  createdBy: text("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+});
+var reminderTemplates = pgTable("reminder_templates", {
+  eventId: varchar("event_id").primaryKey().references(() => events.id, { onDelete: "cascade" }),
+  body: text("body").notNull().default(""),
+  /** Plain-text subject line template; same {nome},{evento},{data},{link} placeholders; empty = default subject. */
+  subject: text("subject").notNull().default(""),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+});
+var reminderJobs = pgTable("reminder_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  status: text("status", { enum: ["pending", "processing", "completed", "failed"] }).default("pending").notNull(),
+  eventId: varchar("event_id").notNull().references(() => events.id),
+  attachmentData: text("attachment_data"),
   createdBy: text("created_by").notNull().references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
@@ -346,7 +366,7 @@ var pool = new Pool({ connectionString: process.env.DATABASE_URL });
 var db = drizzle({ client: pool, schema: schema_exports });
 
 // server/storage.ts
-import { eq, ne, desc, sql as sql2, asc, count, and } from "drizzle-orm";
+import { eq, ne, desc, sql as sql2, asc, count, and, isNull } from "drizzle-orm";
 
 // server/services/s3Service.ts
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -932,6 +952,74 @@ var DatabaseStorage = class {
       updatedAt: /* @__PURE__ */ new Date()
     }).where(eq(massSendJobs.id, jobId));
   }
+  async getReminderTemplate(eventId) {
+    const [row] = await db.select({
+      body: reminderTemplates.body,
+      subject: reminderTemplates.subject
+    }).from(reminderTemplates).where(eq(reminderTemplates.eventId, eventId));
+    return row ?? null;
+  }
+  async upsertReminderTemplate(eventId, body, subject) {
+    await db.insert(reminderTemplates).values({
+      eventId,
+      body,
+      subject: subject ?? ""
+    }).onConflictDoUpdate({
+      target: reminderTemplates.eventId,
+      set: {
+        body,
+        ...subject !== void 0 ? { subject } : {},
+        updatedAt: /* @__PURE__ */ new Date()
+      }
+    });
+  }
+  async addReminderJobToQueue(jobData) {
+    const [job] = await db.insert(reminderJobs).values({
+      status: "pending",
+      eventId: jobData.eventId,
+      attachmentData: jobData.attachmentData,
+      createdBy: jobData.createdBy
+    }).returning();
+    return job;
+  }
+  async getPendingReminderJobs(limit = 1) {
+    return db.select().from(reminderJobs).where(eq(reminderJobs.status, "pending")).orderBy(asc(reminderJobs.createdAt)).limit(limit);
+  }
+  async updateReminderJobStatus(jobId, status) {
+    return db.update(reminderJobs).set({ status, updatedAt: /* @__PURE__ */ new Date() }).where(eq(reminderJobs.id, jobId));
+  }
+  async getEligibleReminderLinks(eventId) {
+    return db.select({
+      id: courtesyLinks.id,
+      eventId: courtesyLinks.eventId,
+      code: courtesyLinks.code,
+      recipientEmail: courtesyLinks.recipientEmail,
+      recipientName: courtesyLinks.recipientName,
+      ticketCount: courtesyLinks.ticketCount,
+      usedCount: courtesyLinks.usedCount,
+      isActive: courtesyLinks.isActive,
+      createdAt: courtesyLinks.createdAt
+    }).from(courtesyLinks).where(
+      and(
+        eq(courtesyLinks.eventId, eventId),
+        eq(courtesyLinks.isActive, true)
+      )
+    );
+  }
+  /** Sum of max(0, ticketCount - usedCount) over active FREE cortesy links only (exclude promotional override_price rows). */
+  async getCourtesyUnredeemedSlotTotalForEvent(eventId) {
+    const [row] = await db.select({
+      total: sql2`COALESCE(SUM(GREATEST(${courtesyLinks.ticketCount} - COALESCE(${courtesyLinks.usedCount}, 0), 0)), 0)`
+    }).from(courtesyLinks).where(
+      and(
+        eq(courtesyLinks.eventId, eventId),
+        eq(courtesyLinks.isActive, true),
+        isNull(courtesyLinks.overridePrice)
+      )
+    );
+    const n = row?.total;
+    return typeof n === "bigint" ? Number(n) : Number(n ?? 0);
+  }
 };
 var storage = new DatabaseStorage();
 
@@ -950,6 +1038,10 @@ function courtesyMessageHtmlToPlainText(html) {
 }
 var EmailService = class {
   async sendEmail(to, subject, html, text2, attachments) {
+    if (!to?.trim?.()) {
+      console.warn("EmailService.sendEmail: skipped \u2014 missing or empty recipient (to)");
+      return false;
+    }
     if (!process.env.SENDGRID_API_KEY) {
       console.log("SendGrid not configured, queuing email:", { to, subject });
       await storage.addEmailToQueue({
@@ -1168,10 +1260,14 @@ var EmailService = class {
    * Sends the standard courtesy mass email layout. Header, CTA, notice box, and footer are fixed.
    * @param customMessageBoxHtml - If set (already-interpolated HTML), replaces only the dynamic paragraphs
    * inside `.message-box` before the static "Para resgatar..." line. Use placeholders resolved upstream.
+   * @param layout - Invite (default) vs reminder: only the header `<h1>` title changes.
+   * @param renderedSubject - Optional fully rendered subject (plain text). When empty/omitted, uses default "Sua cortesia para o evento …".
    */
-  async sendCourtesyMassEmail(email, name, eventName, courtesyCode, eventDate, attachments, customMessageBoxHtml) {
+  async sendCourtesyMassEmail(email, name, eventName, courtesyCode, eventDate, attachments, customMessageBoxHtml, layout = "courtesy_invite", renderedSubject) {
     const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${courtesyCode}`;
-    const subject = `Sua cortesia para o evento ${eventName}`;
+    const defaultSubject = `Sua cortesia para o evento ${eventName}`;
+    const subject = renderedSubject != null && String(renderedSubject).trim() !== "" ? String(renderedSubject).trim() : defaultSubject;
+    const headerHeading = layout === "courtesy_reminder" ? "Lembrete para Resgate de Cortesia!" : "\u{1F381} Voc\xEA Recebeu uma Cortesia!";
     const defaultMessageInner = `
               <p style="font-size: 18px;">Ol\xE1, <strong>${name}</strong>!</p>
               <p>Voc\xEA recebeu uma cortesia para o <strong>${eventName}</strong> nas datas <strong>quarta-feira e quinta-feira, 04 e 05 de mar\xE7o de 2026!</strong>!</p>
@@ -1215,7 +1311,7 @@ var EmailService = class {
       <body>
         <div class="container">
           <div class="header">
-            <h1>\u{1F381} Voc\xEA Recebeu uma Cortesia!</h1>
+            <h1>${headerHeading}</h1>
             <h2>CDPI Pass</h2>
           </div>
           <div class="content">
@@ -1302,6 +1398,23 @@ function renderTemplate(html, variables) {
   }, html);
 }
 
+// server/utils/reminderEligibility.ts
+function filterEligibleReminderLinks(links) {
+  return links.filter((l) => {
+    const remaining = l.ticketCount - (l.usedCount ?? 0);
+    return remaining > 0 && l.isActive === true;
+  });
+}
+function deduplicateReminderLinksByEmail(links) {
+  const seen = /* @__PURE__ */ new Set();
+  return links.filter((l) => {
+    const email = (l.recipientEmail ?? "").toLowerCase();
+    if (seen.has(email)) return false;
+    seen.add(email);
+    return true;
+  });
+}
+
 // server/workers/emailWorker.ts
 var EmailWorker = class {
   isRunning = false;
@@ -1340,8 +1453,8 @@ var EmailWorker = class {
     try {
       await Promise.allSettled([
         this.processEmailQueue(),
-        this.processMassSendQueue()
-        // <-- This is our new function
+        this.processMassSendQueue(),
+        this.processReminderQueue()
       ]);
     } catch (error) {
       console.error("Error during worker cycle:", error);
@@ -1454,14 +1567,15 @@ var EmailWorker = class {
             recipientName: name
           });
           const eventDate = event.date instanceof Date ? event.date : new Date(event.date);
+          const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${link.code}`;
+          const variables = {
+            nome: String(name),
+            evento: event.title,
+            data: Number.isNaN(eventDate.getTime()) ? "" : dateFormatter.format(eventDate),
+            link: redeemUrl
+          };
+          const renderedSubject = event.courtesyEmailSubject?.trim() ? renderTemplate(event.courtesyEmailSubject, variables) : void 0;
           if (event.courtesyTemplate?.trim()) {
-            const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${link.code}`;
-            const variables = {
-              nome: String(name),
-              evento: event.title,
-              data: Number.isNaN(eventDate.getTime()) ? "" : dateFormatter.format(eventDate),
-              link: redeemUrl
-            };
             const customMessageBoxHtml = renderTemplate(event.courtesyTemplate, variables);
             await emailService.sendCourtesyMassEmail(
               email,
@@ -1470,7 +1584,9 @@ var EmailWorker = class {
               link.code,
               event.date,
               attachments,
-              customMessageBoxHtml
+              customMessageBoxHtml,
+              "courtesy_invite",
+              renderedSubject
             );
           } else {
             await emailService.sendCourtesyMassEmail(
@@ -1479,7 +1595,10 @@ var EmailWorker = class {
               event.title,
               link.code,
               event.date,
-              attachments
+              attachments,
+              void 0,
+              "courtesy_invite",
+              renderedSubject
             );
           }
         } else {
@@ -1491,6 +1610,67 @@ var EmailWorker = class {
     } catch (error) {
       console.error(`Error processing mass-send job ${job.id}:`, error);
       await storage.updateMassSendJobStatus(job.id, "failed");
+    }
+  }
+  async processReminderQueue() {
+    const jobs = await storage.getPendingReminderJobs(1);
+    if (jobs.length === 0) return;
+    const job = jobs[0];
+    try {
+      await storage.updateReminderJobStatus(job.id, "processing");
+      const event = await storage.getEvent(job.eventId);
+      if (!event || !event.isActive) {
+        await storage.updateReminderJobStatus(job.id, "failed");
+        console.warn(`Reminder job ${job.id}: event ${job.eventId} unavailable.`);
+        return;
+      }
+      const attachments = job.attachmentData ? [JSON.parse(job.attachmentData)] : void 0;
+      const templateRow = await storage.getReminderTemplate(job.eventId);
+      const templateBody = templateRow?.body?.trim() ?? "";
+      const templateSubject = templateRow?.subject?.trim() ?? "";
+      const allLinks = await storage.getEligibleReminderLinks(job.eventId);
+      const eligibleLinks = filterEligibleReminderLinks(allLinks);
+      const dedupedLinks = deduplicateReminderLinksByEmail(eligibleLinks);
+      const linksWithReminderEmail = dedupedLinks.filter(
+        (l) => (l.recipientEmail ?? "").trim().length > 0
+      );
+      const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric"
+      });
+      const eventDate = event.date instanceof Date ? event.date : new Date(event.date);
+      const formattedDate = Number.isNaN(eventDate.getTime()) ? "" : dateFormatter.format(eventDate);
+      for (const link of linksWithReminderEmail) {
+        const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${link.code}`;
+        const variables = {
+          nome: link.recipientName ?? "",
+          evento: event.title,
+          data: formattedDate,
+          link: redeemUrl
+        };
+        const customMessageBoxHtml = templateBody ? renderTemplate(templateBody, variables) : void 0;
+        const renderedReminderSubject = templateSubject ? renderTemplate(templateSubject, variables) : void 0;
+        await emailService.sendCourtesyMassEmail(
+          link.recipientEmail,
+          link.recipientName ?? "",
+          event.title,
+          link.code,
+          event.date,
+          attachments,
+          customMessageBoxHtml,
+          "courtesy_reminder",
+          renderedReminderSubject
+        );
+      }
+      await storage.updateReminderJobStatus(job.id, "completed");
+      console.log(
+        `Reminder job ${job.id}: sent ${linksWithReminderEmail.length} reminder(s); skipped ${dedupedLinks.length - linksWithReminderEmail.length} link(s) without recipient email for event ${job.eventId}.`
+      );
+    } catch (error) {
+      console.error(`Error processing reminder job ${job.id}:`, error);
+      await storage.updateReminderJobStatus(job.id, "failed");
     }
   }
   async addEmailJob(emailData) {

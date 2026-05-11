@@ -48,7 +48,7 @@ const DYNAMIC_VARIABLES = [
   {
     tag: "{nome}",
     label: "Nome completo",
-    description: "Nome do destinatário conforme a planilha CSV",
+    description: "Nome do destinatário",
     example: "Maria Clara Santos",
   },
   {
@@ -66,7 +66,7 @@ const DYNAMIC_VARIABLES = [
   {
     tag: "{link}",
     label: "Link da cortesia",
-    description: "URL única de resgate do ingresso",
+    description: "URL de resgate já gerada no envio original",
     example: "https://...",
   },
 ] as const;
@@ -91,10 +91,7 @@ function ToolbarButton({
           type="button"
           variant="ghost"
           size="icon"
-          className={cn(
-            "h-8 w-8",
-            isActive && "bg-accent text-accent-foreground",
-          )}
+          className={cn("h-8 w-8", isActive && "bg-accent text-accent-foreground")}
           onClick={onClick}
           disabled={disabled}
         >
@@ -108,7 +105,6 @@ function ToolbarButton({
 
 function EditorToolbar({ editor }: { editor: Editor | null }) {
   if (!editor) return null;
-
   return (
     <div className="flex flex-wrap items-center gap-1 rounded-t-md border-b bg-muted/30 p-2">
       <ToolbarButton
@@ -129,9 +125,7 @@ function EditorToolbar({ editor }: { editor: Editor | null }) {
         tooltip="Sublinhado (Ctrl+U)"
         icon={<Underline className="h-4 w-4" />}
       />
-
       <Separator orientation="vertical" className="mx-1 h-6" />
-
       <ToolbarButton
         onClick={() => editor.chain().focus().setTextAlign("left").run()}
         isActive={editor.isActive({ textAlign: "left" })}
@@ -150,9 +144,7 @@ function EditorToolbar({ editor }: { editor: Editor | null }) {
         tooltip="Alinhar à direita"
         icon={<AlignRight className="h-4 w-4" />}
       />
-
       <Separator orientation="vertical" className="mx-1 h-6" />
-
       <ToolbarButton
         onClick={() => editor.chain().focus().toggleBulletList().run()}
         isActive={editor.isActive("bulletList")}
@@ -165,9 +157,7 @@ function EditorToolbar({ editor }: { editor: Editor | null }) {
         tooltip="Lista numerada"
         icon={<ListOrdered className="h-4 w-4" />}
       />
-
       <Separator orientation="vertical" className="mx-1 h-6" />
-
       <ToolbarButton
         onClick={() => editor.chain().focus().undo().run()}
         disabled={!editor.can().undo()}
@@ -184,7 +174,7 @@ function EditorToolbar({ editor }: { editor: Editor | null }) {
   );
 }
 
-export default function AdminCourtesyTemplatePage({
+export default function AdminReminderTemplatePage({
   embeddedInHub = false,
 }: {
   embeddedInHub?: boolean;
@@ -196,14 +186,14 @@ export default function AdminCourtesyTemplatePage({
   const [isDirty, setIsDirty] = useState(false);
   const [subjectInput, setSubjectInput] = useState("");
 
-  const { data: eventForEditor, isFetching: isFetchingTemplate } = useQuery({
-    queryKey: ["/api/admin/events", selectedEvent?.id, "courtesy-detail"],
+  const { data: templateData, isFetching } = useQuery<{ body: string; subject: string }>({
+    queryKey: ["/api/admin/events", selectedEvent?.id, "reminder-template"],
     queryFn: async () => {
       const res = await apiRequest(
         "GET",
-        `/api/admin/events/${selectedEvent!.id}`,
+        `/api/admin/events/${selectedEvent!.id}/reminder-template`,
       );
-      return res.json() as Promise<Event>;
+      return res.json() as Promise<{ body: string; subject: string }>;
     },
     enabled: !!selectedEvent?.id,
   });
@@ -214,10 +204,7 @@ export default function AdminCourtesyTemplatePage({
       UnderlineExt,
       Link.configure({
         openOnClick: false,
-        HTMLAttributes: {
-          rel: "noopener noreferrer",
-          target: "_blank",
-        },
+        HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" },
       }),
       TextAlign.configure({ types: ["heading", "paragraph"] }),
       TextStyle,
@@ -226,8 +213,7 @@ export default function AdminCourtesyTemplatePage({
     content: "",
     editorProps: {
       attributes: {
-        class:
-          "prose prose-sm max-w-none focus:outline-none min-h-[320px] p-4",
+        class: "prose prose-sm max-w-none focus:outline-none min-h-[320px] p-4",
       },
     },
     onUpdate: () => {
@@ -243,12 +229,12 @@ export default function AdminCourtesyTemplatePage({
       setIsDirty(false);
       return;
     }
-    if (!eventForEditor || eventForEditor.id !== selectedEvent.id) return;
-    const html = eventForEditor.courtesyTemplate ?? "";
+    if (!templateData) return;
+    const html = templateData.body ?? "";
     editor.commands.setContent(html || "<p></p>", { emitUpdate: false });
-    setSubjectInput(eventForEditor.courtesyEmailSubject ?? "");
+    setSubjectInput(templateData.subject ?? "");
     setIsDirty(false);
-  }, [editor, selectedEvent, eventForEditor]);
+  }, [editor, selectedEvent, templateData]);
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -265,30 +251,24 @@ export default function AdminCourtesyTemplatePage({
     if (!editor || !selectedEvent) return;
     setIsSaving(true);
     try {
-      let template = editor.getHTML();
-      const stripped = template.replace(/\s/g, "");
-      if (stripped === "<p></p>" || stripped === "") {
-        template = "";
-      }
+      let body = editor.getHTML();
+      const stripped = body.replace(/\s/g, "");
+      if (stripped === "<p></p>" || stripped === "") body = "";
 
       await apiRequest(
         "PATCH",
-        `/api/admin/events/${selectedEvent.id}/courtesy-template`,
-        { template, subject: subjectInput },
+        `/api/admin/events/${selectedEvent.id}/reminder-template`,
+        { body, subject: subjectInput },
       );
       setIsDirty(false);
       await queryClient.invalidateQueries({
-        queryKey: ["/api/admin/events", selectedEvent.id, "courtesy-detail"],
+        queryKey: ["/api/admin/events", selectedEvent.id, "reminder-template"],
       });
-      toast({
-        title: "Template salvo",
-        description: "As alterações foram salvas com sucesso.",
-      });
+      toast({ title: "Template salvo", description: "Alterações salvas com sucesso." });
     } catch (err) {
       toast({
         title: "Erro ao salvar",
-        description:
-          err instanceof Error ? err.message : "Algo deu errado. Tente de novo.",
+        description: err instanceof Error ? err.message : "Algo deu errado.",
         variant: "destructive",
       });
     } finally {
@@ -307,16 +287,14 @@ export default function AdminCourtesyTemplatePage({
       >
         {!embeddedInHub ? (
           <div>
-            <p className="text-sm text-muted-foreground">
-              Admin / Template e-mail cortesia
-            </p>
+            <p className="text-sm text-muted-foreground">Admin / Template lembrete</p>
             <h1 className="text-2xl font-bold tracking-tight">
-              Template de e-mail de cortesia
+              Template de lembrete de resgate
             </h1>
           </div>
         ) : (
           <h2 className="text-xl font-semibold tracking-tight">
-            Template de e-mail de cortesia
+            Template de lembrete de resgate
           </h2>
         )}
 
@@ -330,9 +308,9 @@ export default function AdminCourtesyTemplatePage({
 
         {!selectedEvent ? (
           <div className="flex min-h-[320px] items-center justify-center rounded-lg border border-dashed p-8 text-center text-muted-foreground">
-            Selecione um evento acima para carregar ou criar o template.
+            Selecione um evento acima para carregar ou criar o template de lembrete.
           </div>
-        ) : isFetchingTemplate && !eventForEditor ? (
+        ) : isFetching && !templateData ? (
           <div className="flex min-h-[320px] items-center justify-center rounded-lg border border-dashed p-8 text-center text-muted-foreground">
             <Loader2 className="h-8 w-8 animate-spin" />
           </div>
@@ -341,21 +319,20 @@ export default function AdminCourtesyTemplatePage({
             <div className="min-w-0 flex-1 space-y-4">
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Assunto do e-mail</CardTitle>
+                  <CardTitle className="text-base">Assunto do e-mail de lembrete</CardTitle>
                   <CardDescription>
-                    Texto simples (sem HTML). Você pode usar as mesmas variáveis
-                    do corpo:{" "}
+                    Texto simples (sem HTML). Mesmas variáveis que o corpo:{" "}
                     {DYNAMIC_VARIABLES.map((v) => v.tag).join(", ")}.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="pt-0">
-                  <Label htmlFor="courtesy-email-subject" className="sr-only">
+                  <Label htmlFor="reminder-email-subject" className="sr-only">
                     Assunto
                   </Label>
                   <Input
-                    id="courtesy-email-subject"
+                    id="reminder-email-subject"
                     type="text"
-                    placeholder='Ex.: Cortesia para o evento {evento}'
+                    placeholder='Ex.: Lembrete — {evento}'
                     value={subjectInput}
                     maxLength={998}
                     onChange={(e) => {
@@ -364,17 +341,17 @@ export default function AdminCourtesyTemplatePage({
                     }}
                   />
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Deixe em branco para usar o assunto padrão automático.
+                    Deixe em branco para usar o assunto padrão automático (igual
+                    cortesia).
                   </p>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader className="pb-0">
-                  <CardTitle className="text-base">Corpo do e-mail</CardTitle>
+                  <CardTitle className="text-base">Corpo do e-mail de lembrete</CardTitle>
                   <CardDescription>
-                    Cole do Word ou digite aqui. Use o painel ao lado para
-                    copiar variáveis dinâmicas.
+                    Use o painel ao lado para copiar variáveis dinâmicas.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
@@ -415,8 +392,7 @@ export default function AdminCourtesyTemplatePage({
                 <CardHeader>
                   <CardTitle className="text-base">Variáveis dinâmicas</CardTitle>
                   <CardDescription>
-                    Clique em uma variável para copiar e cole no texto onde
-                    quiser.
+                    Clique para copiar e cole no texto onde quiser.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -441,12 +417,9 @@ export default function AdminCourtesyTemplatePage({
                           {v.label}
                         </span>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        {v.description}
-                      </p>
+                      <p className="text-xs text-muted-foreground">{v.description}</p>
                       <p className="text-xs italic text-muted-foreground">
-                        ex.:{" "}
-                        <span className="text-foreground">{v.example}</span>
+                        ex.: <span className="text-foreground">{v.example}</span>
                       </p>
                     </button>
                   ))}
@@ -454,8 +427,8 @@ export default function AdminCourtesyTemplatePage({
                   <Separator />
 
                   <p className="text-xs text-muted-foreground">
-                    Na hora do envio, cada variável é trocada pelos dados reais.
-                    Variáveis desconhecidas permanecem no texto.
+                    Na hora do envio, cada variável é trocada pelos dados reais do
+                    destinatário. O {"{link}"} usa a URL de resgate já gerada.
                   </p>
                 </CardContent>
               </Card>

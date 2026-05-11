@@ -1,4 +1,5 @@
-import { Switch, Route } from "wouter";
+import { useLayoutEffect } from "react";
+import { Switch, Route, useLocation, useParams, useSearch } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -21,17 +22,58 @@ import NotFound from "@/pages/not-found";
 import Navigation from "@/components/Navigation";
 import AdminRoute from "@/components/AdminRoute";
 import CourtesyMassSendingPage from "@/pages/CourtesyMassSendingPage";
-import CertificateTemplateAdminPage from "@/pages/CertificateTemplateAdminPage";
 import AdminShell from "@/components/AdminShell";
 import AdminParticipantsPage from "@/pages/AdminParticipantsPage";
-import AdminCourtesyTemplatePage from "@/pages/AdminCourtesyTemplatePage";
-import AdminCreateEventPage from "@/pages/AdminCreateEventPage";
-import AdminEventsListPage from "@/pages/AdminEventsListPage";
+import AdminTemplatesHubPage from "@/pages/AdminTemplatesHubPage";
+import AdminEventsHubPage from "@/pages/AdminEventsHubPage";
 import AdminEditEventPage from "@/pages/AdminEditEventPage";
 import AdminCommercialSalesPage from "@/pages/AdminCommercialSalesPage";
-import AdminCourtesyQuotaPage from "@/pages/AdminCourtesyQuotaPage";
+import AdminCourtesiasHubPage from "@/pages/AdminCourtesiasHubPage";
 import AdminCourtesyLinkRedemptionsPage from "@/pages/AdminCourtesyLinkRedemptionsPage";
 import AdminPrintTerminalPage from "@/pages/AdminPrintTerminalPage";
+import CertificateTemplateAdminPage from "@/pages/CertificateTemplateAdminPage";
+
+function AdminEventsNewRedirect() {
+  const [, navigate] = useLocation();
+  useLayoutEffect(() => {
+    navigate("/admin/events?tab=novo", { replace: true });
+  }, [navigate]);
+  return null;
+}
+
+function AdminCourtesyQuotaLegacyRedirect() {
+  const [, navigate] = useLocation();
+  useLayoutEffect(() => {
+    navigate("/admin/cortesias?tab=limite", { replace: true });
+  }, [navigate]);
+  return null;
+}
+
+function AdminCourtesiasLimitePathRedirect() {
+  const [, navigate] = useLocation();
+  useLayoutEffect(() => {
+    navigate("/admin/cortesias?tab=limite", { replace: true });
+  }, [navigate]);
+  return null;
+}
+
+function AdminCourtesyQuotaResgatesLegacyRedirect() {
+  const params = useParams<{ linkId?: string }>();
+  const search = useSearch();
+  const [, navigate] = useLocation();
+  useLayoutEffect(() => {
+    const linkId = params.linkId?.trim();
+    if (!linkId) return;
+    const suffix =
+      search.trim() === ""
+        ? ""
+        : search.startsWith("?")
+          ? search
+          : `?${search}`;
+    navigate(`/admin/cortesias/resgates/${linkId}${suffix}`, { replace: true });
+  }, [params.linkId, search, navigate]);
+  return null;
+}
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -57,61 +99,62 @@ function Router() {
         <Route path="/verify-email" component={VerifyCodePage} />
         <Route path="/profile" component={ProfilePage} />
         <Route path="/event/:id" component={EventDetailsPage} />
-        <Route path="/verificar">
+        <Route path="/admin/verificar">
           <AdminRoute>
             <AdminShell>
               <QRScannerPage />
             </AdminShell>
           </AdminRoute>
         </Route>
-        <Route path="/enviar-template">
+        <Route path="/admin/templates">
           <AdminRoute>
             <AdminShell>
-              <CertificateTemplateAdminPage />
+              <AdminTemplatesHubPage />
             </AdminShell>
           </AdminRoute>
         </Route>
         <Route path="/admin-test" component={AdminTestPage} />
         <Route path="/cortesia" component={CourtesyRedeemPage} />
-        <Route path="/cortesia-admin">
-          <AdminRoute>
-            <AdminShell>
-              <CourtesyAdminPage />
-            </AdminShell>
-          </AdminRoute>
-        </Route>
-        <Route path="/admin/courtesy-quota/resgates/:linkId">
-          <AdminRoute>
-            <AdminShell>
-              <AdminCourtesyLinkRedemptionsPage />
-            </AdminShell>
-          </AdminRoute>
-        </Route>
-        <Route path="/admin/courtesy-quota">
-          <AdminRoute>
-            <AdminShell>
-              <AdminCourtesyQuotaPage />
-            </AdminShell>
-          </AdminRoute>
-        </Route>
-        <Route path="/cortesia-envio-em-massa">
+        <Route path="/admin/cortesias/envio-em-massa">
           <AdminRoute>
             <AdminShell>
               <CourtesyMassSendingPage />
             </AdminShell>
           </AdminRoute>
         </Route>
+        <Route path="/admin/cortesias/resgates/:linkId">
+          <AdminRoute>
+            <AdminShell>
+              <AdminCourtesyLinkRedemptionsPage />
+            </AdminShell>
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/cortesias/limite">
+          <AdminRoute>
+            <AdminCourtesiasLimitePathRedirect />
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/cortesias">
+          <AdminRoute>
+            <AdminShell>
+              <AdminCourtesiasHubPage />
+            </AdminShell>
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/courtesy-quota/resgates/:linkId">
+          <AdminRoute>
+            <AdminCourtesyQuotaResgatesLegacyRedirect />
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/courtesy-quota">
+          <AdminRoute>
+            <AdminCourtesyQuotaLegacyRedirect />
+          </AdminRoute>
+        </Route>
         <Route path="/admin/participants">
           <AdminRoute>
             <AdminShell>
               <AdminParticipantsPage />
-            </AdminShell>
-          </AdminRoute>
-        </Route>
-        <Route path="/admin/courtesy-template">
-          <AdminRoute>
-            <AdminShell>
-              <AdminCourtesyTemplatePage />
             </AdminShell>
           </AdminRoute>
         </Route>
@@ -131,8 +174,13 @@ function Router() {
         </Route>
         <Route path="/admin/events/new">
           <AdminRoute>
+            <AdminEventsNewRedirect />
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/events/certificate-template">
+          <AdminRoute>
             <AdminShell>
-              <AdminCreateEventPage />
+              <CertificateTemplateAdminPage />
             </AdminShell>
           </AdminRoute>
         </Route>
@@ -146,7 +194,7 @@ function Router() {
         <Route path="/admin/events">
           <AdminRoute>
             <AdminShell>
-              <AdminEventsListPage />
+              <AdminEventsHubPage />
             </AdminShell>
           </AdminRoute>
         </Route>

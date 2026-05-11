@@ -34,7 +34,11 @@ import {
 import type { Event } from "@shared/schema";
 import { sanitizeEventDescriptionHtml } from "@/lib/eventDescriptionHtml";
 
-export default function AdminCreateEventPage() {
+export default function AdminCreateEventPage({
+  variant = "standalone",
+}: {
+  variant?: "standalone" | "hub";
+} = {}) {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -81,7 +85,9 @@ export default function AdminCreateEventPage() {
         title: "Evento criado!",
         description: `"${newEvent.title}" foi adicionado com sucesso.`,
       });
-      setLocation("/admin/events");
+      setLocation(
+        variant === "hub" ? "/admin/events?tab=list" : "/admin/events",
+      );
     } catch (err) {
       toast({
         title: "Erro",
@@ -92,12 +98,20 @@ export default function AdminCreateEventPage() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-8">
+    <div
+      className={
+        variant === "hub" ? "mx-auto max-w-2xl px-0 py-2" : "mx-auto max-w-2xl px-4 py-8"
+      }
+    >
       <Breadcrumb className="mb-4">
         <BreadcrumbList>
           <BreadcrumbItem>
             <BreadcrumbLink asChild>
-              <Link href="/admin/events">Eventos</Link>
+              <Link
+                href={variant === "hub" ? "/admin/events?tab=list" : "/admin/events"}
+              >
+                Eventos
+              </Link>
             </BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator />

@@ -1,5 +1,5 @@
 /**
- * Replaces dynamic variable tags in an HTML email template.
+ * Replaces dynamic variable tags in an HTML email template or plain-text subject.
  *
  * Supported tags (single curly braces, case-sensitive):
  *   {nome}    → recipient's full name

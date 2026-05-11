@@ -12,6 +12,7 @@ type PatchCourtesyLinkResponse = {
 };
 
 export type CourtesyLinkActiveToggleButtonProps = {
+  eventId: string;
   linkId: string;
   isActive: boolean;
   disabled?: boolean;
@@ -22,6 +23,7 @@ export type CourtesyLinkActiveToggleButtonProps = {
 };
 
 export function CourtesyLinkActiveToggleButton({
+  eventId,
   linkId,
   isActive,
   disabled,
@@ -35,7 +37,10 @@ export function CourtesyLinkActiveToggleButton({
   const mutation = useMutation({
     mutationFn: async (): Promise<PatchCourtesyLinkResponse> => {
       const next = !isActive;
-      const res = await apiRequest("PATCH", `/api/admin/courtesy-links/${linkId}`, {
+      const res = await apiRequest(
+        "PATCH",
+        `/api/admin/events/${eventId}/courtesy-links/${linkId}`,
+        {
         isActive: next,
       });
       return res.json() as Promise<PatchCourtesyLinkResponse>;

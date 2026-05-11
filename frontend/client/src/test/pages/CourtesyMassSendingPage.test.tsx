@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("wouter", () => ({
   useSearch: () => "",
-  useLocation: () => ["/cortesia-envio-em-massa", () => {}],
+  useLocation: () => ["/admin/cortesias/envio-em-massa", () => {}],
 }));
 
 vi.mock("../../lib/exportMassSendExcel", () => ({
@@ -33,6 +33,7 @@ const MOCK_EVENTS = [
     updatedAt: "2026-01-01",
     certificateTemplateUrl: null,
     courtesyTemplate: null,
+    courtesyEmailSubject: null,
   },
 ];
 
@@ -119,6 +120,13 @@ beforeEach(() => {
     async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
 
+      if (url.includes("courtesy-unredeemed-total")) {
+        return new Response(JSON.stringify({ totalRemainingSlots: 12 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
       if (url.includes("/api/admin/events") && !url.includes("mass-send-recipients") && !url.includes("courtesy-links")) {
         return new Response(JSON.stringify(MOCK_EVENTS), {
           status: 200,
@@ -154,8 +162,14 @@ beforeEach(() => {
         );
       }
 
-      if (url.includes("mass-send") && input instanceof Request) {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      if (
+        url.includes("/api/admin/courtesy/mass-send") ||
+        (url.includes("/courtesy/mass-send") && !url.includes("mass-send-recipients"))
+      ) {
+        return new Response(
+          JSON.stringify({ message: "Processamento iniciado." }),
+          { status: 202, headers: { "Content-Type": "application/json" } },
+        );
       }
 
       return new Response("Not found", { status: 404 });
@@ -177,6 +191,33 @@ describe("CourtesyMassSendingPage (T-06+)", () => {
     expect(
       screen.getByLabelText(/arquivo csv/i, { exact: false }),
     ).toBeInTheDocument();
+  });
+
+  it("Envio faz POST para /api/admin/courtesy/mass-send quando o CSV está anexado", async () => {
+    const user = userEvent.setup();
+    render(<CourtesyMassSendingPage />, { wrapper: Wrapper });
+
+    const csvInput = screen.getByLabelText(/arquivo csv/i, { exact: false });
+    const csv = new File(
+      [
+        "name,email,amount_of_courtesies,event_id\nA,a@b.co,1,00000000-0000-4000-8000-000000000001\n",
+      ],
+      "rows.csv",
+      { type: "text/csv" },
+    );
+    await user.upload(csvInput, csv);
+
+    await user.click(screen.getByRole("button", { name: /enviar e-mails/i }));
+
+    await waitFor(() => {
+      const massSendCalls = fetchSpy.mock.calls.filter(([req]: [RequestInfo | URL, unknown]) => {
+        const url = typeof req === "string" ? req : req.toString();
+        return url.includes("/api/admin/courtesy/mass-send");
+      });
+      expect(massSendCalls.length).toBeGreaterThan(0);
+      const last = massSendCalls[massSendCalls.length - 1];
+      expect((last[1] as RequestInit)?.method).toBe("POST");
+    });
   });
 
   it("T-07: abre Visualizar, seleciona evento e carrega a lista de destinatários", async () => {
@@ -306,5 +347,116 @@ describe("CourtesyMassSendingPage (T-06+)", () => {
       MOCK_RECIPIENTS.data,
       "Evento Massa",
     );
+  });
+});
+
+describe("CourtesyMassSendingPage — aba Resgate Pendente (T-09+)", () => {
+  it("T-09: exibe a aba Resgate Pendente", () => {
+    render(<CourtesyMassSendingPage />, { wrapper: Wrapper });
+    expect(
+      screen.getByRole("tab", { name: /resgate pendente/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("exibe Cortesias Não Resgatadas e total após escolher evento", async () => {
+    const user = userEvent.setup();
+    render(<CourtesyMassSendingPage />, { wrapper: Wrapper });
+    await user.click(screen.getByRole("tab", { name: /resgate pendente/i }));
+
+    expect(screen.getByText(/cortesias não resgatadas/i)).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
+
+    const combobox = await screen.findByRole("combobox");
+    await user.click(combobox);
+    const option = await screen.findByText("Evento Massa", { exact: false });
+    await user.click(option);
+
+    await waitFor(() => {
+      expect(screen.getByText("12")).toBeInTheDocument();
+    });
+  });
+
+  it("T-10: aba Resgate Pendente exibe seletor de evento, upload de anexo e botão Enviar", async () => {
+    const user = userEvent.setup();
+    render(<CourtesyMassSendingPage />, { wrapper: Wrapper });
+    await user.click(screen.getByRole("tab", { name: /resgate pendente/i }));
+    expect(screen.getByRole("combobox")).toBeInTheDocument();
+    expect(screen.getByLabelText(/anexo/i, { exact: false })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /enviar/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("T-11: botão Enviar fica desabilitado enquanto nenhum evento é selecionado", async () => {
+    const user = userEvent.setup();
+    render(<CourtesyMassSendingPage />, { wrapper: Wrapper });
+    await user.click(screen.getByRole("tab", { name: /resgate pendente/i }));
+    expect(screen.getByRole("button", { name: /enviar/i })).toBeDisabled();
+  });
+
+  it("T-12: clicar Enviar com evento selecionado faz POST em /api/admin/events/:id/reminder-send", async () => {
+    const user = userEvent.setup();
+    render(<CourtesyMassSendingPage />, { wrapper: Wrapper });
+    await user.click(screen.getByRole("tab", { name: /resgate pendente/i }));
+
+    const combobox = await screen.findByRole("combobox");
+    await user.click(combobox);
+    const option = await screen.findByText("Evento Massa", { exact: false });
+    await user.click(option);
+
+    const sendBtn = screen.getByRole("button", { name: /enviar/i });
+    expect(sendBtn).not.toBeDisabled();
+    await user.click(sendBtn);
+
+    await waitFor(() => {
+      const postCall = (fetchSpy.mock.calls as [RequestInfo | URL, RequestInit | undefined][]).find(
+        ([url]) => typeof url === "string" && url.includes("reminder-send"),
+      );
+      expect(postCall).toBeDefined();
+      expect((postCall![1] as RequestInit).method).toBe("POST");
+    });
+  });
+
+  it("T-13: quando a API retorna erro, exibe mensagem em português", async () => {
+    fetchSpy.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("courtesy-unredeemed-total")) {
+        return new Response(JSON.stringify({ totalRemainingSlots: 0 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (url.includes("/api/admin/events") && !url.includes("reminder-send") && !url.includes("mass-send")) {
+        return new Response(JSON.stringify(MOCK_EVENTS), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("reminder-send")) {
+        return new Response(
+          JSON.stringify({ message: "Evento indisponível para envio." }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    });
+
+    const user = userEvent.setup();
+    render(<CourtesyMassSendingPage />, { wrapper: Wrapper });
+    await user.click(screen.getByRole("tab", { name: /resgate pendente/i }));
+
+    const combobox = await screen.findByRole("combobox");
+    await user.click(combobox);
+    const option = await screen.findByText("Evento Massa", { exact: false });
+    await user.click(option);
+
+    await user.click(screen.getByRole("button", { name: /enviar/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/evento indispon/i),
+      ).toBeInTheDocument();
+    });
   });
 });

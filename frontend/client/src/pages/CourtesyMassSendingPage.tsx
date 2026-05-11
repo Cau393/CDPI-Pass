@@ -42,17 +42,21 @@ type MassSendRecipientsRes = { data: MassSendRecipient[]; total: number };
 
 const MAX_EXPORT_PAGES = 500;
 
-function tabFromSearch(search: string): "envio" | "visualizar" {
+type ActiveTab = "envio" | "visualizar" | "resgate-pendente";
+
+function tabFromSearch(search: string): ActiveTab {
   const t = new URLSearchParams(
     search.startsWith("?") ? search.slice(1) : search,
   ).get("tab");
-  return t === "visualizar" ? "visualizar" : "envio";
+  if (t === "visualizar") return "visualizar";
+  if (t === "resgate-pendente") return "resgate-pendente";
+  return "envio";
 }
 
 export default function CourtesyMassSendingPage() {
   const search = useSearch();
   const initialTab = useMemo(() => tabFromSearch(search), [search]);
-  const [activeTab, setActiveTab] = useState<"envio" | "visualizar">(initialTab);
+  const [activeTab, setActiveTab] = useState<ActiveTab>(initialTab);
 
   useEffect(() => {
     setActiveTab(tabFromSearch(search));
@@ -61,6 +65,10 @@ export default function CourtesyMassSendingPage() {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
   const { toast } = useToast();
+
+  const [reminderEvent, setReminderEvent] = useState<Event | null>(null);
+  const [reminderAttachment, setReminderAttachment] = useState<File | null>(null);
+  const [reminderError, setReminderError] = useState<string | null>(null);
 
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [view, setView] = useState<"list" | "redeemers">("list");
@@ -84,7 +92,11 @@ export default function CourtesyMassSendingPage() {
 
   const mutation = useMutation({
     mutationFn: (formData: FormData) => {
-      return apiRequest("POST", "/api/courtesy/mass-send", formData);
+      return apiRequest(
+        "POST",
+        `/api/admin/courtesy/mass-send`,
+        formData,
+      );
     },
     onSuccess: async () => {
       toast({
@@ -102,6 +114,60 @@ export default function CourtesyMassSendingPage() {
         variant: "destructive",
       });
     },
+  });
+
+  const reminderMutation = useMutation({
+    mutationFn: async (formData: FormData) => {
+      if (!reminderEvent?.id) throw new Error("no event");
+      const res = await apiRequest(
+        "POST",
+        `/api/admin/events/${reminderEvent.id}/reminder-send`,
+        formData,
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { message?: string }).message ?? `Erro ${res.status}`);
+      }
+      return res;
+    },
+    onSuccess: () => {
+      setReminderError(null);
+      setReminderAttachment(null);
+      toast({
+        title: "Lembretes enfileirados",
+        description: "Os e-mails de lembrete serão enviados em breve.",
+      });
+      void queryClient.invalidateQueries({ queryKey: ["courtesy-unredeemed-total"] });
+    },
+    onError: (error: Error) => {
+      setReminderError(error.message);
+    },
+  });
+
+  const {
+    data: unredeemedData,
+    isLoading: unredeemedLoading,
+    isError: unredeemedError,
+  } = useQuery<{ totalRemainingSlots: number }>({
+    queryKey: ["courtesy-unredeemed-total", reminderEvent?.id],
+    queryFn: async () => {
+      if (!reminderEvent?.id) throw new Error("no event");
+      const res = await apiRequest(
+        "GET",
+        `/api/admin/events/${reminderEvent.id}/courtesy-unredeemed-total`,
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          (body as { message?: string; error?: string }).message ??
+            (body as { error?: string }).error ??
+            `Erro ${res.status}`,
+        );
+      }
+      return res.json() as Promise<{ totalRemainingSlots: number }>;
+    },
+    enabled:
+      !!reminderEvent?.id && activeTab === "resgate-pendente",
   });
 
   const bulkSetMassSendActiveMutation = useMutation({
@@ -219,12 +285,15 @@ export default function CourtesyMassSendingPage() {
 
   const handleTabChange = useCallback(
     (v: string) => {
-      const next = v === "visualizar" ? "visualizar" : "envio";
+      const next: ActiveTab =
+        v === "visualizar" ? "visualizar"
+        : v === "resgate-pendente" ? "resgate-pendente"
+        : "envio";
       setActiveTab(next);
       const path =
-        next === "visualizar"
-          ? "/cortesia-envio-em-massa?tab=visualizar"
-          : "/cortesia-envio-em-massa";
+        next === "visualizar" ? "/admin/cortesias/envio-em-massa?tab=visualizar"
+        : next === "resgate-pendente" ? "/admin/cortesias/envio-em-massa?tab=resgate-pendente"
+        : "/admin/cortesias/envio-em-massa";
       globalThis.history.replaceState(null, "", path);
     },
     [],
@@ -280,6 +349,7 @@ export default function CourtesyMassSendingPage() {
         <TabsList className="mb-6">
           <TabsTrigger value="envio">Envio</TabsTrigger>
           <TabsTrigger value="visualizar">Visualizar</TabsTrigger>
+          <TabsTrigger value="resgate-pendente">Resgate Pendente</TabsTrigger>
         </TabsList>
 
         <TabsContent value="envio" className="mt-0">
@@ -288,7 +358,7 @@ export default function CourtesyMassSendingPage() {
               <CardTitle>Enviar Cortesias por CSV</CardTitle>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-6">
+              <form onSubmit={handleSubmit} className="space-y-6" noValidate>
                 <div className="space-y-2">
                   <Label htmlFor="csvFile">Arquivo CSV *</Label>
                   <Input
@@ -298,9 +368,14 @@ export default function CourtesyMassSendingPage() {
                     onChange={handleCsvChange}
                     required
                   />
-                  <p className="text-sm text-gray-500">
-                    O arquivo deve conter as colunas: name, email,
-                    amount_of_courtesies, event_id
+                  <p className="text-sm text-muted-foreground">
+                    O arquivo deve conter as colunas:{" "}
+                    <code className="text-xs">name</code>,{" "}
+                    <code className="text-xs">email</code>,{" "}
+                    <code className="text-xs">amount_of_courtesies</code>,{" "}
+                    <code className="text-xs">event_id</code>. Cada linha define o
+                    evento pelo UUID em <code className="text-xs">event_id</code>
+                    {" "}(você pode copiá-lo na lista de eventos no admin).
                   </p>
                 </div>
 
@@ -322,7 +397,7 @@ export default function CourtesyMassSendingPage() {
                   )}
                 </div>
 
-                <Button type="submit" disabled={mutation.isPending}>
+                <Button type="submit" disabled={mutation.isPending || !csvFile}>
                   {mutation.isPending ? "Enviando..." : "Enviar E-mails"}
                 </Button>
               </form>
@@ -491,7 +566,8 @@ export default function CourtesyMassSendingPage() {
                                 onClick={(e) => e.stopPropagation()}
                                 onKeyDown={(e) => e.stopPropagation()}
                               >
-                                <CourtesyLinkActiveToggleButton
+                <CourtesyLinkActiveToggleButton
+                                  eventId={selectedEvent!.id}
                                   linkId={r.id}
                                   isActive={r.isActive}
                                   onSuccess={() => {
@@ -558,6 +634,82 @@ export default function CourtesyMassSendingPage() {
                   Selecione um evento para ver os destinatários do envio em massa.
                 </p>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="resgate-pendente" className="mt-0">
+          <Card>
+            <CardHeader>
+              <CardTitle>Lembrete de Resgate Pendente</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Label>Evento</Label>
+                  <EventSelector
+                    value={reminderEvent?.id ?? null}
+                    onSelect={(ev) => {
+                      setReminderEvent(ev);
+                      setReminderError(null);
+                    }}
+                  />
+                </div>
+                <div className="flex shrink-0 flex-col gap-1 sm:items-end">
+                  <p className="text-sm text-muted-foreground">
+                    Cortesias Não Resgatadas
+                  </p>
+                  {!reminderEvent && (
+                    <p className="text-3xl font-semibold tabular-nums text-muted-foreground sm:text-right">
+                      —
+                    </p>
+                  )}
+                  {reminderEvent && unredeemedLoading && (
+                    <Skeleton className="h-9 w-20 sm:ml-auto" />
+                  )}
+                  {reminderEvent && !unredeemedLoading && unredeemedError && (
+                    <p className="text-sm text-destructive sm:text-right">
+                      Não foi possível carregar
+                    </p>
+                  )}
+                  {reminderEvent &&
+                    !unredeemedLoading &&
+                    !unredeemedError && (
+                    <p className="text-3xl font-semibold tabular-nums sm:text-right">
+                      {unredeemedData?.totalRemainingSlots ?? 0}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="reminder-attachment">Anexo (Opcional)</Label>
+                <Input
+                  id="reminder-attachment"
+                  type="file"
+                  onChange={(e) => setReminderAttachment(e.target.files?.[0] ?? null)}
+                />
+              </div>
+
+              {reminderError && (
+                <p className="text-sm text-destructive">{reminderError}</p>
+              )}
+
+              <Button
+                type="button"
+                disabled={!reminderEvent || reminderMutation.isPending}
+                onClick={() => {
+                  if (!reminderEvent) return;
+                  setReminderError(null);
+                  const formData = new FormData();
+                  if (reminderAttachment) {
+                    formData.append("attachment", reminderAttachment);
+                  }
+                  reminderMutation.mutate(formData);
+                }}
+              >
+                {reminderMutation.isPending ? "Enviando..." : "Enviar"}
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>

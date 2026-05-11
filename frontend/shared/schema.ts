@@ -52,6 +52,8 @@ export const events = pgTable("events", {
   certificateTemplateUrl: text("certificate_template_url"),
   /** Custom HTML for courtesy mass-send emails; placeholders {nome}, {evento}, {data}, {link}. */
   courtesyTemplate: text("courtesy_template"),
+  /** Plain-text subject template for courtesy mass-send; same placeholders; null = use default subject. */
+  courtesyEmailSubject: text("courtesy_email_subject"),
 });
 
 // Generated certificates (one per user per event)
@@ -115,7 +117,7 @@ export const orders = pgTable("orders", {
 export const emailQueue = pgTable("email_queue", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   to: varchar("to", { length: 255 }).notNull(),
-  subject: varchar("subject", { length: 255 }).notNull(),
+  subject: text("subject").notNull(),
   html: text("html"),
   text: text("text"),
   attachments: text('attachments'),
@@ -150,6 +152,30 @@ export const massSendJobs = pgTable('mass_send_jobs', {
   createdBy: text('created_by').notNull().references(() => users.id),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** Reminder e-mail template per event; keyed by event_id. */
+export const reminderTemplates = pgTable("reminder_templates", {
+  eventId: varchar("event_id")
+    .primaryKey()
+    .references(() => events.id, { onDelete: "cascade" }),
+  body: text("body").notNull().default(""),
+  /** Plain-text subject line template; same {nome},{evento},{data},{link} placeholders; empty = default subject. */
+  subject: text("subject").notNull().default(""),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** Reminder send jobs: same queue pattern as massSendJobs. */
+export const reminderJobs = pgTable("reminder_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  status: text("status", { enum: ["pending", "processing", "completed", "failed"] })
+    .default("pending")
+    .notNull(),
+  eventId: varchar("event_id").notNull().references(() => events.id),
+  attachmentData: text("attachment_data"),
+  createdBy: text("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 /** One row per event: toggle automatic Zebra print queue on check-in. */
@@ -331,6 +357,8 @@ export type InsertCourtesyAttendee = z.infer<typeof insertCourtesyAttendeeSchema
 export type Certificate = typeof certificates.$inferSelect;
 export type EventPrintSettings = typeof eventPrintSettings.$inferSelect;
 export type PrintJob = typeof printJobs.$inferSelect;
+export type ReminderTemplate = typeof reminderTemplates.$inferSelect;
+export type ReminderJob = typeof reminderJobs.$inferSelect;
 
 // Login schema
 export const loginSchema = z.object({

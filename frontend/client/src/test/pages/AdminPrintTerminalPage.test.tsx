@@ -22,6 +22,7 @@ const mockEvent: Event = {
   updatedAt: new Date(),
   certificateTemplateUrl: null,
   courtesyTemplate: null,
+  courtesyEmailSubject: null,
 };
 
 vi.mock("@/components/admin/EventSelector", () => ({

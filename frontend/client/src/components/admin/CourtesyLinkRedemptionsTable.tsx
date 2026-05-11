@@ -82,11 +82,11 @@ export default function CourtesyLinkRedemptionsTable({
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
 
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ["courtesy-link-redemptions", link.id],
+    queryKey: ["courtesy-link-redemptions", eventId, link.id],
     queryFn: async (): Promise<RedemptionsResponse> => {
       const res = await apiRequest(
         "GET",
-        `/api/admin/courtesy-links/${link.id}/redemptions`,
+        `/api/admin/events/${eventId}/courtesy-links/${link.id}/redemptions`,
       );
       return res.json() as Promise<RedemptionsResponse>;
     },
@@ -119,7 +119,7 @@ export default function CourtesyLinkRedemptionsTable({
         );
       }
       await Promise.all([
-        qc.invalidateQueries({ queryKey: ["courtesy-link-redemptions", link.id] }),
+        qc.invalidateQueries({ queryKey: ["courtesy-link-redemptions", eventId, link.id] }),
         qc.invalidateQueries({ queryKey: ["mass-send-recipients", eventId] }),
       ]);
       await onCancellationSuccess?.();

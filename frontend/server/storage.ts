@@ -7,6 +7,8 @@ import {
   courtesyLinks,
   courtesyAttendees,
   massSendJobs,
+  reminderTemplates,
+  reminderJobs,
   eventPrintSettings,
   printJobs,
   type User,
@@ -24,7 +26,7 @@ import {
   type PrintJob,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ne, desc, sql, asc, count, and } from "drizzle-orm";
+import { eq, ne, desc, sql, asc, count, and, isNull } from "drizzle-orm";
 import { s3Service } from "./services/s3Service";
 import { buildUndoCheckInPatch } from "./utils/undoCheckInUpdate";
 import { validateCourtesyTicketCountUpdate } from "./utils/courtesyTicketCountUpdate";
@@ -804,6 +806,115 @@ async getPendingMassSendJobs(limit: number = 5) {
         updatedAt: new Date(),
       })
       .where(eq(massSendJobs.id, jobId));
+  }
+
+  async getReminderTemplate(eventId: string): Promise<{
+    body: string;
+    subject: string;
+  } | null> {
+    const [row] = await db
+      .select({
+        body: reminderTemplates.body,
+        subject: reminderTemplates.subject,
+      })
+      .from(reminderTemplates)
+      .where(eq(reminderTemplates.eventId, eventId));
+    return row ?? null;
+  }
+
+  async upsertReminderTemplate(
+    eventId: string,
+    body: string,
+    subject?: string,
+  ): Promise<void> {
+    await db
+      .insert(reminderTemplates)
+      .values({
+        eventId,
+        body,
+        subject: subject ?? "",
+      })
+      .onConflictDoUpdate({
+        target: reminderTemplates.eventId,
+        set: {
+          body,
+          ...(subject !== undefined ? { subject } : {}),
+          updatedAt: new Date(),
+        },
+      });
+  }
+
+  async addReminderJobToQueue(jobData: {
+    eventId: string;
+    attachmentData: string | null;
+    createdBy: string;
+  }) {
+    const [job] = await db
+      .insert(reminderJobs)
+      .values({
+        status: "pending" as const,
+        eventId: jobData.eventId,
+        attachmentData: jobData.attachmentData,
+        createdBy: jobData.createdBy,
+      })
+      .returning();
+    return job;
+  }
+
+  async getPendingReminderJobs(limit = 1) {
+    return db
+      .select()
+      .from(reminderJobs)
+      .where(eq(reminderJobs.status, "pending"))
+      .orderBy(asc(reminderJobs.createdAt))
+      .limit(limit);
+  }
+
+  async updateReminderJobStatus(jobId: string, status: "processing" | "completed" | "failed") {
+    return db
+      .update(reminderJobs)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(reminderJobs.id, jobId));
+  }
+
+  async getEligibleReminderLinks(eventId: string) {
+    return db
+      .select({
+        id: courtesyLinks.id,
+        eventId: courtesyLinks.eventId,
+        code: courtesyLinks.code,
+        recipientEmail: courtesyLinks.recipientEmail,
+        recipientName: courtesyLinks.recipientName,
+        ticketCount: courtesyLinks.ticketCount,
+        usedCount: courtesyLinks.usedCount,
+        isActive: courtesyLinks.isActive,
+        createdAt: courtesyLinks.createdAt,
+      })
+      .from(courtesyLinks)
+      .where(
+        and(
+          eq(courtesyLinks.eventId, eventId),
+          eq(courtesyLinks.isActive, true),
+        ),
+      );
+  }
+
+  /** Sum of max(0, ticketCount - usedCount) over active FREE cortesy links only (exclude promotional override_price rows). */
+  async getCourtesyUnredeemedSlotTotalForEvent(eventId: string): Promise<number> {
+    const [row] = await db
+      .select({
+        total: sql<number>`COALESCE(SUM(GREATEST(${courtesyLinks.ticketCount} - COALESCE(${courtesyLinks.usedCount}, 0), 0)), 0)`,
+      })
+      .from(courtesyLinks)
+      .where(
+        and(
+          eq(courtesyLinks.eventId, eventId),
+          eq(courtesyLinks.isActive, true),
+          isNull(courtesyLinks.overridePrice),
+        ),
+      );
+    const n = row?.total;
+    return typeof n === "bigint" ? Number(n) : Number(n ?? 0);
   }
 }
 

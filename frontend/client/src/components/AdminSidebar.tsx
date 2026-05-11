@@ -1,4 +1,4 @@
-import { Link, useRoute } from "wouter";
+import { Link, useLocation, useRoute } from "wouter";
 import {
   Sidebar,
   SidebarContent,
@@ -14,11 +14,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import {
   CalendarDays,
-  CalendarPlus,
   DollarSign,
   FileText,
   FileUp,
-  Hash,
   LogOut,
   Mail,
   Printer,
@@ -27,21 +25,54 @@ import {
   Users,
 } from "lucide-react";
 
+const EVENT_EDIT_PATH =
+  /^\/admin\/events\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function NavItem({
   href,
+  matchPrefix,
+  cortesiasLinksOnly,
   icon: Icon,
   label,
   tooltip,
 }: {
   href: string;
+  /** Matches active when pathname is under this path (hubs, nested admin routes). */
+  matchPrefix?: string;
+  /** Active apenas em /admin/cortesias e /admin/cortesias/resgates/… (exc. limite e envio-em-massa). */
+  cortesiasLinksOnly?: boolean;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   tooltip: string;
 }) {
-  const [isActive] = useRoute(href);
+  const [pathname] = useLocation();
+  const [routeActive] = useRoute(href);
+  let isActive: boolean;
+  if (cortesiasLinksOnly) {
+    isActive =
+      pathname === "/admin/cortesias" ||
+      pathname.startsWith("/admin/cortesias/resgates/");
+  } else if (matchPrefix) {
+    const p = matchPrefix.split("?")[0];
+    if (p === "/admin/cortesias") {
+      isActive =
+        (pathname === "/admin/cortesias" ||
+          pathname.startsWith(`${p}/`)) &&
+        !pathname.startsWith("/admin/cortesias/envio-em-massa");
+    } else if (p === "/admin/events") {
+      isActive =
+        pathname === "/admin/events" ||
+        pathname === "/admin/events/new" ||
+        EVENT_EDIT_PATH.test(pathname);
+    } else {
+      isActive = pathname === p || pathname.startsWith(`${p}/`);
+    }
+  } else {
+    isActive = !!routeActive;
+  }
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton asChild isActive={!!isActive} tooltip={tooltip}>
+      <SidebarMenuButton asChild isActive={isActive} tooltip={tooltip}>
         <Link href={href} className="flex w-full items-center gap-2 overflow-hidden">
           <Icon className="h-4 w-4 shrink-0" />
           <span>{label}</span>
@@ -74,7 +105,7 @@ export default function AdminSidebar() {
           <SidebarGroupLabel>Administração</SidebarGroupLabel>
           <SidebarMenu>
             <NavItem
-              href="/verificar"
+              href="/admin/verificar"
               icon={ScanLine}
               label="Verificar QR"
               tooltip="Verificar QR"
@@ -84,36 +115,6 @@ export default function AdminSidebar() {
               icon={Printer}
               label="Terminal de impressão"
               tooltip="Terminal Zebra WebUSB"
-            />
-            <NavItem
-              href="/enviar-template"
-              icon={FileUp}
-              label="Template certificado"
-              tooltip="Template certificado"
-            />
-            <NavItem
-              href="/cortesia-admin"
-              icon={Ticket}
-              label="Cortesias"
-              tooltip="Cortesias"
-            />
-            <NavItem
-              href="/admin/courtesy-quota"
-              icon={Hash}
-              label="Limite por código"
-              tooltip="Editar limite de cortesia por código"
-            />
-            <NavItem
-              href="/cortesia-envio-em-massa"
-              icon={Mail}
-              label="Envio em massa"
-              tooltip="Envio em massa"
-            />
-            <NavItem
-              href="/admin/courtesy-template"
-              icon={FileText}
-              label="Template e-mail cortesia"
-              tooltip="Template e-mail cortesia"
             />
             <NavItem
               href="/admin/participants"
@@ -127,17 +128,49 @@ export default function AdminSidebar() {
               label="Vendas Comercial"
               tooltip="Vendas do Comercial"
             />
+          </SidebarMenu>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Cortesias</SidebarGroupLabel>
+          <SidebarMenu>
+            <NavItem
+              href="/admin/cortesias"
+              cortesiasLinksOnly
+              icon={Ticket}
+              label="Links"
+              tooltip="Gerenciar links de cortesia"
+            />
+              <NavItem
+                href="/admin/cortesias/envio-em-massa"
+                matchPrefix="/admin/cortesias/envio-em-massa"
+                icon={Mail}
+                label="Envio em massa"
+                tooltip="Envio em massa"
+              />
+            <NavItem
+              href="/admin/templates"
+              matchPrefix="/admin/templates"
+              icon={FileText}
+              label="Templates"
+              tooltip="Templates de e-mail (cortesia e lembrete)"
+            />
+          </SidebarMenu>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Eventos</SidebarGroupLabel>
+          <SidebarMenu>
             <NavItem
               href="/admin/events"
+              matchPrefix="/admin/events"
               icon={CalendarDays}
               label="Eventos"
-              tooltip="Eventos"
+              tooltip="Lista e novos eventos"
             />
             <NavItem
-              href="/admin/events/new"
-              icon={CalendarPlus}
-              label="Novo evento"
-              tooltip="Novo evento"
+              href="/admin/events/certificate-template"
+              icon={FileUp}
+              label="Template certificado"
+              tooltip="Enviar modelo .docx de certificado por evento"
             />
           </SidebarMenu>
         </SidebarGroup>

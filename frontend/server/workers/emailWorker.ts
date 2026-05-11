@@ -3,6 +3,10 @@ import { emailService } from '../services/emailService';
 import { storage } from '../storage';
 import { parse } from 'csv-parse/sync';
 import { renderTemplate } from '../utils/templateRenderer';
+import {
+  filterEligibleReminderLinks,
+  deduplicateReminderLinksByEmail,
+} from '../utils/reminderEligibility';
 
 interface EmailJob {
   id: string;
@@ -53,16 +57,14 @@ class EmailWorker {
       // Don't start a new cycle if one is already running
       return;
     }
-    
+
     this.isCycleRunning = true;
-    
+
     try {
-      // Run both job processors at the same time
-      // This way, a big email queue doesn't block CSV processing,
-      // and a big CSV job doesn't block emails.
       await Promise.allSettled([
         this.processEmailQueue(),
-        this.processMassSendQueue(), // <-- This is our new function
+        this.processMassSendQueue(),
+        this.processReminderQueue(),
       ]);
     } catch (error) {
       console.error('Error during worker cycle:', error);
@@ -216,15 +218,18 @@ class EmailWorker {
 
           const eventDate =
             event.date instanceof Date ? event.date : new Date(event.date as string | number);
+          const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${link.code}`;
+          const variables: Record<string, string> = {
+            nome: String(name),
+            evento: event.title,
+            data: Number.isNaN(eventDate.getTime()) ? "" : dateFormatter.format(eventDate),
+            link: redeemUrl,
+          };
+          const renderedSubject = event.courtesyEmailSubject?.trim()
+            ? renderTemplate(event.courtesyEmailSubject, variables)
+            : undefined;
 
           if (event.courtesyTemplate?.trim()) {
-            const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${link.code}`;
-            const variables: Record<string, string> = {
-              nome: String(name),
-              evento: event.title,
-              data: Number.isNaN(eventDate.getTime()) ? "" : dateFormatter.format(eventDate),
-              link: redeemUrl,
-            };
             const customMessageBoxHtml = renderTemplate(event.courtesyTemplate, variables);
 
             await emailService.sendCourtesyMassEmail(
@@ -235,6 +240,8 @@ class EmailWorker {
               event.date,
               attachments,
               customMessageBoxHtml,
+              "courtesy_invite",
+              renderedSubject,
             );
           } else {
             await emailService.sendCourtesyMassEmail(
@@ -244,6 +251,9 @@ class EmailWorker {
               link.code,
               event.date,
               attachments,
+              undefined,
+              "courtesy_invite",
+              renderedSubject,
             );
           }
         } else {
@@ -258,6 +268,88 @@ class EmailWorker {
     } catch (error) {
       console.error(`Error processing mass-send job ${job.id}:`, error);
       await storage.updateMassSendJobStatus(job.id, 'failed');
+    }
+  }
+
+  private async processReminderQueue(): Promise<void> {
+    const jobs = await storage.getPendingReminderJobs(1);
+    if (jobs.length === 0) return;
+
+    const job = jobs[0];
+    try {
+      await storage.updateReminderJobStatus(job.id, 'processing');
+
+      const event = await storage.getEvent(job.eventId);
+      if (!event || !event.isActive) {
+        await storage.updateReminderJobStatus(job.id, 'failed');
+        console.warn(`Reminder job ${job.id}: event ${job.eventId} unavailable.`);
+        return;
+      }
+
+      const attachments = job.attachmentData
+        ? [JSON.parse(job.attachmentData)]
+        : undefined;
+
+      const templateRow = await storage.getReminderTemplate(job.eventId);
+      const templateBody = templateRow?.body?.trim() ?? "";
+      const templateSubject = templateRow?.subject?.trim() ?? "";
+
+      const allLinks = await storage.getEligibleReminderLinks(job.eventId);
+      const eligibleLinks = filterEligibleReminderLinks(allLinks);
+      const dedupedLinks = deduplicateReminderLinksByEmail(eligibleLinks);
+      /** Mass-send rows have recipient_email; manual courtesy links often do not — skip those. */
+      const linksWithReminderEmail = dedupedLinks.filter(
+        (l) => (l.recipientEmail ?? "").trim().length > 0,
+      );
+
+      const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
+      const eventDate =
+        event.date instanceof Date ? event.date : new Date(event.date as string | number);
+      const formattedDate = Number.isNaN(eventDate.getTime())
+        ? ''
+        : dateFormatter.format(eventDate);
+
+      for (const link of linksWithReminderEmail) {
+        const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${link.code}`;
+        const variables: Record<string, string> = {
+          nome: link.recipientName ?? '',
+          evento: event.title,
+          data: formattedDate,
+          link: redeemUrl,
+        };
+
+        const customMessageBoxHtml = templateBody
+          ? renderTemplate(templateBody, variables)
+          : undefined;
+        const renderedReminderSubject = templateSubject
+          ? renderTemplate(templateSubject, variables)
+          : undefined;
+
+        await emailService.sendCourtesyMassEmail(
+          link.recipientEmail!,
+          link.recipientName ?? "",
+          event.title,
+          link.code,
+          event.date,
+          attachments,
+          customMessageBoxHtml,
+          "courtesy_reminder",
+          renderedReminderSubject,
+        );
+      }
+
+      await storage.updateReminderJobStatus(job.id, 'completed');
+      console.log(
+        `Reminder job ${job.id}: sent ${linksWithReminderEmail.length} reminder(s); skipped ${dedupedLinks.length - linksWithReminderEmail.length} link(s) without recipient email for event ${job.eventId}.`,
+      );
+    } catch (error) {
+      console.error(`Error processing reminder job ${job.id}:`, error);
+      await storage.updateReminderJobStatus(job.id, 'failed');
     }
   }
 

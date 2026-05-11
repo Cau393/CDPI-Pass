@@ -79,7 +79,7 @@ export default function Navigation() {
                   </button>
                   {user?.isAdmin && (
                     <button
-                      onClick={() => setLocation("/cortesia-admin")}
+                      onClick={() => setLocation("/admin/cortesias")}
                       className="text-white hover:bg-white/10 px-3 py-2 rounded-md text-sm font-medium transition-colors"
                       data-testid="nav-courtesy-admin"
                     >
@@ -130,7 +130,7 @@ export default function Navigation() {
                     </DropdownMenuItem>
                     {user?.isAdmin && (
                       <DropdownMenuItem
-                        onClick={() => setLocation("/cortesia-admin")}
+                        onClick={() => setLocation("/admin/cortesias")}
                         data-testid="menu-courtesy-admin-desktop"
                       >
                         Administração
@@ -172,7 +172,7 @@ export default function Navigation() {
                   </DropdownMenuItem>
                   {user?.isAdmin && (
                     <DropdownMenuItem
-                      onClick={() => setLocation("/cortesia-admin")}
+                      onClick={() => setLocation("/admin/cortesias")}
                       data-testid="menu-courtesy-admin"
                     >
                       Administração
