@@ -1254,8 +1254,6 @@ var init_storage = __esm({
           seen.add(key);
           out.push({ email, name: r.name });
         }
-        fetch("http://127.0.0.1:7242/ingest/93fdb7af-1eec-4096-91f4-b53401629ef1", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "773abe" }, body: JSON.stringify({ sessionId: "773abe", location: "storage.ts:listCommunicateParticipantRecipients", message: "participants-detail", data: { eventId, rawRowCount: rows.length, rawEmails: rows.map((r) => r.email), dedupedEmails: out.map((o) => o.email.toLowerCase()), dedupedCount: out.length }, timestamp: Date.now() }) }).catch(() => {
-        });
         return out;
       }
       /** Same eligibility as reminder “resgate pendente”: active links with remaining slots and recipient e-mail. */
@@ -1263,8 +1261,6 @@ var init_storage = __esm({
         const allLinks = await this.getEligibleReminderLinks(eventId);
         const eligible = filterEligibleReminderLinks(allLinks);
         const deduped = deduplicateReminderLinksByEmail(eligible);
-        fetch("http://127.0.0.1:7242/ingest/93fdb7af-1eec-4096-91f4-b53401629ef1", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "773abe" }, body: JSON.stringify({ sessionId: "773abe", location: "storage.ts:listCommunicateUnredeemedRecipients", message: "unredeemed-links-pipeline", data: { eventId, allLinksCount: allLinks.length, allLinksDetail: allLinks.map((l) => ({ id: l.id, email: l.recipientEmail, isActive: l.isActive, ticketCount: l.ticketCount, usedCount: l.usedCount, remaining: l.ticketCount - (l.usedCount ?? 0) })), eligibleCount: eligible.length, dedupedCount: deduped.length }, timestamp: Date.now() }) }).catch(() => {
-        });
         return deduped.filter((l) => (l.recipientEmail ?? "").trim().length > 0).map((l) => ({
           email: l.recipientEmail.trim(),
           name: l.recipientName ?? ""
@@ -1276,8 +1272,6 @@ var init_storage = __esm({
         const keys = /* @__PURE__ */ new Set();
         for (const p of participants) keys.add(p.email.toLowerCase());
         for (const u of unredeemed) keys.add(u.email.toLowerCase());
-        fetch("http://127.0.0.1:7242/ingest/93fdb7af-1eec-4096-91f4-b53401629ef1", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "773abe" }, body: JSON.stringify({ sessionId: "773abe", location: "storage.ts:getCommunicateRecipientCounts", message: "recipient-counts-detail", data: { eventId, participantEmails: participants.map((p) => p.email.toLowerCase()), unredeemedEmails: unredeemed.map((u) => u.email.toLowerCase()), unionKeys: Array.from(keys), participantsLen: participants.length, unredeemedLen: unredeemed.length, unionLen: keys.size }, timestamp: Date.now() }) }).catch(() => {
-        });
         return {
           participants: participants.length,
           unredeemed: unredeemed.length,
