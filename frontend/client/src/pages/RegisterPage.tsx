@@ -1,4 +1,4 @@
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation, useSearch } from "wouter";
@@ -13,6 +13,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { insertUserSchema, type InsertUser } from "@shared/schema";
 import { z } from "zod";
 import { useState, useMemo } from "react";
+import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 
 const registerFormSchema = insertUserSchema.extend({
   birthDate: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, "Data deve estar no formato dd/mm/aaaa"),
@@ -93,14 +94,6 @@ export default function RegisterPage() {
     value = value.replace(/(\d{3})(\d)/, '$1.$2');
     value = value.replace(/(\d{3})(\d{1,2})$/, '$1-$2');
     form.setValue("cpf", value);
-  };
-
-  // Auto-format phone
-  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let value = e.target.value.replace(/\D/g, '');
-    value = value.replace(/(\d{2})(\d)/, '($1) $2');
-    value = value.replace(/(\d{4,5})(\d{4})$/, '$1-$2');
-    form.setValue("phone", value);
   };
 
   return (
@@ -221,21 +214,25 @@ export default function RegisterPage() {
               </div>
 
               <div>
-                <Label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
+                <Label htmlFor="phone" className="mb-2 block text-sm font-medium text-gray-700">
                   Telefone
                 </Label>
-                <Input
-                  id="phone"
-                  type="tel"
-                  placeholder="(11) 99999-9999"
-                  {...form.register("phone")}
-                  onChange={handlePhoneChange}
-                  maxLength={15}
-                  className="w-full"
-                  data-testid="input-phone"
+                <Controller
+                  name="phone"
+                  control={form.control}
+                  render={({ field, fieldState }) => (
+                    <PhoneInputE164
+                      id="phone"
+                      value={field.value}
+                      onChange={field.onChange}
+                      aria-invalid={fieldState.invalid}
+                      data-testid="input-phone"
+                      className="w-full"
+                    />
+                  )}
                 />
                 {form.formState.errors.phone && (
-                  <p className="text-red-600 text-sm mt-1" data-testid="text-phone-error">
+                  <p className="mt-1 text-sm text-red-600" data-testid="text-phone-error">
                     {form.formState.errors.phone.message}
                   </p>
                 )}

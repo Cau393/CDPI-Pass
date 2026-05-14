@@ -432,6 +432,64 @@ Equipe CDPI Pass
     return this.sendEmail(email, subject, html, text, attachments);
   }
 
+  /**
+   * Announcement e-mail: same visual shell as courtesy mail, without redeem CTA or courtesy code block.
+   */
+  async sendCommunicateEmail(
+    email: string,
+    messageBoxHtml: string,
+    renderedSubject: string | null | undefined,
+    attachments?: Array<{ filename: string; content: string; type: string }>,
+  ): Promise<boolean> {
+    const subject =
+      renderedSubject != null && String(renderedSubject).trim() !== ""
+        ? String(renderedSubject).trim()
+        : "Comunicado — CDPI Pass";
+    const messageInner =
+      messageBoxHtml.trim() !== "" ? messageBoxHtml : "<p></p>";
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${subject}</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #0F4C75; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; text-align: center; }
+          .message-box { text-align: left; margin: 20px 0; }
+          .footer { text-align: center; color: #666; font-size: 12px; margin-top: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Comunicado</h1>
+            <h2>CDPI Pass</h2>
+          </div>
+          <div class="content">
+            <div class="message-box">
+              ${messageInner}
+            </div>
+          </div>
+          <div class="footer">
+            <p>Atenciosamente,<br>Equipe CDPI Pass</p>
+            <p>relacionamento.mkt@cdpipharma.com.br | +55 (62) 3636-9909 / (62) 99610-1694</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+    const text = `
+${courtesyMessageHtmlToPlainText(messageInner)}
+
+Atenciosamente,
+Equipe CDPI Pass
+`.trim();
+    return this.sendEmail(email, subject, html, text, attachments);
+  }
+
   async _sendEmailFromQueue(
     to: string,
     subject: string,

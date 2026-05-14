@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Download, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, Shield, AlertTriangle, RefreshCw, Mail, ChevronLeft, ChevronRight, Award } from "lucide-react";
 import { CertificatesTab } from "@/components/CertificatesTab";
+import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 import type { User, Order, CourtesyLink } from "@shared/schema";
 import {
   Pagination,
@@ -642,14 +643,21 @@ const handleCancelOrder = (orderId: string) => {
                         <Label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
                           Telefone
                         </Label>
-                        <Input
-                          id="phone"
-                          {...profileForm.register("phone")}
-                          onChange={(e) => {
-                            profileForm.register("phone").onChange(e);
-                            checkSensitiveFieldChanges();
-                          }}
-                          data-testid="input-profile-phone"
+                        <Controller
+                          name="phone"
+                          control={profileForm.control}
+                          render={({ field }) => (
+                            <PhoneInputE164
+                              id="phone"
+                              value={field.value ?? ""}
+                              onChange={(v) => {
+                                field.onChange(v);
+                                checkSensitiveFieldChanges();
+                              }}
+                              data-testid="input-profile-phone"
+                              className="w-full"
+                            />
+                          )}
                         />
                       </div>
                     </div>

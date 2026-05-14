@@ -23,6 +23,7 @@ const mockEvent: Event = {
   certificateTemplateUrl: null,
   courtesyTemplate: null,
   courtesyEmailSubject: null,
+  npsType: "cdpi_event" as const,
 };
 
 vi.mock("@/components/admin/EventSelector", () => ({

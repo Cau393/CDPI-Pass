@@ -31,7 +31,9 @@ import AdminCommercialSalesPage from "@/pages/AdminCommercialSalesPage";
 import AdminCourtesiasHubPage from "@/pages/AdminCourtesiasHubPage";
 import AdminCourtesyLinkRedemptionsPage from "@/pages/AdminCourtesyLinkRedemptionsPage";
 import AdminPrintTerminalPage from "@/pages/AdminPrintTerminalPage";
+import AdminNpsPage from "@/pages/AdminNpsPage";
 import CertificateTemplateAdminPage from "@/pages/CertificateTemplateAdminPage";
+import AdminCommunicateMassSendPage from "@/pages/AdminCommunicateMassSendPage";
 
 function AdminEventsNewRedirect() {
   const [, navigate] = useLocation();
@@ -113,6 +115,13 @@ function Router() {
             </AdminShell>
           </AdminRoute>
         </Route>
+        <Route path="/admin/comunicado/envio-em-massa">
+          <AdminRoute>
+            <AdminShell>
+              <AdminCommunicateMassSendPage />
+            </AdminShell>
+          </AdminRoute>
+        </Route>
         <Route path="/admin-test" component={AdminTestPage} />
         <Route path="/cortesia" component={CourtesyRedeemPage} />
         <Route path="/admin/cortesias/envio-em-massa">
@@ -181,6 +190,13 @@ function Router() {
           <AdminRoute>
             <AdminShell>
               <CertificateTemplateAdminPage />
+            </AdminShell>
+          </AdminRoute>
+        </Route>
+        <Route path="/admin/events/nps">
+          <AdminRoute>
+            <AdminShell>
+              <AdminNpsPage />
             </AdminShell>
           </AdminRoute>
         </Route>

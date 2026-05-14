@@ -52,6 +52,7 @@ export default function AdminCreateEventPage({
       date: "",
       location: "",
       price: "",
+      npsType: "cdpi_event",
     },
   });
 
@@ -74,6 +75,7 @@ export default function AdminCreateEventPage({
     formData.append("date", values.date.trim());
     formData.append("location", values.location.trim());
     formData.append("price", brazilianPriceToApiString(values.price));
+    formData.append("nps_type", values.npsType);
     if (values.coverImage?.[0]) {
       formData.append("coverImage", values.coverImage[0]);
     }

@@ -55,6 +55,9 @@ var schema_exports = {};
 __export(schema_exports, {
   certificates: () => certificates,
   certificatesRelations: () => certificatesRelations,
+  communicateJobs: () => communicateJobs,
+  communicateRecipientModes: () => communicateRecipientModes,
+  communicateTemplates: () => communicateTemplates,
   courtesyAttendees: () => courtesyAttendees,
   courtesyLinks: () => courtesyLinks,
   courtesyLinksRelations: () => courtesyLinksRelations,
@@ -72,6 +75,10 @@ __export(schema_exports, {
   insertUserSchema: () => insertUserSchema,
   loginSchema: () => loginSchema,
   massSendJobs: () => massSendJobs,
+  npsCdpiApoiandoResponses: () => npsCdpiApoiandoResponses,
+  npsCdpiApoiandoResponsesRelations: () => npsCdpiApoiandoResponsesRelations,
+  npsCdpiEventResponses: () => npsCdpiEventResponses,
+  npsCdpiEventResponsesRelations: () => npsCdpiEventResponsesRelations,
   orders: () => orders,
   ordersRelations: () => ordersRelations,
   printJobs: () => printJobs,
@@ -91,12 +98,11 @@ import {
   boolean,
   integer,
   serial,
-  jsonb,
   unique
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-var users, events, certificates, courtesyLinks, orders, emailQueue, courtesyAttendees, massSendJobs, reminderTemplates, reminderJobs, eventPrintSettings, printJobs, usersRelations, eventsRelations, certificatesRelations, ordersRelations, courtesyLinksRelations, eventPrintSettingsRelations, insertUserSchema, insertEventSchema, insertOrderSchema, insertEmailQueueSchema, insertCourtesyLinkSchema, insertCourtesyAttendeeSchema, loginSchema, courtesyRedemptionSchema;
+var users, events, npsCdpiEventResponses, npsCdpiApoiandoResponses, certificates, courtesyLinks, orders, emailQueue, courtesyAttendees, massSendJobs, reminderTemplates, reminderJobs, communicateTemplates, communicateJobs, eventPrintSettings, printJobs, usersRelations, eventsRelations, certificatesRelations, npsCdpiEventResponsesRelations, npsCdpiApoiandoResponsesRelations, ordersRelations, courtesyLinksRelations, eventPrintSettingsRelations, insertUserSchema, insertEventSchema, insertOrderSchema, insertEmailQueueSchema, insertCourtesyLinkSchema, insertCourtesyAttendeeSchema, communicateRecipientModes, loginSchema, courtesyRedemptionSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -136,8 +142,54 @@ var init_schema = __esm({
       /** Custom HTML for courtesy mass-send emails; placeholders {nome}, {evento}, {data}, {link}. */
       courtesyTemplate: text("courtesy_template"),
       /** Plain-text subject template for courtesy mass-send; same placeholders; null = use default subject. */
-      courtesyEmailSubject: text("courtesy_email_subject")
+      courtesyEmailSubject: text("courtesy_email_subject"),
+      /** Which NPS form appears when redeeming certificate: Evento do CDPI vs CDPI Apoiando. */
+      npsType: text("nps_type", { enum: ["cdpi_event", "cdpi_apoiando"] }).notNull().default("cdpi_event")
     });
+    npsCdpiEventResponses = pgTable(
+      "nps_cdpi_event_responses",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+        eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+        name: varchar("name", { length: 255 }).notNull(),
+        email: varchar("email", { length: 255 }).notNull(),
+        phone: varchar("phone", { length: 20 }).notNull(),
+        overallRating: text("overall_rating").notNull(),
+        themesRelevance: text("themes_relevance").notNull(),
+        speakersRating: text("speakers_rating").notNull(),
+        applicability: text("applicability").notNull(),
+        highlight: text("highlight").notNull(),
+        organizationRating: text("organization_rating").notNull(),
+        wouldAttendAgain: text("would_attend_again").notNull(),
+        improvements: text("improvements").notNull(),
+        interestInTopics: text("interest_in_topics").notNull(),
+        interestTopicText: text("interest_topic_text"),
+        recommendationScore: integer("recommendation_score").notNull(),
+        createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+      },
+      (t) => [unique("nps_cdpi_event_user_event_unique").on(t.userId, t.eventId)]
+    );
+    npsCdpiApoiandoResponses = pgTable(
+      "nps_cdpi_apoiando_responses",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+        eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+        name: varchar("name", { length: 255 }).notNull(),
+        email: varchar("email", { length: 255 }).notNull(),
+        phone: varchar("phone", { length: 20 }).notNull(),
+        overallScore: integer("overall_score").notNull(),
+        themesRelevance: text("themes_relevance").notNull(),
+        applicability: text("applicability").notNull(),
+        futureTopics: text("future_topics").notNull(),
+        organizationExperience: text("organization_experience").notNull(),
+        improvements: text("improvements").notNull(),
+        wantsUpdates: text("wants_updates").notNull(),
+        createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+      },
+      (t) => [unique("nps_cdpi_apoiando_user_event_unique").on(t.userId, t.eventId)]
+    );
     certificates = pgTable(
       "certificates",
       {
@@ -146,7 +198,6 @@ var init_schema = __esm({
         eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
         certificateUrl: text("certificate_url").notNull(),
         fullName: text("full_name").notNull(),
-        npsResponses: jsonb("nps_responses").notNull(),
         createdAt: timestamp("created_at").defaultNow().notNull()
       },
       (t) => [unique("certificates_user_id_event_id_unique").on(t.userId, t.eventId)]
@@ -239,6 +290,24 @@ var init_schema = __esm({
       createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
       updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
     });
+    communicateTemplates = pgTable("communicate_templates", {
+      eventId: varchar("event_id").primaryKey().references(() => events.id, { onDelete: "cascade" }),
+      body: text("body").notNull().default(""),
+      subject: text("subject").notNull().default(""),
+      updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+    });
+    communicateJobs = pgTable("communicate_jobs", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      status: text("status", { enum: ["pending", "processing", "completed", "failed"] }).default("pending").notNull(),
+      eventId: varchar("event_id").notNull().references(() => events.id),
+      recipientMode: text("recipient_mode", {
+        enum: ["participants", "participants_and_unredeemed", "unredeemed_only"]
+      }).notNull(),
+      attachmentData: text("attachment_data"),
+      createdBy: text("created_by").notNull().references(() => users.id),
+      createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+      updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+    });
     eventPrintSettings = pgTable("event_print_settings", {
       eventId: varchar("event_id").primaryKey().references(() => events.id, { onDelete: "cascade" }),
       isEnabled: boolean("is_enabled").default(false).notNull(),
@@ -268,12 +337,16 @@ var init_schema = __esm({
     usersRelations = relations(users, ({ many }) => ({
       orders: many(orders),
       courtesyLinks: many(courtesyLinks),
-      certificates: many(certificates)
+      certificates: many(certificates),
+      npsCdpiEventResponses: many(npsCdpiEventResponses),
+      npsCdpiApoiandoResponses: many(npsCdpiApoiandoResponses)
     }));
     eventsRelations = relations(events, ({ many }) => ({
       orders: many(orders),
       courtesyLinks: many(courtesyLinks),
-      certificates: many(certificates)
+      certificates: many(certificates),
+      npsCdpiEventResponses: many(npsCdpiEventResponses),
+      npsCdpiApoiandoResponses: many(npsCdpiApoiandoResponses)
     }));
     certificatesRelations = relations(certificates, ({ one }) => ({
       user: one(users, {
@@ -282,6 +355,26 @@ var init_schema = __esm({
       }),
       event: one(events, {
         fields: [certificates.eventId],
+        references: [events.id]
+      })
+    }));
+    npsCdpiEventResponsesRelations = relations(npsCdpiEventResponses, ({ one }) => ({
+      user: one(users, {
+        fields: [npsCdpiEventResponses.userId],
+        references: [users.id]
+      }),
+      event: one(events, {
+        fields: [npsCdpiEventResponses.eventId],
+        references: [events.id]
+      })
+    }));
+    npsCdpiApoiandoResponsesRelations = relations(npsCdpiApoiandoResponses, ({ one }) => ({
+      user: one(users, {
+        fields: [npsCdpiApoiandoResponses.userId],
+        references: [users.id]
+      }),
+      event: one(events, {
+        fields: [npsCdpiApoiandoResponses.eventId],
         references: [events.id]
       })
     }));
@@ -327,7 +420,7 @@ var init_schema = __esm({
     insertUserSchema = createInsertSchema(users, {
       email: z.string().email("Email inv\xE1lido"),
       cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
-      phone: z.string().regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, "Telefone deve estar no formato (00) 00000-0000"),
+      phone: z.string().regex(/^\d{8,15}$/, "Telefone deve conter 8 a 15 d\xEDgitos (c\xF3digo do pa\xEDs sem +)"),
       password: z.string().min(6, "Senha deve ter pelo menos 6 caracteres"),
       name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
       address: z.string().min(10, "Endere\xE7o deve ter pelo menos 10 caracteres"),
@@ -376,6 +469,11 @@ var init_schema = __esm({
       createdAt: true,
       updatedAt: true
     });
+    communicateRecipientModes = [
+      "participants",
+      "participants_and_unredeemed",
+      "unredeemed_only"
+    ];
     loginSchema = z.object({
       email: z.string().email("Email inv\xE1lido"),
       password: z.string().min(1, "Senha \xE9 obrigat\xF3ria")
@@ -389,7 +487,7 @@ var init_schema = __esm({
       occupation: z.string().min(2, "Cargo \xE9 obrigat\xF3rio"),
       birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
       address: z.string().min(10, "Endere\xE7o deve ter pelo menos 10 caracteres"),
-      phone: z.string().regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, "Telefone deve estar no formato (00) 00000-0000")
+      phone: z.string().regex(/^\d{8,15}$/, "Telefone deve conter 8 a 15 d\xEDgitos (c\xF3digo do pa\xEDs sem +)")
     }).refine((data) => data.email === data.emailConfirm, {
       message: "Os emails n\xE3o coincidem",
       path: ["emailConfirm"]
@@ -581,6 +679,29 @@ var init_printJobPolicy = __esm({
   }
 });
 
+// server/utils/reminderEligibility.ts
+function filterEligibleReminderLinks(links) {
+  return links.filter((l) => {
+    const remaining = l.ticketCount - (l.usedCount ?? 0);
+    return remaining > 0 && l.isActive === true;
+  });
+}
+function deduplicateReminderLinksByEmail(links) {
+  const seen = /* @__PURE__ */ new Set();
+  return links.filter((l) => {
+    const email = (l.recipientEmail ?? "").toLowerCase();
+    if (seen.has(email)) return false;
+    seen.add(email);
+    return true;
+  });
+}
+var init_reminderEligibility = __esm({
+  "server/utils/reminderEligibility.ts"() {
+    "use strict";
+    init_esm_shims();
+  }
+});
+
 // server/storage.ts
 import { eq, ne, desc, sql as sql2, asc, count, and, isNull } from "drizzle-orm";
 var DatabaseStorage, storage;
@@ -594,6 +715,7 @@ var init_storage = __esm({
     init_undoCheckInUpdate();
     init_courtesyTicketCountUpdate();
     init_printJobPolicy();
+    init_reminderEligibility();
     DatabaseStorage = class {
       // User operations
       async getUser(id) {
@@ -1076,6 +1198,107 @@ var init_storage = __esm({
       }
       async updateReminderJobStatus(jobId, status) {
         return db.update(reminderJobs).set({ status, updatedAt: /* @__PURE__ */ new Date() }).where(eq(reminderJobs.id, jobId));
+      }
+      async getCommunicateTemplate(eventId) {
+        const [row] = await db.select({
+          body: communicateTemplates.body,
+          subject: communicateTemplates.subject
+        }).from(communicateTemplates).where(eq(communicateTemplates.eventId, eventId));
+        return row ?? null;
+      }
+      async upsertCommunicateTemplate(eventId, body, subject) {
+        await db.insert(communicateTemplates).values({
+          eventId,
+          body,
+          subject: subject ?? ""
+        }).onConflictDoUpdate({
+          target: communicateTemplates.eventId,
+          set: {
+            body,
+            ...subject !== void 0 ? { subject } : {},
+            updatedAt: /* @__PURE__ */ new Date()
+          }
+        });
+      }
+      async addCommunicateJobToQueue(jobData) {
+        const [job] = await db.insert(communicateJobs).values({
+          status: "pending",
+          eventId: jobData.eventId,
+          recipientMode: jobData.recipientMode,
+          attachmentData: jobData.attachmentData,
+          createdBy: jobData.createdBy
+        }).returning();
+        return job;
+      }
+      async getPendingCommunicateJobs(limit = 1) {
+        return db.select().from(communicateJobs).where(eq(communicateJobs.status, "pending")).orderBy(asc(communicateJobs.createdAt)).limit(limit);
+      }
+      async updateCommunicateJobStatus(jobId, status) {
+        return db.update(communicateJobs).set({ status, updatedAt: /* @__PURE__ */ new Date() }).where(eq(communicateJobs.id, jobId));
+      }
+      /** Paid orders only; one entry per distinct e-mail (first row wins). */
+      async listCommunicateParticipantRecipients(eventId) {
+        const rows = await db.select({
+          email: users.email,
+          name: users.name
+        }).from(orders).innerJoin(users, eq(orders.userId, users.id)).where(
+          and(eq(orders.eventId, eventId), eq(orders.status, "paid"))
+        ).orderBy(asc(users.name));
+        const seen = /* @__PURE__ */ new Set();
+        const out = [];
+        for (const r of rows) {
+          const email = (r.email ?? "").trim();
+          if (!email) continue;
+          const key = email.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push({ email, name: r.name });
+        }
+        fetch("http://127.0.0.1:7242/ingest/93fdb7af-1eec-4096-91f4-b53401629ef1", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "773abe" }, body: JSON.stringify({ sessionId: "773abe", location: "storage.ts:listCommunicateParticipantRecipients", message: "participants-detail", data: { eventId, rawRowCount: rows.length, rawEmails: rows.map((r) => r.email), dedupedEmails: out.map((o) => o.email.toLowerCase()), dedupedCount: out.length }, timestamp: Date.now() }) }).catch(() => {
+        });
+        return out;
+      }
+      /** Same eligibility as reminder “resgate pendente”: active links with remaining slots and recipient e-mail. */
+      async listCommunicateUnredeemedRecipients(eventId) {
+        const allLinks = await this.getEligibleReminderLinks(eventId);
+        const eligible = filterEligibleReminderLinks(allLinks);
+        const deduped = deduplicateReminderLinksByEmail(eligible);
+        fetch("http://127.0.0.1:7242/ingest/93fdb7af-1eec-4096-91f4-b53401629ef1", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "773abe" }, body: JSON.stringify({ sessionId: "773abe", location: "storage.ts:listCommunicateUnredeemedRecipients", message: "unredeemed-links-pipeline", data: { eventId, allLinksCount: allLinks.length, allLinksDetail: allLinks.map((l) => ({ id: l.id, email: l.recipientEmail, isActive: l.isActive, ticketCount: l.ticketCount, usedCount: l.usedCount, remaining: l.ticketCount - (l.usedCount ?? 0) })), eligibleCount: eligible.length, dedupedCount: deduped.length }, timestamp: Date.now() }) }).catch(() => {
+        });
+        return deduped.filter((l) => (l.recipientEmail ?? "").trim().length > 0).map((l) => ({
+          email: l.recipientEmail.trim(),
+          name: l.recipientName ?? ""
+        }));
+      }
+      async getCommunicateRecipientCounts(eventId) {
+        const participants = await this.listCommunicateParticipantRecipients(eventId);
+        const unredeemed = await this.listCommunicateUnredeemedRecipients(eventId);
+        const keys = /* @__PURE__ */ new Set();
+        for (const p of participants) keys.add(p.email.toLowerCase());
+        for (const u of unredeemed) keys.add(u.email.toLowerCase());
+        fetch("http://127.0.0.1:7242/ingest/93fdb7af-1eec-4096-91f4-b53401629ef1", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "773abe" }, body: JSON.stringify({ sessionId: "773abe", location: "storage.ts:getCommunicateRecipientCounts", message: "recipient-counts-detail", data: { eventId, participantEmails: participants.map((p) => p.email.toLowerCase()), unredeemedEmails: unredeemed.map((u) => u.email.toLowerCase()), unionKeys: Array.from(keys), participantsLen: participants.length, unredeemedLen: unredeemed.length, unionLen: keys.size }, timestamp: Date.now() }) }).catch(() => {
+        });
+        return {
+          participants: participants.length,
+          unredeemed: unredeemed.length,
+          participantsAndUnredeemed: keys.size
+        };
+      }
+      async resolveCommunicateRecipients(eventId, mode) {
+        const participants = await this.listCommunicateParticipantRecipients(eventId);
+        if (mode === "participants") return participants;
+        const unredeemed = await this.listCommunicateUnredeemedRecipients(eventId);
+        if (mode === "unredeemed_only") return unredeemed;
+        const byKey = /* @__PURE__ */ new Map();
+        for (const p of participants) {
+          const k = p.email.toLowerCase();
+          if (!byKey.has(k)) byKey.set(k, { email: p.email, name: p.name });
+        }
+        for (const u of unredeemed) {
+          const k = u.email.toLowerCase();
+          if (!byKey.has(k)) byKey.set(k, { email: u.email, name: u.name });
+        }
+        return Array.from(byKey.values());
       }
       async getEligibleReminderLinks(eventId) {
         return db.select({
@@ -45581,7 +45804,7 @@ init_schema();
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { createServer } from "http";
 import { randomUUID as randomUUID2 } from "crypto";
-import { z as z2 } from "zod";
+import { z as z3 } from "zod";
 import bcrypt from "bcrypt";
 import jwt4 from "jsonwebtoken";
 import {
@@ -45625,15 +45848,6 @@ function validateCpf(cpf) {
 function formatCpf(cpf) {
   cpf = cpf.replace(/[^\d]/g, "");
   return cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
-}
-function formatPhone(phone) {
-  phone = phone.replace(/[^\d]/g, "");
-  if (phone.length === 11) {
-    return phone.replace(/(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
-  } else if (phone.length === 10) {
-    return phone.replace(/(\d{2})(\d{4})(\d{4})/, "($1) $2-$3");
-  }
-  return phone;
 }
 
 // server/utils/eventDateTime.ts
@@ -46166,6 +46380,54 @@ Equipe CDPI Pass
 `.trim();
     return this.sendEmail(email, subject, html, text2, attachments);
   }
+  /**
+   * Announcement e-mail: same visual shell as courtesy mail, without redeem CTA or courtesy code block.
+   */
+  async sendCommunicateEmail(email, messageBoxHtml, renderedSubject, attachments) {
+    const subject = renderedSubject != null && String(renderedSubject).trim() !== "" ? String(renderedSubject).trim() : "Comunicado \u2014 CDPI Pass";
+    const messageInner = messageBoxHtml.trim() !== "" ? messageBoxHtml : "<p></p>";
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${subject}</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #0F4C75; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; text-align: center; }
+          .message-box { text-align: left; margin: 20px 0; }
+          .footer { text-align: center; color: #666; font-size: 12px; margin-top: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Comunicado</h1>
+            <h2>CDPI Pass</h2>
+          </div>
+          <div class="content">
+            <div class="message-box">
+              ${messageInner}
+            </div>
+          </div>
+          <div class="footer">
+            <p>Atenciosamente,<br>Equipe CDPI Pass</p>
+            <p>relacionamento.mkt@cdpipharma.com.br | +55 (62) 3636-9909 / (62) 99610-1694</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+    const text2 = `
+${courtesyMessageHtmlToPlainText(messageInner)}
+
+Atenciosamente,
+Equipe CDPI Pass
+`.trim();
+    return this.sendEmail(email, subject, html, text2, attachments);
+  }
   async _sendEmailFromQueue(to, subject, html, text2, attachments) {
     if (!process.env.SENDGRID_API_KEY) {
       console.warn("SendGrid not configured, email worker cannot send email:", { to, subject });
@@ -46595,6 +46857,14 @@ init_s3Service();
 // server/services/certificateLambdaService.ts
 init_esm_shims();
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+var RETRY_INTERVAL_MS = 5e3;
+var MAX_RETRY_MS = 45e3;
+function isLambdaColdStartError(err) {
+  if (!err || typeof err !== "object") return false;
+  const name = "name" in err ? String(err.name) : "";
+  const msg = err instanceof Error ? err.message : String(err);
+  return name === "CodeArtifactUserPendingException" || /Lambda is initializing/i.test(msg);
+}
 function buildLambdaClient() {
   const region = process.env.AWS_REGION || "sa-east-1";
   const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
@@ -46618,38 +46888,52 @@ async function invokeGenerateCertificatePdf(request) {
     InvocationType: "RequestResponse",
     Payload: JSON.stringify(request)
   });
-  const out = await client.send(cmd);
-  if (out.FunctionError) {
-    const errPayload = out.Payload ? Buffer.from(out.Payload).toString("utf-8") : "";
-    throw new Error(`Lambda execution error (${out.FunctionError}): ${errPayload.slice(0, 2e3)}`);
-  }
-  const raw = out.Payload ? Buffer.from(out.Payload).toString("utf-8") : "";
-  if (!raw) {
-    throw new Error("Lambda returned an empty payload");
-  }
-  let outer;
-  try {
-    outer = JSON.parse(raw);
-  } catch {
-    throw new Error(`Invalid Lambda payload JSON: ${raw.slice(0, 500)}`);
-  }
-  let inner;
-  if (typeof outer.body === "string") {
+  const deadline = Date.now() + MAX_RETRY_MS;
+  let attempt = 0;
+  while (true) {
+    attempt++;
     try {
-      inner = JSON.parse(outer.body);
-    } catch {
-      throw new Error(`Lambda body is not JSON: ${outer.body.slice(0, 500)}`);
+      const out = await client.send(cmd);
+      if (out.FunctionError) {
+        const errPayload = out.Payload ? Buffer.from(out.Payload).toString("utf-8") : "";
+        throw new Error(`Lambda execution error (${out.FunctionError}): ${errPayload.slice(0, 2e3)}`);
+      }
+      const raw = out.Payload ? Buffer.from(out.Payload).toString("utf-8") : "";
+      if (!raw) {
+        throw new Error("Lambda returned an empty payload");
+      }
+      let outer;
+      try {
+        outer = JSON.parse(raw);
+      } catch {
+        throw new Error(`Invalid Lambda payload JSON: ${raw.slice(0, 500)}`);
+      }
+      let inner;
+      if (typeof outer.body === "string") {
+        try {
+          inner = JSON.parse(outer.body);
+        } catch {
+          throw new Error(`Lambda body is not JSON: ${outer.body.slice(0, 500)}`);
+        }
+      } else if (outer.body && typeof outer.body === "object") {
+        inner = outer.body;
+      }
+      const pdfUrl = inner?.pdfUrl ?? (typeof outer.pdfUrl === "string" ? outer.pdfUrl : void 0);
+      const statusCode = outer.statusCode ?? 200;
+      if (statusCode !== 200 || !pdfUrl) {
+        const detail = inner?.error ?? inner?.message ?? (typeof outer.body === "string" ? outer.body : JSON.stringify(outer));
+        throw new Error(`Certificate Lambda failed (status ${statusCode}): ${detail.slice(0, 1500)}`);
+      }
+      return pdfUrl;
+    } catch (err) {
+      if (isLambdaColdStartError(err) && Date.now() < deadline) {
+        console.log(`Lambda cold-start (attempt ${attempt}), retrying in ${RETRY_INTERVAL_MS / 1e3}s\u2026`);
+        await new Promise((r) => setTimeout(r, RETRY_INTERVAL_MS));
+        continue;
+      }
+      throw err;
     }
-  } else if (outer.body && typeof outer.body === "object") {
-    inner = outer.body;
   }
-  const pdfUrl = inner?.pdfUrl ?? (typeof outer.pdfUrl === "string" ? outer.pdfUrl : void 0);
-  const statusCode = outer.statusCode ?? 200;
-  if (statusCode !== 200 || !pdfUrl) {
-    const detail = inner?.error ?? inner?.message ?? (typeof outer.body === "string" ? outer.body : JSON.stringify(outer));
-    throw new Error(`Certificate Lambda failed (status ${statusCode}): ${detail.slice(0, 1500)}`);
-  }
-  return pdfUrl;
 }
 
 // server/middleware/auth.ts
@@ -46669,17 +46953,244 @@ var requireEmailVerification = (req, res, next) => {
 
 // server/routes.ts
 import multer from "multer";
-var generateCertificateNpsSchema = z2.object({
-  overallRating: z2.number().int().min(1).max(10),
-  wouldRecommend: z2.boolean(),
-  highlights: z2.string().max(2e3).optional().default(""),
-  improvements: z2.string().max(2e3).optional().default("")
+
+// server/utils/toTitleCaseName.ts
+init_esm_shims();
+var PARTICLES = /* @__PURE__ */ new Set([
+  "de",
+  "da",
+  "do",
+  "das",
+  "dos",
+  "di",
+  "du",
+  "e",
+  "van",
+  "von",
+  "del"
+]);
+function titleCaseWord(word, isFirstWord) {
+  if (!word) return word;
+  const lower = word.toLowerCase();
+  if (!isFirstWord && PARTICLES.has(lower)) {
+    return lower;
+  }
+  if (lower.includes("'")) {
+    return lower.split("'").map((part, i) => {
+      if (!part) return "";
+      if (i === 0) {
+        return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+      }
+      return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+    }).join("'");
+  }
+  return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+}
+function processSegment(segment, isFirstSegment) {
+  if (!segment) return segment;
+  const hyphenParts = segment.split("-");
+  return hyphenParts.map((h, hi) => titleCaseWord(h, isFirstSegment && hi === 0)).join("-");
+}
+function toTitleCaseName(input) {
+  const trimmed = input.trim();
+  if (!trimmed) return "";
+  const words = trimmed.split(/\s+/);
+  return words.map((w, i) => processSegment(w, i === 0)).join(" ");
+}
+
+// server/utils/normalizePhoneE164.ts
+init_esm_shims();
+import { parsePhoneNumberFromString } from "libphonenumber-js";
+function normalizePhoneE164(input, defaultCountry = "BR") {
+  const raw = String(input ?? "").trim();
+  if (!raw) {
+    throw new Error("Telefone \xE9 obrigat\xF3rio");
+  }
+  const parsed = parsePhoneNumberFromString(raw, defaultCountry);
+  if (!parsed || !parsed.isValid()) {
+    throw new Error("Telefone inv\xE1lido");
+  }
+  const national = parsed.formatNational().replace(/\D/g, "");
+  if (national.length < 8) {
+    throw new Error("Telefone inv\xE1lido");
+  }
+  return parsed.number.replace(/^\+/, "");
+}
+
+// shared/npsAnswerSchemas.ts
+init_esm_shims();
+import { z as z2 } from "zod";
+var text2000 = z2.string().min(1).max(2e3);
+var emailField = z2.string().min(1).email("E-mail inv\xE1lido");
+var experienceRadio = z2.enum(["Excelente", "Muito boa", "Boa", "Regular", "Ruim"]);
+var themesRelevance = z2.enum([
+  "Muito relevantes",
+  "Relevantes",
+  "Pouco relevantes",
+  "N\xE3o foram relevantes"
+]);
+var applicability = z2.enum([
+  "Totalmente aplic\xE1vel",
+  "Parcialmente aplic\xE1vel",
+  "Pouco aplic\xE1vel",
+  "N\xE3o aplic\xE1vel"
+]);
+var attendAgain = z2.enum([
+  "Sim, com certeza",
+  "Talvez, dependendo do tema",
+  "N\xE3o"
+]);
+var simNao = z2.enum(["Sim", "N\xE3o"]);
+var cdpiEventNpsAnswersSchema = z2.object({
+  name: z2.string().min(1, "Nome \xE9 obrigat\xF3rio").max(255),
+  email: emailField,
+  phone: z2.string().min(1, "WhatsApp \xE9 obrigat\xF3rio").max(20),
+  overallRating: experienceRadio,
+  themesRelevance,
+  speakersRating: experienceRadio,
+  applicability,
+  highlight: text2000,
+  organizationRating: experienceRadio,
+  wouldAttendAgain: attendAgain,
+  improvements: text2000,
+  interestInTopics: simNao,
+  interestTopicText: z2.string().max(2e3).optional().default(""),
+  recommendationScore: z2.number().int().min(0).max(10)
+}).superRefine((data, ctx) => {
+  if (data.interestInTopics === "Sim") {
+    const t = data.interestTopicText?.trim() ?? "";
+    if (!t) {
+      ctx.addIssue({
+        code: z2.ZodIssueCode.custom,
+        message: "Descreva o tema quando selecionar Sim",
+        path: ["interestTopicText"]
+      });
+    }
+  } else if ((data.interestTopicText?.trim() ?? "").length > 0) {
+    ctx.addIssue({
+      code: z2.ZodIssueCode.custom,
+      message: "Remova a descri\xE7\xE3o quando selecionar N\xE3o",
+      path: ["interestTopicText"]
+    });
+  }
 });
-var generateCertificateBodySchema = z2.object({
-  eventId: z2.string().uuid({ message: "eventId inv\xE1lido" }),
-  fullName: z2.string().min(1, "Nome \xE9 obrigat\xF3rio").max(120, "Nome deve ter no m\xE1ximo 120 caracteres"),
-  npsResponses: generateCertificateNpsSchema
+var cdpiApoiandoNpsAnswersSchema = z2.object({
+  name: z2.string().min(1, "Nome \xE9 obrigat\xF3rio").max(255),
+  email: emailField,
+  phone: z2.string().min(1, "WhatsApp \xE9 obrigat\xF3rio").max(20),
+  overallScore: z2.number().int().min(0).max(10),
+  themesRelevance,
+  applicability,
+  futureTopics: text2000,
+  organizationExperience: experienceRadio,
+  improvements: text2000,
+  wantsUpdates: simNao
 });
+
+// server/utils/buildNpsInsertPayload.ts
+init_esm_shims();
+function buildNpsInsertPayload(userId, eventId, npsType, answers) {
+  const name = toTitleCaseName(answers.name);
+  const email = answers.email.trim().toLowerCase();
+  const phone = normalizePhoneE164(answers.phone, "BR");
+  if (npsType === "cdpi_event") {
+    const a2 = answers;
+    const interestText = a2.interestInTopics === "Sim" ? a2.interestTopicText?.trim() ?? "" : null;
+    return {
+      table: "cdpi_event",
+      row: {
+        userId,
+        eventId,
+        name,
+        email,
+        phone,
+        overallRating: a2.overallRating,
+        themesRelevance: a2.themesRelevance,
+        speakersRating: a2.speakersRating,
+        applicability: a2.applicability,
+        highlight: a2.highlight.trim(),
+        organizationRating: a2.organizationRating,
+        wouldAttendAgain: a2.wouldAttendAgain,
+        improvements: a2.improvements.trim(),
+        interestInTopics: a2.interestInTopics,
+        interestTopicText: interestText && interestText.length > 0 ? interestText : null,
+        recommendationScore: a2.recommendationScore
+      }
+    };
+  }
+  const a = answers;
+  return {
+    table: "cdpi_apoiando",
+    row: {
+      userId,
+      eventId,
+      name,
+      email,
+      phone,
+      overallScore: a.overallScore,
+      themesRelevance: a.themesRelevance,
+      applicability: a.applicability,
+      futureTopics: a.futureTopics.trim(),
+      organizationExperience: a.organizationExperience,
+      improvements: a.improvements.trim(),
+      wantsUpdates: a.wantsUpdates
+    }
+  };
+}
+
+// server/utils/npsExportRowMappers.ts
+init_esm_shims();
+function cdpiEventResponseToExportRow(r) {
+  const created = r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt ?? "");
+  return {
+    "Nome completo": r.name,
+    "E-mail": r.email,
+    WhatsApp: r.phone,
+    "Como voc\xEA avalia sua experi\xEAncia geral no evento?": r.overallRating,
+    "Os temas abordados foram relevantes para voc\xEA?": r.themesRelevance,
+    "Como voc\xEA avalia os palestrantes no geral?": r.speakersRating,
+    "O conte\xFAdo apresentado \xE9 aplic\xE1vel \xE0 sua realidade profissional?": r.applicability,
+    "Teve algum momento, painel ou palestrante que se destacou? Qual e por qu\xEA?": r.highlight,
+    "Como voc\xEA avalia a organiza\xE7\xE3o do evento (estrutura, suporte, log\xEDstica)?": r.organizationRating,
+    "Voc\xEA participaria de outros eventos do CDPI?": r.wouldAttendAgain,
+    "O que poder\xEDamos melhorar para os pr\xF3ximos eventos?": r.improvements,
+    "Voc\xEA teria interesse em se aprofundar em algum dos temas abordados?": r.interestInTopics,
+    "Descreva o tema abordado que gostaria de se aprofundar": r.interestTopicText ?? "",
+    "De 0 a 10, o quanto voc\xEA recomendaria esse evento para um colega?": String(r.recommendationScore),
+    "Respondido em": created
+  };
+}
+function cdpiApoiandoResponseToExportRow(r) {
+  const created = r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt ?? "");
+  return {
+    "Nome completo": r.name,
+    "E-mail": r.email,
+    WhatsApp: r.phone,
+    "De 0 a 10, como voc\xEA avalia sua experi\xEAncia geral no evento?": String(r.overallScore),
+    "O qu\xE3o relevantes os temas abordados foram para voc\xEA?": r.themesRelevance,
+    "O qu\xE3o aplic\xE1vel \xE0 sua realidade profissional o conte\xFAdo do evento foi para voc\xEA?": r.applicability,
+    "Quais temas voc\xEA gostaria de aprofundar em futuros conte\xFAdos, cursos ou programas?": r.futureTopics,
+    "Como foi sua experi\xEAncia com a organiza\xE7\xE3o do evento (acolhimento, informa\xE7\xF5es, suporte)?": r.organizationExperience,
+    "O que poderia ser melhorado em pr\xF3ximas edi\xE7\xF5es do evento?": r.improvements,
+    "Voc\xEA gostaria de receber conte\xFAdos ou novidades sobre os temas abordados neste evento?": r.wantsUpdates,
+    "Respondido em": created
+  };
+}
+
+// server/routes.ts
+var communicateRecipientModeSchema = z3.enum(communicateRecipientModes);
+var generateCertificateBodySchema = z3.discriminatedUnion("npsType", [
+  z3.object({
+    npsType: z3.literal("cdpi_event"),
+    eventId: z3.string().uuid({ message: "eventId inv\xE1lido" }),
+    answers: cdpiEventNpsAnswersSchema
+  }),
+  z3.object({
+    npsType: z3.literal("cdpi_apoiando"),
+    eventId: z3.string().uuid({ message: "eventId inv\xE1lido" }),
+    answers: cdpiApoiandoNpsAnswersSchema
+  })
+]);
 var JWT_SECRET3 = process.env.JWT_SECRET || "your-secret-key";
 var authenticateToken = async (req, res, next) => {
   const authHeader = req.headers["authorization"];
@@ -46719,7 +47230,7 @@ async function registerRoutes(app2) {
   app2.post("/api/auth/register", async (req, res) => {
     try {
       const apiUserSchema = insertUserSchema.extend({
-        birthDate: z2.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, "Data deve estar no formato dd/mm/aaaa")
+        birthDate: z3.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, "Data deve estar no formato dd/mm/aaaa")
       });
       const body = apiUserSchema.parse(req.body);
       if (!validateCpf(body.cpf)) {
@@ -46741,7 +47252,8 @@ async function registerRoutes(app2) {
         birthDate: birthDateObj,
         password: hashedPassword,
         cpf: formatCpf(body.cpf),
-        phone: formatPhone(body.phone)
+        name: toTitleCaseName(body.name),
+        phone: normalizePhoneE164(body.phone, "BR")
       });
       await emailService.sendVerificationEmail(user.email, user.id);
       res.status(201).json({
@@ -46751,7 +47263,7 @@ async function registerRoutes(app2) {
       });
     } catch (error) {
       console.error("Registration error:", error);
-      if (error instanceof z2.ZodError) {
+      if (error instanceof z3.ZodError) {
         return res.status(400).json({ message: error.errors[0].message });
       }
       res.status(500).json({ message: "Erro interno do servidor" });
@@ -46809,7 +47321,7 @@ async function registerRoutes(app2) {
       });
     } catch (error) {
       console.error("Login error:", error);
-      if (error instanceof z2.ZodError) {
+      if (error instanceof z3.ZodError) {
         return res.status(400).json({ message: error.errors[0].message });
       }
       res.status(500).json({ message: "Erro interno do servidor" });
@@ -47015,6 +47527,9 @@ async function registerRoutes(app2) {
           return res.status(400).json({ error: "Cover image is required" });
         }
         const { title, description, date, location, price } = req.body;
+        const npsTypeRaw = req.body.nps_type;
+        const npsTypeParsed = z3.enum(["cdpi_event", "cdpi_apoiando"]).safeParse(npsTypeRaw);
+        const npsType = npsTypeParsed.success ? npsTypeParsed.data : "cdpi_event";
         const textFields = { title, description, date, location, price };
         for (const key2 of Object.keys(textFields)) {
           const v = textFields[key2];
@@ -47058,7 +47573,8 @@ async function registerRoutes(app2) {
           date: dateObj,
           location: location.trim(),
           price: normalizedPrice,
-          imageUrl
+          imageUrl,
+          npsType
         }).returning();
         return res.status(201).json(newEvent);
       } catch (error) {
@@ -47076,7 +47592,7 @@ async function registerRoutes(app2) {
       if (!req.user.isAdmin) {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
       }
-      const parsed = z2.string().uuid().safeParse(req.params.eventId);
+      const parsed = z3.string().uuid().safeParse(req.params.eventId);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid event id" });
       }
@@ -47095,7 +47611,7 @@ async function registerRoutes(app2) {
       if (!req.user.isAdmin) {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
       }
-      const parsedId = z2.string().uuid().safeParse(req.params.eventId);
+      const parsedId = z3.string().uuid().safeParse(req.params.eventId);
       if (!parsedId.success) {
         return res.status(400).json({ error: "Invalid event id" });
       }
@@ -47142,7 +47658,7 @@ async function registerRoutes(app2) {
       if (!req.user.isAdmin) {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
       }
-      const parsedId = z2.string().uuid().safeParse(req.params.eventId);
+      const parsedId = z3.string().uuid().safeParse(req.params.eventId);
       if (!parsedId.success) {
         return res.status(400).json({ error: "Invalid event id" });
       }
@@ -47161,7 +47677,7 @@ async function registerRoutes(app2) {
       if (!req.user.isAdmin) {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
       }
-      const parsedId = z2.string().uuid().safeParse(req.params.eventId);
+      const parsedId = z3.string().uuid().safeParse(req.params.eventId);
       if (!parsedId.success) {
         return res.status(400).json({ error: "Invalid event id" });
       }
@@ -47202,7 +47718,7 @@ async function registerRoutes(app2) {
         if (!req.user.isAdmin) {
           return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
         }
-        const parsedId = z2.string().uuid().safeParse(req.params.eventId);
+        const parsedId = z3.string().uuid().safeParse(req.params.eventId);
         if (!parsedId.success) {
           return res.status(400).json({ error: "Invalid event id" });
         }
@@ -47231,7 +47747,7 @@ async function registerRoutes(app2) {
         if (!req.user.isAdmin) {
           return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
         }
-        const parsedId = z2.string().uuid().safeParse(req.params.eventId);
+        const parsedId = z3.string().uuid().safeParse(req.params.eventId);
         if (!parsedId.success) {
           return res.status(400).json({ error: "Invalid event id" });
         }
@@ -47263,6 +47779,149 @@ async function registerRoutes(app2) {
       }
     }
   );
+  app2.get("/api/admin/events/:eventId/communicate-template", authenticateToken, async (req, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsedId = z3.string().uuid().safeParse(req.params.eventId);
+      if (!parsedId.success) {
+        return res.status(400).json({ error: "Invalid event id" });
+      }
+      const row = await storage.getCommunicateTemplate(parsedId.data);
+      return res.status(200).json({
+        body: row?.body ?? "",
+        subject: row?.subject ?? ""
+      });
+    } catch (error) {
+      console.error("GET /api/admin/events/:eventId/communicate-template:", error);
+      return res.status(500).json({ error: "Failed to fetch communicate template" });
+    }
+  });
+  app2.patch("/api/admin/events/:eventId/communicate-template", authenticateToken, async (req, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsedId = z3.string().uuid().safeParse(req.params.eventId);
+      if (!parsedId.success) {
+        return res.status(400).json({ error: "Invalid event id" });
+      }
+      const eventId = parsedId.data;
+      const reqBody = req.body;
+      const { body, subject } = reqBody;
+      if (typeof body !== "string") {
+        return res.status(400).json({ error: "body must be a string" });
+      }
+      if (body.length > 5e4) {
+        return res.status(400).json({ error: "body exceeds maximum length" });
+      }
+      const event = await storage.getEvent(eventId);
+      if (!event) {
+        return res.status(404).json({ error: "Event not found" });
+      }
+      let subjectToPersist;
+      if (Object.prototype.hasOwnProperty.call(reqBody, "subject")) {
+        const sub = validateEmailSubjectTemplateInput(subject);
+        if (!sub.ok) {
+          return res.status(400).json({ error: sub.error });
+        }
+        subjectToPersist = sub.value;
+      }
+      const sanitized = sanitizeCourtesyTemplateHtml(body);
+      await storage.upsertCommunicateTemplate(eventId, sanitized, subjectToPersist);
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error("PATCH /api/admin/events/:eventId/communicate-template:", error);
+      return res.status(500).json({ error: "Failed to save communicate template" });
+    }
+  });
+  app2.get(
+    "/api/admin/events/:eventId/communicate-recipient-counts",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+        }
+        const parsedId = z3.string().uuid().safeParse(req.params.eventId);
+        if (!parsedId.success) {
+          return res.status(400).json({ error: "Invalid event id" });
+        }
+        const eventId = parsedId.data;
+        const event = await storage.getEvent(eventId);
+        if (!event) {
+          return res.status(404).json({ message: "Evento n\xE3o encontrado." });
+        }
+        const counts = await storage.getCommunicateRecipientCounts(eventId);
+        return res.status(200).json(counts);
+      } catch (error) {
+        console.error(
+          "GET /api/admin/events/:eventId/communicate-recipient-counts:",
+          error
+        );
+        return res.status(500).json({ error: "Erro ao calcular destinat\xE1rios." });
+      }
+    }
+  );
+  app2.post(
+    "/api/admin/events/:eventId/communicate-send",
+    authenticateToken,
+    upload.fields([{ name: "attachment", maxCount: 1 }]),
+    async (req, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+        }
+        const parsedId = z3.string().uuid().safeParse(req.params.eventId);
+        if (!parsedId.success) {
+          return res.status(400).json({ error: "Invalid event id" });
+        }
+        const eventId = parsedId.data;
+        const event = await storage.getEvent(eventId);
+        if (!event) {
+          return res.status(404).json({ message: "Evento n\xE3o encontrado." });
+        }
+        if (!event.isActive) {
+          return res.status(422).json({ message: "Evento indispon\xEDvel para envio." });
+        }
+        const rawMode = typeof req.body?.recipientMode === "string" ? req.body.recipientMode : "";
+        const modeParsed = communicateRecipientModeSchema.safeParse(rawMode);
+        if (!modeParsed.success) {
+          return res.status(400).json({
+            error: "recipientMode inv\xE1lido",
+            valid: communicateRecipientModes
+          });
+        }
+        const recipientMode = modeParsed.data;
+        const templateRow = await storage.getCommunicateTemplate(eventId);
+        const templateBody = templateRow?.body?.trim() ?? "";
+        if (!templateBody) {
+          return res.status(422).json({
+            message: "Configure o template de comunicado para este evento antes de enviar."
+          });
+        }
+        const attachmentFile = req.files?.attachment?.[0] ?? null;
+        const attachmentData = attachmentFile ? JSON.stringify({
+          filename: attachmentFile.originalname,
+          content: attachmentFile.buffer.toString("base64"),
+          type: attachmentFile.mimetype
+        }) : null;
+        await storage.addCommunicateJobToQueue({
+          eventId,
+          recipientMode,
+          attachmentData,
+          createdBy: req.user.id
+        });
+        return res.status(202).json({
+          message: "Comunicados enfileirados. Os e-mails ser\xE3o enviados em breve."
+        });
+      } catch (error) {
+        console.error("POST /api/admin/events/:eventId/communicate-send:", error);
+        return res.status(500).json({ error: "Erro ao enfileirar comunicados." });
+      }
+    }
+  );
   app2.patch(
     "/api/admin/events/:eventId",
     authenticateToken,
@@ -47286,7 +47945,7 @@ async function registerRoutes(app2) {
         if (!req.user.isAdmin) {
           return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
         }
-        const parsed = z2.string().uuid().safeParse(req.params.eventId);
+        const parsed = z3.string().uuid().safeParse(req.params.eventId);
         if (!parsed.success) {
           return res.status(400).json({ error: "Invalid event id" });
         }
@@ -47350,6 +48009,16 @@ async function registerRoutes(app2) {
             payload.price = normalizedPrice;
           }
         }
+        if (Object.prototype.hasOwnProperty.call(body, "nps_type")) {
+          const v = body.nps_type;
+          const parsedNps = z3.enum(["cdpi_event", "cdpi_apoiando"]).safeParse(v);
+          if (!parsedNps.success) {
+            return res.status(400).json({ error: "nps_type must be cdpi_event or cdpi_apoiando" });
+          }
+          if (parsedNps.data !== existing.npsType) {
+            payload.npsType = parsedNps.data;
+          }
+        }
         const file = req.file;
         if (file?.buffer) {
           const mimeToExt = {
@@ -47399,7 +48068,7 @@ async function registerRoutes(app2) {
       if (!req.user.isAdmin) {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
       }
-      const parsed = z2.string().uuid().safeParse(req.params.eventId);
+      const parsed = z3.string().uuid().safeParse(req.params.eventId);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid event id" });
       }
@@ -47423,7 +48092,7 @@ async function registerRoutes(app2) {
       if (!req.user.isAdmin) {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
       }
-      const parsed = z2.string().uuid().safeParse(req.params.eventId);
+      const parsed = z3.string().uuid().safeParse(req.params.eventId);
       if (!parsed.success) {
         return res.status(400).json({ message: "eventId inv\xE1lido" });
       }
@@ -47480,6 +48149,40 @@ async function registerRoutes(app2) {
       res.status(500).json({ message: "Erro ao listar participantes" });
     }
   });
+  app2.get("/api/admin/events/:eventId/nps", authenticateToken, async (req, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsed = z3.string().uuid().safeParse(req.params.eventId);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "eventId inv\xE1lido" });
+      }
+      const eventId = parsed.data;
+      const event = await storage.getEvent(eventId);
+      if (!event) {
+        return res.status(404).json({ message: "Evento n\xE3o encontrado" });
+      }
+      const npsType = event.npsType ?? "cdpi_event";
+      if (npsType === "cdpi_event") {
+        const rows2 = await db.select().from(npsCdpiEventResponses).where(eq2(npsCdpiEventResponses.eventId, eventId)).orderBy(desc2(npsCdpiEventResponses.createdAt));
+        return res.json({
+          npsType,
+          count: rows2.length,
+          rows: rows2.map(cdpiEventResponseToExportRow)
+        });
+      }
+      const rows = await db.select().from(npsCdpiApoiandoResponses).where(eq2(npsCdpiApoiandoResponses.eventId, eventId)).orderBy(desc2(npsCdpiApoiandoResponses.createdAt));
+      return res.json({
+        npsType,
+        count: rows.length,
+        rows: rows.map(cdpiApoiandoResponseToExportRow)
+      });
+    } catch (e) {
+      console.error("GET /api/admin/events/:eventId/nps:", e);
+      return res.status(500).json({ message: "Erro ao listar NPS" });
+    }
+  });
   app2.get(
     "/api/admin/events/:eventId/mass-send-recipients",
     authenticateToken,
@@ -47491,7 +48194,7 @@ async function registerRoutes(app2) {
             message: "Acesso negado. Apenas administradores."
           });
         }
-        const parsed = z2.string().uuid().safeParse(req.params.eventId);
+        const parsed = z3.string().uuid().safeParse(req.params.eventId);
         if (!parsed.success) {
           return res.status(400).json({ success: false, message: "eventId inv\xE1lido" });
         }
@@ -47539,12 +48242,12 @@ async function registerRoutes(app2) {
             message: "Acesso negado. Apenas administradores."
           });
         }
-        const parsed = z2.string().uuid().safeParse(req.params.eventId);
+        const parsed = z3.string().uuid().safeParse(req.params.eventId);
         if (!parsed.success) {
           return res.status(400).json({ success: false, message: "eventId inv\xE1lido" });
         }
         const eventId = parsed.data;
-        const bodyParsed = z2.object({ isActive: z2.boolean() }).safeParse(req.body);
+        const bodyParsed = z3.object({ isActive: z3.boolean() }).safeParse(req.body);
         if (!bodyParsed.success) {
           return res.status(400).json({
             success: false,
@@ -47584,8 +48287,8 @@ async function registerRoutes(app2) {
             message: "Acesso negado. Apenas administradores."
           });
         }
-        const eventParsed = z2.string().uuid().safeParse(req.params.eventId);
-        const parsed = z2.string().uuid().safeParse(req.params.linkId);
+        const eventParsed = z3.string().uuid().safeParse(req.params.eventId);
+        const parsed = z3.string().uuid().safeParse(req.params.linkId);
         if (!eventParsed.success || !parsed.success) {
           return res.status(400).json({ success: false, message: "eventId ou linkId inv\xE1lido" });
         }
@@ -47666,7 +48369,7 @@ async function registerRoutes(app2) {
         if (!req.user.isAdmin) {
           return res.status(403).json({ message: "Acesso negado" });
         }
-        const parsed = z2.string().uuid().safeParse(req.params.eventId);
+        const parsed = z3.string().uuid().safeParse(req.params.eventId);
         if (!parsed.success) {
           return res.status(400).json({ message: "eventId inv\xE1lido" });
         }
@@ -47691,7 +48394,7 @@ async function registerRoutes(app2) {
         if (!req.user.isAdmin) {
           return res.status(403).json({ message: "Acesso negado" });
         }
-        const parsed = z2.string().uuid().safeParse(req.params.eventId);
+        const parsed = z3.string().uuid().safeParse(req.params.eventId);
         if (!parsed.success) {
           return res.status(400).json({ message: "eventId inv\xE1lido" });
         }
@@ -47700,7 +48403,7 @@ async function registerRoutes(app2) {
         if (!ev) {
           return res.status(404).json({ message: "Evento n\xE3o encontrado" });
         }
-        const body = z2.object({ isEnabled: z2.boolean() }).safeParse(req.body);
+        const body = z3.object({ isEnabled: z3.boolean() }).safeParse(req.body);
         if (!body.success) {
           return res.status(400).json({ message: "Body inv\xE1lido: informe { isEnabled: boolean }" });
         }
@@ -47724,7 +48427,7 @@ async function registerRoutes(app2) {
         if (!req.user.isAdmin) {
           return res.status(403).json({ message: "Acesso negado" });
         }
-        const parsed = z2.string().uuid().safeParse(req.params.eventId);
+        const parsed = z3.string().uuid().safeParse(req.params.eventId);
         if (!parsed.success) {
           return res.status(400).json({ message: "eventId inv\xE1lido" });
         }
@@ -47762,7 +48465,7 @@ async function registerRoutes(app2) {
       if (!req.user.isAdmin) {
         return res.status(403).json({ error: "Unauthorized" });
       }
-      const parsed = z2.string().uuid().safeParse(req.params.eventId);
+      const parsed = z3.string().uuid().safeParse(req.params.eventId);
       if (!parsed.success) {
         return res.status(400).json({ error: "eventId inv\xE1lido" });
       }
@@ -47848,8 +48551,8 @@ async function registerRoutes(app2) {
         if (!req.user.isAdmin) {
           return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
         }
-        const eventIdParsed = z2.string().uuid().safeParse(req.params.eventId);
-        const linkIdParsed = z2.string().uuid().safeParse(req.params.linkId);
+        const eventIdParsed = z3.string().uuid().safeParse(req.params.eventId);
+        const linkIdParsed = z3.string().uuid().safeParse(req.params.linkId);
         if (!eventIdParsed.success || !linkIdParsed.success) {
           return res.status(400).json({ error: "eventId ou linkId inv\xE1lido" });
         }
@@ -47862,9 +48565,9 @@ async function registerRoutes(app2) {
         if (existingLink.eventId !== eventId) {
           return res.status(404).json({ error: "Link de cortesia n\xE3o encontrado" });
         }
-        const bodyParsed = z2.object({
-          ticketCount: z2.coerce.number().optional(),
-          isActive: z2.boolean().optional()
+        const bodyParsed = z3.object({
+          ticketCount: z3.coerce.number().optional(),
+          isActive: z3.boolean().optional()
         }).strict().safeParse(req.body);
         if (!bodyParsed.success) {
           return res.status(400).json({ error: "Payload inv\xE1lido" });
@@ -47922,7 +48625,7 @@ async function registerRoutes(app2) {
       if (!req.user.isAdmin) {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
       }
-      const parsed = z2.string().uuid().safeParse(req.params.ticketId);
+      const parsed = z3.string().uuid().safeParse(req.params.ticketId);
       if (!parsed.success) {
         return res.status(400).json({ message: "ticketId inv\xE1lido" });
       }
@@ -47977,7 +48680,7 @@ async function registerRoutes(app2) {
           message: "Acesso negado. Apenas administradores."
         });
       }
-      const parsed = z2.string().uuid().safeParse(req.params.id);
+      const parsed = z3.string().uuid().safeParse(req.params.id);
       if (!parsed.success) {
         return res.status(400).json({ success: false, message: "orderId inv\xE1lido" });
       }
@@ -48050,7 +48753,7 @@ async function registerRoutes(app2) {
             message: "Acesso negado. Apenas administradores."
           });
         }
-        const parsed = z2.string().uuid().safeParse(req.params.id);
+        const parsed = z3.string().uuid().safeParse(req.params.id);
         if (!parsed.success) {
           return res.status(400).json({ success: false, message: "orderId inv\xE1lido" });
         }
@@ -48102,7 +48805,7 @@ async function registerRoutes(app2) {
       if (!req.user.isAdmin) {
         return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
       }
-      const parsed = z2.string().uuid().safeParse(req.params.id);
+      const parsed = z3.string().uuid().safeParse(req.params.id);
       if (!parsed.success) {
         return res.status(400).json({ error: "orderId inv\xE1lido" });
       }
@@ -48142,7 +48845,7 @@ async function registerRoutes(app2) {
         if (!req.user.isAdmin) {
           return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
         }
-        const idParsed = z2.string().uuid().safeParse(req.params.eventId);
+        const idParsed = z3.string().uuid().safeParse(req.params.eventId);
         if (!idParsed.success) {
           return res.status(400).json({ message: "eventId inv\xE1lido" });
         }
@@ -48548,6 +49251,16 @@ async function registerRoutes(app2) {
           updates.birthDate = new Date(updates.birthDate);
         }
       }
+      if (typeof updates.name === "string" && updates.name.trim()) {
+        updates.name = toTitleCaseName(updates.name);
+      }
+      if (typeof updates.phone === "string" && updates.phone.trim()) {
+        try {
+          updates.phone = normalizePhoneE164(updates.phone, "BR");
+        } catch {
+          return res.status(400).json({ message: "Telefone inv\xE1lido" });
+        }
+      }
       const updatedUser = await storage.updateUser(userId, updates);
       if (!updatedUser) {
         return res.status(404).json({ message: "Usu\xE1rio n\xE3o encontrado" });
@@ -48736,11 +49449,19 @@ async function registerRoutes(app2) {
         return res.status(400).json({ message: "Evento lotado" });
       }
       const birthDateObj = new Date(userData.birthDate);
+      let phoneNorm;
+      let nameNorm;
+      try {
+        phoneNorm = normalizePhoneE164(userData.phone, "BR");
+        nameNorm = toTitleCaseName(userData.name);
+      } catch {
+        return res.status(400).json({ message: "Telefone inv\xE1lido" });
+      }
       const newAttendee = await storage.createCourtesyAttendee({
-        name: userData.name,
+        name: nameNorm,
         email: userData.email,
         cpf: userData.cpf,
-        phone: userData.phone,
+        phone: phoneNorm,
         birthDate: birthDateObj,
         address: userData.address,
         partnerCompany: userData.partnerCompany,
@@ -48845,7 +49566,7 @@ async function registerRoutes(app2) {
       if (!req.user.isAdmin) {
         return res.status(403).json({ message: "Acesso negado." });
       }
-      const eventParsed = z2.string().uuid().safeParse(req.params.eventId);
+      const eventParsed = z3.string().uuid().safeParse(req.params.eventId);
       if (!eventParsed.success) {
         return res.status(400).json({ message: "eventId inv\xE1lido." });
       }
@@ -48941,6 +49662,7 @@ async function registerRoutes(app2) {
         eventId: events.id,
         eventName: events.title,
         eventDate: events.date,
+        npsType: events.npsType,
         certificateUrl: sql3`max(${certificates.certificateUrl})`
       }).from(events).innerJoin(
         orders,
@@ -48952,13 +49674,14 @@ async function registerRoutes(app2) {
       ).leftJoin(
         certificates,
         and2(eq2(certificates.eventId, events.id), eq2(certificates.userId, userId))
-      ).where(certificateTemplateReady).groupBy(events.id, events.title, events.date).orderBy(desc2(events.date)).limit(pageSize).offset(offset);
+      ).where(certificateTemplateReady).groupBy(events.id, events.title, events.date, events.npsType).orderBy(desc2(events.date)).limit(pageSize).offset(offset);
       const totalPages = total > 0 ? Math.ceil(total / pageSize) : 0;
       res.json({
         data: rows.map((row) => ({
           eventId: row.eventId,
           eventName: row.eventName,
           eventDate: row.eventDate instanceof Date ? row.eventDate.toISOString() : new Date(row.eventDate).toISOString(),
+          npsType: row.npsType ?? "cdpi_event",
           certificateUrl: row.certificateUrl
         })),
         pagination: {
@@ -48982,7 +49705,7 @@ async function registerRoutes(app2) {
         issues: parsed.error.flatten()
       });
     }
-    const { eventId, fullName, npsResponses } = parsed.data;
+    const { eventId, npsType, answers } = parsed.data;
     try {
       const [existing] = await db.select({ id: certificates.id }).from(certificates).where(and2(eq2(certificates.userId, userId), eq2(certificates.eventId, eventId))).limit(1);
       if (existing) {
@@ -48991,6 +49714,11 @@ async function registerRoutes(app2) {
       const [eventRow] = await db.select().from(events).where(eq2(events.id, eventId)).limit(1);
       if (!eventRow) {
         return res.status(400).json({ message: "Evento n\xE3o encontrado" });
+      }
+      if (eventRow.npsType !== npsType) {
+        return res.status(409).json({
+          message: "Tipo de NPS do evento n\xE3o corresponde ao formul\xE1rio enviado"
+        });
       }
       const templateUrl = eventRow.certificateTemplateUrl?.trim();
       if (!templateUrl) {
@@ -49012,11 +49740,13 @@ async function registerRoutes(app2) {
         console.error("POST /api/certificates/generate: AWS_S3_BUCKET_NAME is missing");
         return res.status(500).json({ message: "Configura\xE7\xE3o de armazenamento ausente" });
       }
+      const payload = buildNpsInsertPayload(userId, eventId, npsType, answers);
+      const displayName = payload.row.name;
       let certificateUrl;
       try {
         certificateUrl = await invokeGenerateCertificatePdf({
           templateS3Url: templateUrl,
-          nomeCompleto: fullName,
+          nomeCompleto: displayName,
           userId,
           eventId,
           outputBucket
@@ -49038,18 +49768,63 @@ async function registerRoutes(app2) {
           detail: msg
         });
       }
-      await db.insert(certificates).values({
-        userId,
-        eventId,
-        certificateUrl,
-        fullName,
-        npsResponses: {
-          overallRating: npsResponses.overallRating,
-          wouldRecommend: npsResponses.wouldRecommend,
-          highlights: npsResponses.highlights ?? "",
-          improvements: npsResponses.improvements ?? ""
-        }
-      });
+      try {
+        await db.transaction(async (tx) => {
+          if (payload.table === "cdpi_event") {
+            const r = payload.row;
+            await tx.insert(npsCdpiEventResponses).values({
+              userId: r.userId,
+              eventId: r.eventId,
+              name: r.name,
+              email: r.email,
+              phone: r.phone,
+              overallRating: r.overallRating,
+              themesRelevance: r.themesRelevance,
+              speakersRating: r.speakersRating,
+              applicability: r.applicability,
+              highlight: r.highlight,
+              organizationRating: r.organizationRating,
+              wouldAttendAgain: r.wouldAttendAgain,
+              improvements: r.improvements,
+              interestInTopics: r.interestInTopics,
+              interestTopicText: r.interestTopicText,
+              recommendationScore: r.recommendationScore
+            });
+          } else {
+            const r = payload.row;
+            await tx.insert(npsCdpiApoiandoResponses).values({
+              userId: r.userId,
+              eventId: r.eventId,
+              name: r.name,
+              email: r.email,
+              phone: r.phone,
+              overallScore: r.overallScore,
+              themesRelevance: r.themesRelevance,
+              applicability: r.applicability,
+              futureTopics: r.futureTopics,
+              organizationExperience: r.organizationExperience,
+              improvements: r.improvements,
+              wantsUpdates: r.wantsUpdates
+            });
+          }
+          await tx.update(users).set({
+            name: payload.row.name,
+            phone: payload.row.phone,
+            updatedAt: /* @__PURE__ */ new Date()
+          }).where(eq2(users.id, userId));
+          await tx.insert(certificates).values({
+            userId,
+            eventId,
+            certificateUrl,
+            fullName: displayName
+          });
+        });
+      } catch (dbErr) {
+        console.error("POST /api/certificates/generate DB after Lambda:", dbErr);
+        return res.status(500).json({
+          message: "Certificado gerado mas falhou ao salvar respostas. Entre em contato com o suporte."
+        });
+      }
       return res.status(201).json({ certificateUrl });
     } catch (error) {
       const code = error?.code ?? error?.cause?.code;

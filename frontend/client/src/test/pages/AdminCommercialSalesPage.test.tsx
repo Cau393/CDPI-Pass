@@ -20,6 +20,8 @@ const MOCK_EVENTS = [
     updatedAt: "2026-01-01",
     certificateTemplateUrl: null,
     courtesyTemplate: null,
+    courtesyEmailSubject: null,
+    npsType: "cdpi_event" as const,
   },
 ];
 

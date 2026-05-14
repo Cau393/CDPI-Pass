@@ -17,8 +17,10 @@ import {
   DollarSign,
   FileText,
   FileUp,
+  LineChart,
   LogOut,
   Mail,
+  Megaphone,
   Printer,
   ScanLine,
   Ticket,
@@ -63,6 +65,7 @@ function NavItem({
       isActive =
         pathname === "/admin/events" ||
         pathname === "/admin/events/new" ||
+        pathname === "/admin/events/nps" ||
         EVENT_EDIT_PATH.test(pathname);
     } else {
       isActive = pathname === p || pathname.startsWith(`${p}/`);
@@ -128,6 +131,20 @@ export default function AdminSidebar() {
               label="Vendas Comercial"
               tooltip="Vendas do Comercial"
             />
+            <NavItem
+              href="/admin/comunicado/envio-em-massa"
+              matchPrefix="/admin/comunicado/envio-em-massa"
+              icon={Megaphone}
+              label="Envio Comunicado"
+              tooltip="Envio em massa de comunicados"
+            />
+            <NavItem
+              href="/admin/templates"
+              matchPrefix="/admin/templates"
+              icon={FileText}
+              label="Templates"
+              tooltip="Templates de e-mail (cortesia, lembrete e comunicado)"
+            />
           </SidebarMenu>
         </SidebarGroup>
         <SidebarGroup>
@@ -147,13 +164,6 @@ export default function AdminSidebar() {
                 label="Envio em massa"
                 tooltip="Envio em massa"
               />
-            <NavItem
-              href="/admin/templates"
-              matchPrefix="/admin/templates"
-              icon={FileText}
-              label="Templates"
-              tooltip="Templates de e-mail (cortesia e lembrete)"
-            />
           </SidebarMenu>
         </SidebarGroup>
         <SidebarGroup>
@@ -165,6 +175,13 @@ export default function AdminSidebar() {
               icon={CalendarDays}
               label="Eventos"
               tooltip="Lista e novos eventos"
+            />
+            <NavItem
+              href="/admin/events/nps"
+              matchPrefix="/admin/events/nps"
+              icon={LineChart}
+              label="Pesquisa NPS"
+              tooltip="Exportar respostas NPS"
             />
             <NavItem
               href="/admin/events/certificate-template"

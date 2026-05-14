@@ -9,7 +9,6 @@ import {
   boolean,
   integer,
   serial,
-  jsonb,
   unique,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
@@ -54,7 +53,67 @@ export const events = pgTable("events", {
   courtesyTemplate: text("courtesy_template"),
   /** Plain-text subject template for courtesy mass-send; same placeholders; null = use default subject. */
   courtesyEmailSubject: text("courtesy_email_subject"),
+  /** Which NPS form appears when redeeming certificate: Evento do CDPI vs CDPI Apoiando. */
+  npsType: text("nps_type", { enum: ["cdpi_event", "cdpi_apoiando"] })
+    .notNull()
+    .default("cdpi_event"),
 });
+
+/** NPS responses for "Evento do CDPI" certificate flow. */
+export const npsCdpiEventResponses = pgTable(
+  "nps_cdpi_event_responses",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    eventId: varchar("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    email: varchar("email", { length: 255 }).notNull(),
+    phone: varchar("phone", { length: 20 }).notNull(),
+    overallRating: text("overall_rating").notNull(),
+    themesRelevance: text("themes_relevance").notNull(),
+    speakersRating: text("speakers_rating").notNull(),
+    applicability: text("applicability").notNull(),
+    highlight: text("highlight").notNull(),
+    organizationRating: text("organization_rating").notNull(),
+    wouldAttendAgain: text("would_attend_again").notNull(),
+    improvements: text("improvements").notNull(),
+    interestInTopics: text("interest_in_topics").notNull(),
+    interestTopicText: text("interest_topic_text"),
+    recommendationScore: integer("recommendation_score").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [unique("nps_cdpi_event_user_event_unique").on(t.userId, t.eventId)],
+);
+
+/** NPS responses for "CDPI Apoiando Evento" certificate flow. */
+export const npsCdpiApoiandoResponses = pgTable(
+  "nps_cdpi_apoiando_responses",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    eventId: varchar("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    email: varchar("email", { length: 255 }).notNull(),
+    phone: varchar("phone", { length: 20 }).notNull(),
+    overallScore: integer("overall_score").notNull(),
+    themesRelevance: text("themes_relevance").notNull(),
+    applicability: text("applicability").notNull(),
+    futureTopics: text("future_topics").notNull(),
+    organizationExperience: text("organization_experience").notNull(),
+    improvements: text("improvements").notNull(),
+    wantsUpdates: text("wants_updates").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [unique("nps_cdpi_apoiando_user_event_unique").on(t.userId, t.eventId)],
+);
 
 // Generated certificates (one per user per event)
 export const certificates = pgTable(
@@ -69,7 +128,6 @@ export const certificates = pgTable(
       .references(() => events.id, { onDelete: "cascade" }),
     certificateUrl: text("certificate_url").notNull(),
     fullName: text("full_name").notNull(),
-    npsResponses: jsonb("nps_responses").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [unique("certificates_user_id_event_id_unique").on(t.userId, t.eventId)],
@@ -178,6 +236,32 @@ export const reminderJobs = pgTable("reminder_jobs", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+/** Communicate (announcement) e-mail template per event; placeholders {nome}, {evento}, {data}. */
+export const communicateTemplates = pgTable("communicate_templates", {
+  eventId: varchar("event_id")
+    .primaryKey()
+    .references(() => events.id, { onDelete: "cascade" }),
+  body: text("body").notNull().default(""),
+  subject: text("subject").notNull().default(""),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** Communicate mass-send jobs. */
+export const communicateJobs = pgTable("communicate_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  status: text("status", { enum: ["pending", "processing", "completed", "failed"] })
+    .default("pending")
+    .notNull(),
+  eventId: varchar("event_id").notNull().references(() => events.id),
+  recipientMode: text("recipient_mode", {
+    enum: ["participants", "participants_and_unredeemed", "unredeemed_only"],
+  }).notNull(),
+  attachmentData: text("attachment_data"),
+  createdBy: text("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 /** One row per event: toggle automatic Zebra print queue on check-in. */
 export const eventPrintSettings = pgTable("event_print_settings", {
   eventId: varchar("event_id")
@@ -221,12 +305,16 @@ export const usersRelations = relations(users, ({ many }) => ({
   orders: many(orders),
   courtesyLinks: many(courtesyLinks),
   certificates: many(certificates),
+  npsCdpiEventResponses: many(npsCdpiEventResponses),
+  npsCdpiApoiandoResponses: many(npsCdpiApoiandoResponses),
 }));
 
 export const eventsRelations = relations(events, ({ many }) => ({
   orders: many(orders),
   courtesyLinks: many(courtesyLinks),
   certificates: many(certificates),
+  npsCdpiEventResponses: many(npsCdpiEventResponses),
+  npsCdpiApoiandoResponses: many(npsCdpiApoiandoResponses),
 }));
 
 export const certificatesRelations = relations(certificates, ({ one }) => ({
@@ -236,6 +324,28 @@ export const certificatesRelations = relations(certificates, ({ one }) => ({
   }),
   event: one(events, {
     fields: [certificates.eventId],
+    references: [events.id],
+  }),
+}));
+
+export const npsCdpiEventResponsesRelations = relations(npsCdpiEventResponses, ({ one }) => ({
+  user: one(users, {
+    fields: [npsCdpiEventResponses.userId],
+    references: [users.id],
+  }),
+  event: one(events, {
+    fields: [npsCdpiEventResponses.eventId],
+    references: [events.id],
+  }),
+}));
+
+export const npsCdpiApoiandoResponsesRelations = relations(npsCdpiApoiandoResponses, ({ one }) => ({
+  user: one(users, {
+    fields: [npsCdpiApoiandoResponses.userId],
+    references: [users.id],
+  }),
+  event: one(events, {
+    fields: [npsCdpiApoiandoResponses.eventId],
     references: [events.id],
   }),
 }));
@@ -286,7 +396,9 @@ export const eventPrintSettingsRelations = relations(eventPrintSettings, ({ one 
 export const insertUserSchema = createInsertSchema(users, {
   email: z.string().email("Email inválido"),
   cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
-  phone: z.string().regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, "Telefone deve estar no formato (00) 00000-0000"),
+  phone: z
+    .string()
+    .regex(/^\d{8,15}$/, "Telefone deve conter 8 a 15 dígitos (código do país sem +)"),
   password: z.string().min(6, "Senha deve ter pelo menos 6 caracteres"),
   name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
   address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),
@@ -355,10 +467,22 @@ export type InsertCourtesyLink = z.infer<typeof insertCourtesyLinkSchema>;
 export type CourtesyAttendee = typeof courtesyAttendees.$inferSelect;
 export type InsertCourtesyAttendee = z.infer<typeof insertCourtesyAttendeeSchema>;
 export type Certificate = typeof certificates.$inferSelect;
+export type NpsCdpiEventResponse = typeof npsCdpiEventResponses.$inferSelect;
+export type NpsCdpiApoiandoResponse = typeof npsCdpiApoiandoResponses.$inferSelect;
 export type EventPrintSettings = typeof eventPrintSettings.$inferSelect;
 export type PrintJob = typeof printJobs.$inferSelect;
 export type ReminderTemplate = typeof reminderTemplates.$inferSelect;
 export type ReminderJob = typeof reminderJobs.$inferSelect;
+export type CommunicateTemplate = typeof communicateTemplates.$inferSelect;
+export type CommunicateJob = typeof communicateJobs.$inferSelect;
+
+export const communicateRecipientModes = [
+  "participants",
+  "participants_and_unredeemed",
+  "unredeemed_only",
+] as const;
+
+export type CommunicateRecipientMode = (typeof communicateRecipientModes)[number];
 
 // Login schema
 export const loginSchema = z.object({
@@ -378,7 +502,9 @@ export const courtesyRedemptionSchema = z.object({
   occupation: z.string().min(2, "Cargo é obrigatório"),
   birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
   address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),
-  phone: z.string().regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, "Telefone deve estar no formato (00) 00000-0000"),
+  phone: z
+    .string()
+    .regex(/^\d{8,15}$/, "Telefone deve conter 8 a 15 dígitos (código do país sem +)"),
 }).refine((data) => data.email === data.emailConfirm, {
   message: "Os emails não coincidem",
   path: ["emailConfirm"],

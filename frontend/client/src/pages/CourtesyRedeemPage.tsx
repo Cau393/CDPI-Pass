@@ -3,7 +3,9 @@ import { useLocation, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
+import type { z } from "zod";
+import { courtesyRedemptionSchema } from "@shared/schema";
+import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,22 +23,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 
-const redemptionSchema = z.object({
-  name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
-  email: z.string().email("Email inválido"),
-  emailConfirm: z.string().email("Email inválido"),
-  cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
-  partnerCompany: z.string().min(2, "Empresa parceira é obrigatória"),
-  occupation: z.string().min(2, "Cargo é obrigatório"),
-  birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
-  address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),
-  phone: z.string().regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, "Telefone deve estar no formato (00) 00000-0000"),
-}).refine((data) => data.email === data.emailConfirm, {
-  message: "Os emails não coincidem",
-  path: ["emailConfirm"],
-});
-
-type RedemptionFormData = z.infer<typeof redemptionSchema>;
+type RedemptionFormData = z.infer<typeof courtesyRedemptionSchema>;
 
 export default function CourtesyRedeemPage() {
   const [, setLocation] = useLocation();
@@ -48,7 +35,7 @@ export default function CourtesyRedeemPage() {
   const { toast } = useToast();
 
   const form = useForm<RedemptionFormData>({
-    resolver: zodResolver(redemptionSchema),
+    resolver: zodResolver(courtesyRedemptionSchema),
     defaultValues: {
       name: "",
       email: "",
@@ -145,14 +132,6 @@ export default function CourtesyRedeemPage() {
     if (numbers.length <= 6) return `${numbers.slice(0, 3)}.${numbers.slice(3)}`;
     if (numbers.length <= 9) return `${numbers.slice(0, 3)}.${numbers.slice(3, 6)}.${numbers.slice(6)}`;
     return `${numbers.slice(0, 3)}.${numbers.slice(3, 6)}.${numbers.slice(6, 9)}-${numbers.slice(9, 11)}`;
-  };
-
-  const formatPhone = (value: string) => {
-    const numbers = value.replace(/\D/g, '');
-    if (numbers.length <= 2) return numbers;
-    if (numbers.length <= 6) return `(${numbers.slice(0, 2)}) ${numbers.slice(2)}`;
-    if (numbers.length <= 10) return `(${numbers.slice(0, 2)}) ${numbers.slice(2, 6)}-${numbers.slice(6)}`;
-    return `(${numbers.slice(0, 2)}) ${numbers.slice(2, 7)}-${numbers.slice(7, 11)}`;
   };
 
   const onSubmit = (data: RedemptionFormData) => {
@@ -408,10 +387,10 @@ export default function CourtesyRedeemPage() {
                       <FormItem>
                         <FormLabel>Telefone *</FormLabel>
                         <FormControl>
-                          <Input
-                            {...field}
-                            onChange={(e) => field.onChange(formatPhone(e.target.value))}
-                            maxLength={15}
+                          <PhoneInputE164
+                            value={field.value}
+                            onChange={field.onChange}
+                            aria-invalid={Boolean(form.formState.errors.phone)}
                             data-testid="input-phone"
                           />
                         </FormControl>

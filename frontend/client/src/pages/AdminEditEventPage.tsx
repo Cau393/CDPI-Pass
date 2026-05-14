@@ -66,6 +66,7 @@ function buildPatchFormData(
   if (dirty.date) fd.append("date", values.date.trim());
   if (dirty.location) fd.append("location", values.location.trim());
   if (dirty.price) fd.append("price", brazilianPriceToApiString(values.price));
+  if (dirty.npsType) fd.append("nps_type", values.npsType);
   if (dirty.coverImage && values.coverImage?.[0]) {
     fd.append("coverImage", values.coverImage[0]);
   }
@@ -140,6 +141,7 @@ export default function AdminEditEventPage() {
       date: "",
       location: "",
       price: "",
+      npsType: "cdpi_event",
     },
   });
 
@@ -154,6 +156,7 @@ export default function AdminEditEventPage() {
       date: eventDateToFormString(event.date),
       location: event.location,
       price: apiPriceToBrazilianDisplay(event.price),
+      npsType: event.npsType ?? "cdpi_event",
     });
   }, [event, form]);
 
@@ -178,7 +181,8 @@ export default function AdminEditEventPage() {
       dirty.description ||
       dirty.date ||
       dirty.location ||
-      dirty.price;
+      dirty.price ||
+      dirty.npsType;
 
     if (!hasTextDirty && !hasNewCover) {
       toast({
@@ -203,6 +207,7 @@ export default function AdminEditEventPage() {
         date: eventDateToFormString(updated.date),
         location: updated.location,
         price: apiPriceToBrazilianDisplay(updated.price),
+        npsType: updated.npsType ?? "cdpi_event",
         coverImage: undefined,
       });
       if (fileInputRef.current) fileInputRef.current.value = "";

@@ -9,6 +9,8 @@ import {
   massSendJobs,
   reminderTemplates,
   reminderJobs,
+  communicateTemplates,
+  communicateJobs,
   eventPrintSettings,
   printJobs,
   type User,
@@ -24,6 +26,7 @@ import {
   type CourtesyAttendee,
   type InsertCourtesyAttendee,
   type PrintJob,
+  type CommunicateRecipientMode,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, ne, desc, sql, asc, count, and, isNull } from "drizzle-orm";
@@ -31,6 +34,10 @@ import { s3Service } from "./services/s3Service";
 import { buildUndoCheckInPatch } from "./utils/undoCheckInUpdate";
 import { validateCourtesyTicketCountUpdate } from "./utils/courtesyTicketCountUpdate";
 import { MAX_PRINT_ATTEMPTS, nextStateAfterPrintFailure } from "./utils/printJobPolicy";
+import {
+  filterEligibleReminderLinks,
+  deduplicateReminderLinksByEmail,
+} from "./utils/reminderEligibility";
 
 export type CancelOrderResult =
   | { ok: true; order: Order }
@@ -875,6 +882,163 @@ async getPendingMassSendJobs(limit: number = 5) {
       .update(reminderJobs)
       .set({ status, updatedAt: new Date() })
       .where(eq(reminderJobs.id, jobId));
+  }
+
+  async getCommunicateTemplate(eventId: string): Promise<{
+    body: string;
+    subject: string;
+  } | null> {
+    const [row] = await db
+      .select({
+        body: communicateTemplates.body,
+        subject: communicateTemplates.subject,
+      })
+      .from(communicateTemplates)
+      .where(eq(communicateTemplates.eventId, eventId));
+    return row ?? null;
+  }
+
+  async upsertCommunicateTemplate(
+    eventId: string,
+    body: string,
+    subject?: string,
+  ): Promise<void> {
+    await db
+      .insert(communicateTemplates)
+      .values({
+        eventId,
+        body,
+        subject: subject ?? "",
+      })
+      .onConflictDoUpdate({
+        target: communicateTemplates.eventId,
+        set: {
+          body,
+          ...(subject !== undefined ? { subject } : {}),
+          updatedAt: new Date(),
+        },
+      });
+  }
+
+  async addCommunicateJobToQueue(jobData: {
+    eventId: string;
+    recipientMode: CommunicateRecipientMode;
+    attachmentData: string | null;
+    createdBy: string;
+  }) {
+    const [job] = await db
+      .insert(communicateJobs)
+      .values({
+        status: "pending" as const,
+        eventId: jobData.eventId,
+        recipientMode: jobData.recipientMode,
+        attachmentData: jobData.attachmentData,
+        createdBy: jobData.createdBy,
+      })
+      .returning();
+    return job;
+  }
+
+  async getPendingCommunicateJobs(limit = 1) {
+    return db
+      .select()
+      .from(communicateJobs)
+      .where(eq(communicateJobs.status, "pending"))
+      .orderBy(asc(communicateJobs.createdAt))
+      .limit(limit);
+  }
+
+  async updateCommunicateJobStatus(
+    jobId: string,
+    status: "processing" | "completed" | "failed",
+  ) {
+    return db
+      .update(communicateJobs)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(communicateJobs.id, jobId));
+  }
+
+  /** Paid orders only; one entry per distinct e-mail (first row wins). */
+  async listCommunicateParticipantRecipients(
+    eventId: string,
+  ): Promise<{ email: string; name: string }[]> {
+    const rows = await db
+      .select({
+        email: users.email,
+        name: users.name,
+      })
+      .from(orders)
+      .innerJoin(users, eq(orders.userId, users.id))
+      .where(
+        and(eq(orders.eventId, eventId), eq(orders.status, "paid")),
+      )
+      .orderBy(asc(users.name));
+
+    const seen = new Set<string>();
+    const out: { email: string; name: string }[] = [];
+    for (const r of rows) {
+      const email = (r.email ?? "").trim();
+      if (!email) continue;
+      const key = email.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ email, name: r.name });
+    }
+    return out;
+  }
+
+  /** Same eligibility as reminder “resgate pendente”: active links with remaining slots and recipient e-mail. */
+  async listCommunicateUnredeemedRecipients(
+    eventId: string,
+  ): Promise<{ email: string; name: string }[]> {
+    const allLinks = await this.getEligibleReminderLinks(eventId);
+    const eligible = filterEligibleReminderLinks(allLinks);
+    const deduped = deduplicateReminderLinksByEmail(eligible);
+    return deduped
+      .filter((l) => (l.recipientEmail ?? "").trim().length > 0)
+      .map((l) => ({
+        email: l.recipientEmail!.trim(),
+        name: l.recipientName ?? "",
+      }));
+  }
+
+  async getCommunicateRecipientCounts(eventId: string): Promise<{
+    participants: number;
+    unredeemed: number;
+    participantsAndUnredeemed: number;
+  }> {
+    const participants = await this.listCommunicateParticipantRecipients(eventId);
+    const unredeemed = await this.listCommunicateUnredeemedRecipients(eventId);
+    const keys = new Set<string>();
+    for (const p of participants) keys.add(p.email.toLowerCase());
+    for (const u of unredeemed) keys.add(u.email.toLowerCase());
+    return {
+      participants: participants.length,
+      unredeemed: unredeemed.length,
+      participantsAndUnredeemed: keys.size,
+    };
+  }
+
+  async resolveCommunicateRecipients(
+    eventId: string,
+    mode: CommunicateRecipientMode,
+  ): Promise<{ email: string; name: string }[]> {
+    const participants = await this.listCommunicateParticipantRecipients(eventId);
+    if (mode === "participants") return participants;
+
+    const unredeemed = await this.listCommunicateUnredeemedRecipients(eventId);
+    if (mode === "unredeemed_only") return unredeemed;
+
+    const byKey = new Map<string, { email: string; name: string }>();
+    for (const p of participants) {
+      const k = p.email.toLowerCase();
+      if (!byKey.has(k)) byKey.set(k, { email: p.email, name: p.name });
+    }
+    for (const u of unredeemed) {
+      const k = u.email.toLowerCase();
+      if (!byKey.has(k)) byKey.set(k, { email: u.email, name: u.name });
+    }
+    return Array.from(byKey.values());
   }
 
   async getEligibleReminderLinks(eventId: string) {

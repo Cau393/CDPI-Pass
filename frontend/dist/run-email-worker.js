@@ -16,6 +16,9 @@ var schema_exports = {};
 __export(schema_exports, {
   certificates: () => certificates,
   certificatesRelations: () => certificatesRelations,
+  communicateJobs: () => communicateJobs,
+  communicateRecipientModes: () => communicateRecipientModes,
+  communicateTemplates: () => communicateTemplates,
   courtesyAttendees: () => courtesyAttendees,
   courtesyLinks: () => courtesyLinks,
   courtesyLinksRelations: () => courtesyLinksRelations,
@@ -33,6 +36,10 @@ __export(schema_exports, {
   insertUserSchema: () => insertUserSchema,
   loginSchema: () => loginSchema,
   massSendJobs: () => massSendJobs,
+  npsCdpiApoiandoResponses: () => npsCdpiApoiandoResponses,
+  npsCdpiApoiandoResponsesRelations: () => npsCdpiApoiandoResponsesRelations,
+  npsCdpiEventResponses: () => npsCdpiEventResponses,
+  npsCdpiEventResponsesRelations: () => npsCdpiEventResponsesRelations,
   orders: () => orders,
   ordersRelations: () => ordersRelations,
   printJobs: () => printJobs,
@@ -52,7 +59,6 @@ import {
   boolean,
   integer,
   serial,
-  jsonb,
   unique
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
@@ -92,8 +98,54 @@ var events = pgTable("events", {
   /** Custom HTML for courtesy mass-send emails; placeholders {nome}, {evento}, {data}, {link}. */
   courtesyTemplate: text("courtesy_template"),
   /** Plain-text subject template for courtesy mass-send; same placeholders; null = use default subject. */
-  courtesyEmailSubject: text("courtesy_email_subject")
+  courtesyEmailSubject: text("courtesy_email_subject"),
+  /** Which NPS form appears when redeeming certificate: Evento do CDPI vs CDPI Apoiando. */
+  npsType: text("nps_type", { enum: ["cdpi_event", "cdpi_apoiando"] }).notNull().default("cdpi_event")
 });
+var npsCdpiEventResponses = pgTable(
+  "nps_cdpi_event_responses",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    email: varchar("email", { length: 255 }).notNull(),
+    phone: varchar("phone", { length: 20 }).notNull(),
+    overallRating: text("overall_rating").notNull(),
+    themesRelevance: text("themes_relevance").notNull(),
+    speakersRating: text("speakers_rating").notNull(),
+    applicability: text("applicability").notNull(),
+    highlight: text("highlight").notNull(),
+    organizationRating: text("organization_rating").notNull(),
+    wouldAttendAgain: text("would_attend_again").notNull(),
+    improvements: text("improvements").notNull(),
+    interestInTopics: text("interest_in_topics").notNull(),
+    interestTopicText: text("interest_topic_text"),
+    recommendationScore: integer("recommendation_score").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (t) => [unique("nps_cdpi_event_user_event_unique").on(t.userId, t.eventId)]
+);
+var npsCdpiApoiandoResponses = pgTable(
+  "nps_cdpi_apoiando_responses",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    email: varchar("email", { length: 255 }).notNull(),
+    phone: varchar("phone", { length: 20 }).notNull(),
+    overallScore: integer("overall_score").notNull(),
+    themesRelevance: text("themes_relevance").notNull(),
+    applicability: text("applicability").notNull(),
+    futureTopics: text("future_topics").notNull(),
+    organizationExperience: text("organization_experience").notNull(),
+    improvements: text("improvements").notNull(),
+    wantsUpdates: text("wants_updates").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (t) => [unique("nps_cdpi_apoiando_user_event_unique").on(t.userId, t.eventId)]
+);
 var certificates = pgTable(
   "certificates",
   {
@@ -102,7 +154,6 @@ var certificates = pgTable(
     eventId: varchar("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
     certificateUrl: text("certificate_url").notNull(),
     fullName: text("full_name").notNull(),
-    npsResponses: jsonb("nps_responses").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull()
   },
   (t) => [unique("certificates_user_id_event_id_unique").on(t.userId, t.eventId)]
@@ -195,6 +246,24 @@ var reminderJobs = pgTable("reminder_jobs", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 });
+var communicateTemplates = pgTable("communicate_templates", {
+  eventId: varchar("event_id").primaryKey().references(() => events.id, { onDelete: "cascade" }),
+  body: text("body").notNull().default(""),
+  subject: text("subject").notNull().default(""),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+});
+var communicateJobs = pgTable("communicate_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  status: text("status", { enum: ["pending", "processing", "completed", "failed"] }).default("pending").notNull(),
+  eventId: varchar("event_id").notNull().references(() => events.id),
+  recipientMode: text("recipient_mode", {
+    enum: ["participants", "participants_and_unredeemed", "unredeemed_only"]
+  }).notNull(),
+  attachmentData: text("attachment_data"),
+  createdBy: text("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+});
 var eventPrintSettings = pgTable("event_print_settings", {
   eventId: varchar("event_id").primaryKey().references(() => events.id, { onDelete: "cascade" }),
   isEnabled: boolean("is_enabled").default(false).notNull(),
@@ -224,12 +293,16 @@ var printJobs = pgTable("print_jobs", {
 var usersRelations = relations(users, ({ many }) => ({
   orders: many(orders),
   courtesyLinks: many(courtesyLinks),
-  certificates: many(certificates)
+  certificates: many(certificates),
+  npsCdpiEventResponses: many(npsCdpiEventResponses),
+  npsCdpiApoiandoResponses: many(npsCdpiApoiandoResponses)
 }));
 var eventsRelations = relations(events, ({ many }) => ({
   orders: many(orders),
   courtesyLinks: many(courtesyLinks),
-  certificates: many(certificates)
+  certificates: many(certificates),
+  npsCdpiEventResponses: many(npsCdpiEventResponses),
+  npsCdpiApoiandoResponses: many(npsCdpiApoiandoResponses)
 }));
 var certificatesRelations = relations(certificates, ({ one }) => ({
   user: one(users, {
@@ -238,6 +311,26 @@ var certificatesRelations = relations(certificates, ({ one }) => ({
   }),
   event: one(events, {
     fields: [certificates.eventId],
+    references: [events.id]
+  })
+}));
+var npsCdpiEventResponsesRelations = relations(npsCdpiEventResponses, ({ one }) => ({
+  user: one(users, {
+    fields: [npsCdpiEventResponses.userId],
+    references: [users.id]
+  }),
+  event: one(events, {
+    fields: [npsCdpiEventResponses.eventId],
+    references: [events.id]
+  })
+}));
+var npsCdpiApoiandoResponsesRelations = relations(npsCdpiApoiandoResponses, ({ one }) => ({
+  user: one(users, {
+    fields: [npsCdpiApoiandoResponses.userId],
+    references: [users.id]
+  }),
+  event: one(events, {
+    fields: [npsCdpiApoiandoResponses.eventId],
     references: [events.id]
   })
 }));
@@ -283,7 +376,7 @@ var eventPrintSettingsRelations = relations(eventPrintSettings, ({ one }) => ({
 var insertUserSchema = createInsertSchema(users, {
   email: z.string().email("Email inv\xE1lido"),
   cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
-  phone: z.string().regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, "Telefone deve estar no formato (00) 00000-0000"),
+  phone: z.string().regex(/^\d{8,15}$/, "Telefone deve conter 8 a 15 d\xEDgitos (c\xF3digo do pa\xEDs sem +)"),
   password: z.string().min(6, "Senha deve ter pelo menos 6 caracteres"),
   name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
   address: z.string().min(10, "Endere\xE7o deve ter pelo menos 10 caracteres"),
@@ -332,6 +425,11 @@ var insertCourtesyAttendeeSchema = createInsertSchema(courtesyAttendees, {
   createdAt: true,
   updatedAt: true
 });
+var communicateRecipientModes = [
+  "participants",
+  "participants_and_unredeemed",
+  "unredeemed_only"
+];
 var loginSchema = z.object({
   email: z.string().email("Email inv\xE1lido"),
   password: z.string().min(1, "Senha \xE9 obrigat\xF3ria")
@@ -345,7 +443,7 @@ var courtesyRedemptionSchema = z.object({
   occupation: z.string().min(2, "Cargo \xE9 obrigat\xF3rio"),
   birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
   address: z.string().min(10, "Endere\xE7o deve ter pelo menos 10 caracteres"),
-  phone: z.string().regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, "Telefone deve estar no formato (00) 00000-0000")
+  phone: z.string().regex(/^\d{8,15}$/, "Telefone deve conter 8 a 15 d\xEDgitos (c\xF3digo do pa\xEDs sem +)")
 }).refine((data) => data.email === data.emailConfirm, {
   message: "Os emails n\xE3o coincidem",
   path: ["emailConfirm"]
@@ -502,6 +600,23 @@ function nextStateAfterPrintFailure(attemptsBefore) {
     return { status: "failed", attempts: next };
   }
   return { status: "pending", attempts: next };
+}
+
+// server/utils/reminderEligibility.ts
+function filterEligibleReminderLinks(links) {
+  return links.filter((l) => {
+    const remaining = l.ticketCount - (l.usedCount ?? 0);
+    return remaining > 0 && l.isActive === true;
+  });
+}
+function deduplicateReminderLinksByEmail(links) {
+  const seen = /* @__PURE__ */ new Set();
+  return links.filter((l) => {
+    const email = (l.recipientEmail ?? "").toLowerCase();
+    if (seen.has(email)) return false;
+    seen.add(email);
+    return true;
+  });
 }
 
 // server/storage.ts
@@ -988,6 +1103,107 @@ var DatabaseStorage = class {
   async updateReminderJobStatus(jobId, status) {
     return db.update(reminderJobs).set({ status, updatedAt: /* @__PURE__ */ new Date() }).where(eq(reminderJobs.id, jobId));
   }
+  async getCommunicateTemplate(eventId) {
+    const [row] = await db.select({
+      body: communicateTemplates.body,
+      subject: communicateTemplates.subject
+    }).from(communicateTemplates).where(eq(communicateTemplates.eventId, eventId));
+    return row ?? null;
+  }
+  async upsertCommunicateTemplate(eventId, body, subject) {
+    await db.insert(communicateTemplates).values({
+      eventId,
+      body,
+      subject: subject ?? ""
+    }).onConflictDoUpdate({
+      target: communicateTemplates.eventId,
+      set: {
+        body,
+        ...subject !== void 0 ? { subject } : {},
+        updatedAt: /* @__PURE__ */ new Date()
+      }
+    });
+  }
+  async addCommunicateJobToQueue(jobData) {
+    const [job] = await db.insert(communicateJobs).values({
+      status: "pending",
+      eventId: jobData.eventId,
+      recipientMode: jobData.recipientMode,
+      attachmentData: jobData.attachmentData,
+      createdBy: jobData.createdBy
+    }).returning();
+    return job;
+  }
+  async getPendingCommunicateJobs(limit = 1) {
+    return db.select().from(communicateJobs).where(eq(communicateJobs.status, "pending")).orderBy(asc(communicateJobs.createdAt)).limit(limit);
+  }
+  async updateCommunicateJobStatus(jobId, status) {
+    return db.update(communicateJobs).set({ status, updatedAt: /* @__PURE__ */ new Date() }).where(eq(communicateJobs.id, jobId));
+  }
+  /** Paid orders only; one entry per distinct e-mail (first row wins). */
+  async listCommunicateParticipantRecipients(eventId) {
+    const rows = await db.select({
+      email: users.email,
+      name: users.name
+    }).from(orders).innerJoin(users, eq(orders.userId, users.id)).where(
+      and(eq(orders.eventId, eventId), eq(orders.status, "paid"))
+    ).orderBy(asc(users.name));
+    const seen = /* @__PURE__ */ new Set();
+    const out = [];
+    for (const r of rows) {
+      const email = (r.email ?? "").trim();
+      if (!email) continue;
+      const key = email.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ email, name: r.name });
+    }
+    fetch("http://127.0.0.1:7242/ingest/93fdb7af-1eec-4096-91f4-b53401629ef1", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "773abe" }, body: JSON.stringify({ sessionId: "773abe", location: "storage.ts:listCommunicateParticipantRecipients", message: "participants-detail", data: { eventId, rawRowCount: rows.length, rawEmails: rows.map((r) => r.email), dedupedEmails: out.map((o) => o.email.toLowerCase()), dedupedCount: out.length }, timestamp: Date.now() }) }).catch(() => {
+    });
+    return out;
+  }
+  /** Same eligibility as reminder “resgate pendente”: active links with remaining slots and recipient e-mail. */
+  async listCommunicateUnredeemedRecipients(eventId) {
+    const allLinks = await this.getEligibleReminderLinks(eventId);
+    const eligible = filterEligibleReminderLinks(allLinks);
+    const deduped = deduplicateReminderLinksByEmail(eligible);
+    fetch("http://127.0.0.1:7242/ingest/93fdb7af-1eec-4096-91f4-b53401629ef1", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "773abe" }, body: JSON.stringify({ sessionId: "773abe", location: "storage.ts:listCommunicateUnredeemedRecipients", message: "unredeemed-links-pipeline", data: { eventId, allLinksCount: allLinks.length, allLinksDetail: allLinks.map((l) => ({ id: l.id, email: l.recipientEmail, isActive: l.isActive, ticketCount: l.ticketCount, usedCount: l.usedCount, remaining: l.ticketCount - (l.usedCount ?? 0) })), eligibleCount: eligible.length, dedupedCount: deduped.length }, timestamp: Date.now() }) }).catch(() => {
+    });
+    return deduped.filter((l) => (l.recipientEmail ?? "").trim().length > 0).map((l) => ({
+      email: l.recipientEmail.trim(),
+      name: l.recipientName ?? ""
+    }));
+  }
+  async getCommunicateRecipientCounts(eventId) {
+    const participants = await this.listCommunicateParticipantRecipients(eventId);
+    const unredeemed = await this.listCommunicateUnredeemedRecipients(eventId);
+    const keys = /* @__PURE__ */ new Set();
+    for (const p of participants) keys.add(p.email.toLowerCase());
+    for (const u of unredeemed) keys.add(u.email.toLowerCase());
+    fetch("http://127.0.0.1:7242/ingest/93fdb7af-1eec-4096-91f4-b53401629ef1", { method: "POST", headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "773abe" }, body: JSON.stringify({ sessionId: "773abe", location: "storage.ts:getCommunicateRecipientCounts", message: "recipient-counts-detail", data: { eventId, participantEmails: participants.map((p) => p.email.toLowerCase()), unredeemedEmails: unredeemed.map((u) => u.email.toLowerCase()), unionKeys: Array.from(keys), participantsLen: participants.length, unredeemedLen: unredeemed.length, unionLen: keys.size }, timestamp: Date.now() }) }).catch(() => {
+    });
+    return {
+      participants: participants.length,
+      unredeemed: unredeemed.length,
+      participantsAndUnredeemed: keys.size
+    };
+  }
+  async resolveCommunicateRecipients(eventId, mode) {
+    const participants = await this.listCommunicateParticipantRecipients(eventId);
+    if (mode === "participants") return participants;
+    const unredeemed = await this.listCommunicateUnredeemedRecipients(eventId);
+    if (mode === "unredeemed_only") return unredeemed;
+    const byKey = /* @__PURE__ */ new Map();
+    for (const p of participants) {
+      const k = p.email.toLowerCase();
+      if (!byKey.has(k)) byKey.set(k, { email: p.email, name: p.name });
+    }
+    for (const u of unredeemed) {
+      const k = u.email.toLowerCase();
+      if (!byKey.has(k)) byKey.set(k, { email: u.email, name: u.name });
+    }
+    return Array.from(byKey.values());
+  }
   async getEligibleReminderLinks(eventId) {
     return db.select({
       id: courtesyLinks.id,
@@ -1361,6 +1577,54 @@ Equipe CDPI Pass
 `.trim();
     return this.sendEmail(email, subject, html, text2, attachments);
   }
+  /**
+   * Announcement e-mail: same visual shell as courtesy mail, without redeem CTA or courtesy code block.
+   */
+  async sendCommunicateEmail(email, messageBoxHtml, renderedSubject, attachments) {
+    const subject = renderedSubject != null && String(renderedSubject).trim() !== "" ? String(renderedSubject).trim() : "Comunicado \u2014 CDPI Pass";
+    const messageInner = messageBoxHtml.trim() !== "" ? messageBoxHtml : "<p></p>";
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${subject}</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #0F4C75; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; text-align: center; }
+          .message-box { text-align: left; margin: 20px 0; }
+          .footer { text-align: center; color: #666; font-size: 12px; margin-top: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Comunicado</h1>
+            <h2>CDPI Pass</h2>
+          </div>
+          <div class="content">
+            <div class="message-box">
+              ${messageInner}
+            </div>
+          </div>
+          <div class="footer">
+            <p>Atenciosamente,<br>Equipe CDPI Pass</p>
+            <p>relacionamento.mkt@cdpipharma.com.br | +55 (62) 3636-9909 / (62) 99610-1694</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+    const text2 = `
+${courtesyMessageHtmlToPlainText(messageInner)}
+
+Atenciosamente,
+Equipe CDPI Pass
+`.trim();
+    return this.sendEmail(email, subject, html, text2, attachments);
+  }
   async _sendEmailFromQueue(to, subject, html, text2, attachments) {
     if (!process.env.SENDGRID_API_KEY) {
       console.warn("SendGrid not configured, email worker cannot send email:", { to, subject });
@@ -1396,23 +1660,6 @@ function renderTemplate(html, variables) {
     const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return result.replace(new RegExp(`\\{${escaped}\\}`, "g"), value);
   }, html);
-}
-
-// server/utils/reminderEligibility.ts
-function filterEligibleReminderLinks(links) {
-  return links.filter((l) => {
-    const remaining = l.ticketCount - (l.usedCount ?? 0);
-    return remaining > 0 && l.isActive === true;
-  });
-}
-function deduplicateReminderLinksByEmail(links) {
-  const seen = /* @__PURE__ */ new Set();
-  return links.filter((l) => {
-    const email = (l.recipientEmail ?? "").toLowerCase();
-    if (seen.has(email)) return false;
-    seen.add(email);
-    return true;
-  });
 }
 
 // server/workers/emailWorker.ts
@@ -1454,7 +1701,8 @@ var EmailWorker = class {
       await Promise.allSettled([
         this.processEmailQueue(),
         this.processMassSendQueue(),
-        this.processReminderQueue()
+        this.processReminderQueue(),
+        this.processCommunicateQueue()
       ]);
     } catch (error) {
       console.error("Error during worker cycle:", error);
@@ -1671,6 +1919,67 @@ var EmailWorker = class {
     } catch (error) {
       console.error(`Error processing reminder job ${job.id}:`, error);
       await storage.updateReminderJobStatus(job.id, "failed");
+    }
+  }
+  async processCommunicateQueue() {
+    const jobs = await storage.getPendingCommunicateJobs(1);
+    if (jobs.length === 0) return;
+    const job = jobs[0];
+    try {
+      await storage.updateCommunicateJobStatus(job.id, "processing");
+      const event = await storage.getEvent(job.eventId);
+      if (!event || !event.isActive) {
+        await storage.updateCommunicateJobStatus(job.id, "failed");
+        console.warn(`Communicate job ${job.id}: event ${job.eventId} unavailable.`);
+        return;
+      }
+      const attachments = job.attachmentData ? [JSON.parse(job.attachmentData)] : void 0;
+      const templateRow = await storage.getCommunicateTemplate(job.eventId);
+      const templateBody = templateRow?.body?.trim() ?? "";
+      const templateSubject = templateRow?.subject?.trim() ?? "";
+      if (!templateBody) {
+        await storage.updateCommunicateJobStatus(job.id, "failed");
+        console.warn(`Communicate job ${job.id}: empty template for event ${job.eventId}.`);
+        return;
+      }
+      const recipients = await storage.resolveCommunicateRecipients(
+        job.eventId,
+        job.recipientMode
+      );
+      const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric"
+      });
+      const eventDate = event.date instanceof Date ? event.date : new Date(event.date);
+      const formattedDate = Number.isNaN(eventDate.getTime()) ? "" : dateFormatter.format(eventDate);
+      let sent = 0;
+      for (const recipient of recipients) {
+        const to = recipient.email.trim();
+        if (!to) continue;
+        const variables = {
+          nome: recipient.name ?? "",
+          evento: event.title,
+          data: formattedDate
+        };
+        const customMessageBoxHtml = renderTemplate(templateBody, variables);
+        const renderedSubject = templateSubject ? renderTemplate(templateSubject, variables) : null;
+        await emailService.sendCommunicateEmail(
+          to,
+          customMessageBoxHtml,
+          renderedSubject,
+          attachments
+        );
+        sent += 1;
+      }
+      await storage.updateCommunicateJobStatus(job.id, "completed");
+      console.log(
+        `Communicate job ${job.id}: sent ${sent} email(s) for event ${job.eventId} (mode ${job.recipientMode}).`
+      );
+    } catch (error) {
+      console.error(`Error processing communicate job ${job.id}:`, error);
+      await storage.updateCommunicateJobStatus(job.id, "failed");
     }
   }
   async addEmailJob(emailData) {

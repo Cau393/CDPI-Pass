@@ -2,6 +2,8 @@ import * as z from "zod";
 import { format, isValid, parse } from "date-fns";
 import { hasMeaningfulEventDescription } from "@/lib/eventDescriptionHtml";
 
+const npsTypeSchema = z.enum(["cdpi_event", "cdpi_apoiando"]);
+
 /** Stored in the form and sent to the API: local `yyyy-MM-dd'T'HH:mm` (no timezone suffix). */
 export const API_LOCAL_DATETIME_FMT = "yyyy-MM-dd'T'HH:mm" as const;
 
@@ -85,7 +87,8 @@ export const createEventSchema = z.object({
     .refine((s) => {
       const n = parseBrazilianMoney(s);
       return Number.isFinite(n) && n >= 0;
-    }, "Digite um valor válido (ex.: 0,00 ou 1.234,56)"),
+    }, "Digite um valor válido (ex.: 0,00 ou 1234,56)"),
+  npsType: npsTypeSchema.default("cdpi_event"),
   coverImage: z
     .custom<FileList | undefined>((v) => v === undefined || v instanceof FileList)
     .refine(
@@ -124,6 +127,7 @@ export const editEventSchema = z.object({
       const n = parseBrazilianMoney(s);
       return Number.isFinite(n) && n >= 0;
     }, "Digite um valor válido (ex.: 0,00 ou 1.234,56)"),
+  npsType: npsTypeSchema,
   coverImage: coverFileListSchema,
 });
 

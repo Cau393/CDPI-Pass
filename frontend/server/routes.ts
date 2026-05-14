@@ -34,8 +34,11 @@ import {
   users,
   courtesyLinks,
   courtesyAttendees,
+  npsCdpiEventResponses,
+  npsCdpiApoiandoResponses,
+  communicateRecipientModes,
 } from "@shared/schema";
-import { validateCpf, validateEmail, formatCpf, formatPhone } from "./utils/validation";
+import { validateCpf, validateEmail, formatCpf } from "./utils/validation";
 import { parseBrazilEventLocalDateTime } from "./utils/eventDateTime";
 import { sanitizeCourtesyTemplateHtml } from "./utils/courtesyTemplateSanitize";
 import { validateEmailSubjectTemplateInput } from "./utils/emailSubjectTemplate";
@@ -58,19 +61,32 @@ import multer from 'multer';
 import csv from 'csv-parser';
 import { parse } from 'csv-parse/sync';
 import { Readable } from 'stream';
+import { toTitleCaseName } from "./utils/toTitleCaseName";
+import { normalizePhoneE164 } from "./utils/normalizePhoneE164";
+import {
+  cdpiApoiandoNpsAnswersSchema,
+  cdpiEventNpsAnswersSchema,
+} from "@shared/npsAnswerSchemas";
+import { buildNpsInsertPayload } from "./utils/buildNpsInsertPayload";
+import {
+  cdpiApoiandoResponseToExportRow,
+  cdpiEventResponseToExportRow,
+} from "./utils/npsExportRowMappers";
 
-const generateCertificateNpsSchema = z.object({
-  overallRating: z.number().int().min(1).max(10),
-  wouldRecommend: z.boolean(),
-  highlights: z.string().max(2000).optional().default(""),
-  improvements: z.string().max(2000).optional().default(""),
-});
+const communicateRecipientModeSchema = z.enum(communicateRecipientModes);
 
-const generateCertificateBodySchema = z.object({
-  eventId: z.string().uuid({ message: "eventId inválido" }),
-  fullName: z.string().min(1, "Nome é obrigatório").max(120, "Nome deve ter no máximo 120 caracteres"),
-  npsResponses: generateCertificateNpsSchema,
-});
+const generateCertificateBodySchema = z.discriminatedUnion("npsType", [
+  z.object({
+    npsType: z.literal("cdpi_event"),
+    eventId: z.string().uuid({ message: "eventId inválido" }),
+    answers: cdpiEventNpsAnswersSchema,
+  }),
+  z.object({
+    npsType: z.literal("cdpi_apoiando"),
+    eventId: z.string().uuid({ message: "eventId inválido" }),
+    answers: cdpiApoiandoNpsAnswersSchema,
+  }),
+]);
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -169,7 +185,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         birthDate: birthDateObj,
         password: hashedPassword,
         cpf: formatCpf(body.cpf),
-        phone: formatPhone(body.phone),
+        name: toTitleCaseName(body.name),
+        phone: normalizePhoneE164(body.phone, "BR"),
       });
       
       await emailService.sendVerificationEmail(user.email, user.id);
@@ -519,6 +536,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           string | undefined
         >;
 
+        const npsTypeRaw = (req.body as Record<string, unknown>).nps_type;
+        const npsTypeParsed = z.enum(["cdpi_event", "cdpi_apoiando"]).safeParse(npsTypeRaw);
+        const npsType = npsTypeParsed.success ? npsTypeParsed.data : "cdpi_event";
+
         const textFields = { title, description, date, location, price } as const;
         for (const key of Object.keys(textFields) as (keyof typeof textFields)[]) {
           const v = textFields[key];
@@ -571,6 +592,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             location: location!.trim(),
             price: normalizedPrice,
             imageUrl,
+            npsType,
           })
           .returning();
 
@@ -805,6 +827,171 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
+  // ── Communicate (announcement) template & send ─────────────────────────
+
+  app.get("/api/admin/events/:eventId/communicate-template", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsedId = z.string().uuid().safeParse(req.params.eventId);
+      if (!parsedId.success) {
+        return res.status(400).json({ error: "Invalid event id" });
+      }
+      const row = await storage.getCommunicateTemplate(parsedId.data);
+      return res.status(200).json({
+        body: row?.body ?? "",
+        subject: row?.subject ?? "",
+      });
+    } catch (error) {
+      console.error("GET /api/admin/events/:eventId/communicate-template:", error);
+      return res.status(500).json({ error: "Failed to fetch communicate template" });
+    }
+  });
+
+  app.patch("/api/admin/events/:eventId/communicate-template", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsedId = z.string().uuid().safeParse(req.params.eventId);
+      if (!parsedId.success) {
+        return res.status(400).json({ error: "Invalid event id" });
+      }
+      const eventId = parsedId.data;
+
+      const reqBody = req.body as { body?: unknown; subject?: unknown };
+      const { body, subject } = reqBody;
+      if (typeof body !== "string") {
+        return res.status(400).json({ error: "body must be a string" });
+      }
+      if (body.length > 50_000) {
+        return res.status(400).json({ error: "body exceeds maximum length" });
+      }
+
+      const event = await storage.getEvent(eventId);
+      if (!event) {
+        return res.status(404).json({ error: "Event not found" });
+      }
+
+      let subjectToPersist: string | undefined;
+      if (Object.prototype.hasOwnProperty.call(reqBody, "subject")) {
+        const sub = validateEmailSubjectTemplateInput(subject);
+        if (!sub.ok) {
+          return res.status(400).json({ error: sub.error });
+        }
+        subjectToPersist = sub.value;
+      }
+
+      const sanitized = sanitizeCourtesyTemplateHtml(body);
+      await storage.upsertCommunicateTemplate(eventId, sanitized, subjectToPersist);
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error("PATCH /api/admin/events/:eventId/communicate-template:", error);
+      return res.status(500).json({ error: "Failed to save communicate template" });
+    }
+  });
+
+  app.get(
+    "/api/admin/events/:eventId/communicate-recipient-counts",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+        }
+        const parsedId = z.string().uuid().safeParse(req.params.eventId);
+        if (!parsedId.success) {
+          return res.status(400).json({ error: "Invalid event id" });
+        }
+        const eventId = parsedId.data;
+        const event = await storage.getEvent(eventId);
+        if (!event) {
+          return res.status(404).json({ message: "Evento não encontrado." });
+        }
+        const counts = await storage.getCommunicateRecipientCounts(eventId);
+        return res.status(200).json(counts);
+      } catch (error) {
+        console.error(
+          "GET /api/admin/events/:eventId/communicate-recipient-counts:",
+          error,
+        );
+        return res.status(500).json({ error: "Erro ao calcular destinatários." });
+      }
+    },
+  );
+
+  app.post(
+    "/api/admin/events/:eventId/communicate-send",
+    authenticateToken,
+    upload.fields([{ name: "attachment", maxCount: 1 }]),
+    async (req: any, res) => {
+      try {
+        if (!req.user.isAdmin) {
+          return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+        }
+        const parsedId = z.string().uuid().safeParse(req.params.eventId);
+        if (!parsedId.success) {
+          return res.status(400).json({ error: "Invalid event id" });
+        }
+        const eventId = parsedId.data;
+
+        const event = await storage.getEvent(eventId);
+        if (!event) {
+          return res.status(404).json({ message: "Evento não encontrado." });
+        }
+        if (!event.isActive) {
+          return res.status(422).json({ message: "Evento indisponível para envio." });
+        }
+
+        const rawMode =
+          typeof req.body?.recipientMode === "string"
+            ? req.body.recipientMode
+            : "";
+        const modeParsed = communicateRecipientModeSchema.safeParse(rawMode);
+        if (!modeParsed.success) {
+          return res.status(400).json({
+            error: "recipientMode inválido",
+            valid: communicateRecipientModes,
+          });
+        }
+        const recipientMode = modeParsed.data;
+
+        const templateRow = await storage.getCommunicateTemplate(eventId);
+        const templateBody = templateRow?.body?.trim() ?? "";
+        if (!templateBody) {
+          return res.status(422).json({
+            message:
+              "Configure o template de comunicado para este evento antes de enviar.",
+          });
+        }
+
+        const attachmentFile = req.files?.attachment?.[0] ?? null;
+        const attachmentData = attachmentFile
+          ? JSON.stringify({
+              filename: attachmentFile.originalname,
+              content: attachmentFile.buffer.toString("base64"),
+              type: attachmentFile.mimetype,
+            })
+          : null;
+
+        await storage.addCommunicateJobToQueue({
+          eventId,
+          recipientMode,
+          attachmentData,
+          createdBy: req.user.id,
+        });
+
+        return res.status(202).json({
+          message: "Comunicados enfileirados. Os e-mails serão enviados em breve.",
+        });
+      } catch (error) {
+        console.error("POST /api/admin/events/:eventId/communicate-send:", error);
+        return res.status(500).json({ error: "Erro ao enfileirar comunicados." });
+      }
+    },
+  );
+
   // ── End reminder template routes ─────────────────────────────────────────
 
   app.patch(
@@ -849,6 +1036,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           location: string;
           price: string;
           imageUrl: string;
+          npsType: "cdpi_event" | "cdpi_apoiando";
         }> = {};
 
         if (Object.prototype.hasOwnProperty.call(body, "title")) {
@@ -907,6 +1095,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const prevNum = Number(String(existing.price).replace(",", "."));
           if (!Number.isFinite(prevNum) || priceNum !== prevNum) {
             payload.price = normalizedPrice;
+          }
+        }
+
+        if (Object.prototype.hasOwnProperty.call(body, "nps_type")) {
+          const v = body.nps_type;
+          const parsedNps = z.enum(["cdpi_event", "cdpi_apoiando"]).safeParse(v);
+          if (!parsedNps.success) {
+            return res.status(400).json({ error: "nps_type must be cdpi_event or cdpi_apoiando" });
+          }
+          if (parsedNps.data !== existing.npsType) {
+            payload.npsType = parsedNps.data;
           }
         }
 
@@ -1059,6 +1258,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("GET /api/admin/events/:eventId/participants:", error);
       res.status(500).json({ message: "Erro ao listar participantes" });
+    }
+  });
+
+  app.get("/api/admin/events/:eventId/nps", authenticateToken, async (req: any, res) => {
+    try {
+      if (!req.user.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado. Apenas administradores." });
+      }
+      const parsed = z.string().uuid().safeParse(req.params.eventId);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "eventId inválido" });
+      }
+      const eventId = parsed.data;
+      const event = await storage.getEvent(eventId);
+      if (!event) {
+        return res.status(404).json({ message: "Evento não encontrado" });
+      }
+      const npsType = event.npsType ?? "cdpi_event";
+      if (npsType === "cdpi_event") {
+        const rows = await db
+          .select()
+          .from(npsCdpiEventResponses)
+          .where(eq(npsCdpiEventResponses.eventId, eventId))
+          .orderBy(desc(npsCdpiEventResponses.createdAt));
+        return res.json({
+          npsType,
+          count: rows.length,
+          rows: rows.map(cdpiEventResponseToExportRow),
+        });
+      }
+      const rows = await db
+        .select()
+        .from(npsCdpiApoiandoResponses)
+        .where(eq(npsCdpiApoiandoResponses.eventId, eventId))
+        .orderBy(desc(npsCdpiApoiandoResponses.createdAt));
+      return res.json({
+        npsType,
+        count: rows.length,
+        rows: rows.map(cdpiApoiandoResponseToExportRow),
+      });
+    } catch (e) {
+      console.error("GET /api/admin/events/:eventId/nps:", e);
+      return res.status(500).json({ message: "Erro ao listar NPS" });
     }
   });
 
@@ -2395,6 +2637,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      if (typeof updates.name === "string" && updates.name.trim()) {
+        updates.name = toTitleCaseName(updates.name);
+      }
+      if (typeof updates.phone === "string" && updates.phone.trim()) {
+        try {
+          updates.phone = normalizePhoneE164(updates.phone, "BR");
+        } catch {
+          return res.status(400).json({ message: "Telefone inválido" });
+        }
+      }
+
       const updatedUser = await storage.updateUser(userId, updates);
       
       if (!updatedUser) {
@@ -2653,11 +2906,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update user information with courtesy data
       const birthDateObj = new Date(userData.birthDate);
 
+      let phoneNorm: string;
+      let nameNorm: string;
+      try {
+        phoneNorm = normalizePhoneE164(userData.phone, "BR");
+        nameNorm = toTitleCaseName(userData.name);
+      } catch {
+        return res.status(400).json({ message: "Telefone inválido" });
+      }
+
       const newAttendee = await storage.createCourtesyAttendee({
-      name: userData.name,
+      name: nameNorm,
       email: userData.email,
       cpf: userData.cpf,
-      phone: userData.phone,
+      phone: phoneNorm,
       birthDate: birthDateObj,
       address: userData.address,
       partnerCompany: userData.partnerCompany,
@@ -2924,6 +3186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eventId: events.id,
           eventName: events.title,
           eventDate: events.date,
+          npsType: events.npsType,
           certificateUrl: sql<string | null>`max(${certificates.certificateUrl})`,
         })
         .from(events)
@@ -2940,7 +3203,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           and(eq(certificates.eventId, events.id), eq(certificates.userId, userId)),
         )
         .where(certificateTemplateReady)
-        .groupBy(events.id, events.title, events.date)
+        .groupBy(events.id, events.title, events.date, events.npsType)
         .orderBy(desc(events.date))
         .limit(pageSize)
         .offset(offset);
@@ -2955,6 +3218,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             row.eventDate instanceof Date
               ? row.eventDate.toISOString()
               : new Date(row.eventDate as string).toISOString(),
+          npsType: row.npsType ?? "cdpi_event",
           certificateUrl: row.certificateUrl,
         })),
         pagination: {
@@ -2981,7 +3245,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
 
-    const { eventId, fullName, npsResponses } = parsed.data;
+    const { eventId, npsType, answers } = parsed.data;
 
     try {
       const [existing] = await db
@@ -2996,6 +3260,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const [eventRow] = await db.select().from(events).where(eq(events.id, eventId)).limit(1);
       if (!eventRow) {
         return res.status(400).json({ message: "Evento não encontrado" });
+      }
+
+      if (eventRow.npsType !== npsType) {
+        return res.status(409).json({
+          message: "Tipo de NPS do evento não corresponde ao formulário enviado",
+        });
       }
 
       const templateUrl = eventRow.certificateTemplateUrl?.trim();
@@ -3027,11 +3297,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ message: "Configuração de armazenamento ausente" });
       }
 
+      const payload = buildNpsInsertPayload(userId, eventId, npsType, answers);
+      const displayName = payload.row.name;
+
       let certificateUrl: string;
       try {
         certificateUrl = await invokeGenerateCertificatePdf({
           templateS3Url: templateUrl,
-          nomeCompleto: fullName,
+          nomeCompleto: displayName,
           userId,
           eventId,
           outputBucket,
@@ -3060,18 +3333,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      await db.insert(certificates).values({
-        userId,
-        eventId,
-        certificateUrl,
-        fullName,
-        npsResponses: {
-          overallRating: npsResponses.overallRating,
-          wouldRecommend: npsResponses.wouldRecommend,
-          highlights: npsResponses.highlights ?? "",
-          improvements: npsResponses.improvements ?? "",
-        },
-      });
+      try {
+        await db.transaction(async (tx) => {
+          if (payload.table === "cdpi_event") {
+            const r = payload.row;
+            await tx.insert(npsCdpiEventResponses).values({
+              userId: r.userId,
+              eventId: r.eventId,
+              name: r.name,
+              email: r.email,
+              phone: r.phone,
+              overallRating: r.overallRating,
+              themesRelevance: r.themesRelevance,
+              speakersRating: r.speakersRating,
+              applicability: r.applicability,
+              highlight: r.highlight,
+              organizationRating: r.organizationRating,
+              wouldAttendAgain: r.wouldAttendAgain,
+              improvements: r.improvements,
+              interestInTopics: r.interestInTopics,
+              interestTopicText: r.interestTopicText,
+              recommendationScore: r.recommendationScore,
+            });
+          } else {
+            const r = payload.row;
+            await tx.insert(npsCdpiApoiandoResponses).values({
+              userId: r.userId,
+              eventId: r.eventId,
+              name: r.name,
+              email: r.email,
+              phone: r.phone,
+              overallScore: r.overallScore,
+              themesRelevance: r.themesRelevance,
+              applicability: r.applicability,
+              futureTopics: r.futureTopics,
+              organizationExperience: r.organizationExperience,
+              improvements: r.improvements,
+              wantsUpdates: r.wantsUpdates,
+            });
+          }
+
+          await tx
+            .update(users)
+            .set({
+              name: payload.row.name,
+              phone: payload.row.phone,
+              updatedAt: new Date(),
+            })
+            .where(eq(users.id, userId));
+
+          await tx.insert(certificates).values({
+            userId,
+            eventId,
+            certificateUrl,
+            fullName: displayName,
+          });
+        });
+      } catch (dbErr: unknown) {
+        console.error("POST /api/certificates/generate DB after Lambda:", dbErr);
+        return res.status(500).json({
+          message:
+            "Certificado gerado mas falhou ao salvar respostas. Entre em contato com o suporte.",
+        });
+      }
 
       return res.status(201).json({ certificateUrl });
     } catch (error: any) {

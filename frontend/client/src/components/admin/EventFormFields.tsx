@@ -26,7 +26,9 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import EventDescriptionEditor from "@/components/admin/EventDescriptionEditor";
 import {
   dateToApiLocalString,
@@ -41,6 +43,7 @@ type EventFormShape = {
   date: string;
   location: string;
   price: string;
+  npsType: "cdpi_event" | "cdpi_apoiando";
   coverImage?: FileList;
 };
 
@@ -236,6 +239,40 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
           )}
         />
       </div>
+
+      <FormField
+        control={control}
+        name={"npsType" as Path<T>}
+        render={({ field }) => (
+          <FormItem className="md:col-span-2">
+            <FormLabel>Tipo de pesquisa (certificado)</FormLabel>
+            <FormDescription>
+              Define qual formulário de satisfação aparece ao gerar o certificado deste evento.
+            </FormDescription>
+            <FormControl>
+              <RadioGroup
+                onValueChange={field.onChange}
+                value={field.value ?? "cdpi_event"}
+                className="grid gap-3 pt-2 sm:grid-cols-2"
+              >
+                <div className="flex items-center space-x-2 rounded-lg border p-3">
+                  <RadioGroupItem value="cdpi_event" id="nps-cdpi-event" />
+                  <Label htmlFor="nps-cdpi-event" className="cursor-pointer font-normal leading-snug">
+                    Evento do CDPI
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2 rounded-lg border p-3">
+                  <RadioGroupItem value="cdpi_apoiando" id="nps-apoiando" />
+                  <Label htmlFor="nps-apoiando" className="cursor-pointer font-normal leading-snug">
+                    CDPI Apoiando Evento
+                  </Label>
+                </div>
+              </RadioGroup>
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
 
       <FormField
         control={control}

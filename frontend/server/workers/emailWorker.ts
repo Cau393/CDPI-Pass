@@ -65,6 +65,7 @@ class EmailWorker {
         this.processEmailQueue(),
         this.processMassSendQueue(),
         this.processReminderQueue(),
+        this.processCommunicateQueue(),
       ]);
     } catch (error) {
       console.error('Error during worker cycle:', error);
@@ -350,6 +351,85 @@ class EmailWorker {
     } catch (error) {
       console.error(`Error processing reminder job ${job.id}:`, error);
       await storage.updateReminderJobStatus(job.id, 'failed');
+    }
+  }
+
+  private async processCommunicateQueue(): Promise<void> {
+    const jobs = await storage.getPendingCommunicateJobs(1);
+    if (jobs.length === 0) return;
+
+    const job = jobs[0];
+    try {
+      await storage.updateCommunicateJobStatus(job.id, 'processing');
+
+      const event = await storage.getEvent(job.eventId);
+      if (!event || !event.isActive) {
+        await storage.updateCommunicateJobStatus(job.id, 'failed');
+        console.warn(`Communicate job ${job.id}: event ${job.eventId} unavailable.`);
+        return;
+      }
+
+      const attachments = job.attachmentData
+        ? [JSON.parse(job.attachmentData)]
+        : undefined;
+
+      const templateRow = await storage.getCommunicateTemplate(job.eventId);
+      const templateBody = templateRow?.body?.trim() ?? '';
+      const templateSubject = templateRow?.subject?.trim() ?? '';
+
+      if (!templateBody) {
+        await storage.updateCommunicateJobStatus(job.id, 'failed');
+        console.warn(`Communicate job ${job.id}: empty template for event ${job.eventId}.`);
+        return;
+      }
+
+      const recipients = await storage.resolveCommunicateRecipients(
+        job.eventId,
+        job.recipientMode,
+      );
+
+      const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
+      const eventDate =
+        event.date instanceof Date ? event.date : new Date(event.date as string | number);
+      const formattedDate = Number.isNaN(eventDate.getTime())
+        ? ''
+        : dateFormatter.format(eventDate);
+
+      let sent = 0;
+      for (const recipient of recipients) {
+        const to = recipient.email.trim();
+        if (!to) continue;
+        const variables: Record<string, string> = {
+          nome: recipient.name ?? '',
+          evento: event.title,
+          data: formattedDate,
+        };
+        const customMessageBoxHtml = renderTemplate(templateBody, variables);
+        const renderedSubject = templateSubject
+          ? renderTemplate(templateSubject, variables)
+          : null;
+
+        await emailService.sendCommunicateEmail(
+          to,
+          customMessageBoxHtml,
+          renderedSubject,
+          attachments,
+        );
+        sent += 1;
+      }
+
+      await storage.updateCommunicateJobStatus(job.id, 'completed');
+      console.log(
+        `Communicate job ${job.id}: sent ${sent} email(s) for event ${job.eventId} (mode ${job.recipientMode}).`,
+      );
+    } catch (error) {
+      console.error(`Error processing communicate job ${job.id}:`, error);
+      await storage.updateCommunicateJobStatus(job.id, 'failed');
     }
   }
 
