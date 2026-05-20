@@ -761,12 +761,24 @@ var DatabaseStorage = class {
     const [order] = await db.select().from(orders).where(eq(orders.asaasPaymentId, paymentId));
     return order;
   }
+  /** True when this CPF already has a confirmed (paid) inscription for the event. */
   async isCpfAlreadyRegisteredForEvent(cpf, eventId) {
     const existingOrder = await db.select().from(orders).where(
       and(
         eq(orders.cpf, cpf),
         eq(orders.eventId, eventId),
-        ne(orders.status, "cancelled")
+        eq(orders.status, "paid")
+      )
+    ).limit(1);
+    return existingOrder.length > 0;
+  }
+  async existsOtherPaidOrderForCpfAndEvent(excludeOrderId, cpf, eventId) {
+    const existingOrder = await db.select({ id: orders.id }).from(orders).where(
+      and(
+        eq(orders.cpf, cpf),
+        eq(orders.eventId, eventId),
+        eq(orders.status, "paid"),
+        ne(orders.id, excludeOrderId)
       )
     ).limit(1);
     return existingOrder.length > 0;
@@ -846,17 +858,7 @@ var DatabaseStorage = class {
       updatedAt: /* @__PURE__ */ new Date()
     }).where(eq(courtesyLinks.id, id));
   }
-  async cancelOrderAndInvalidateQr(orderId) {
-    const order = await this.getOrder(orderId);
-    if (!order) {
-      return { ok: false, code: "not_found" };
-    }
-    if (order.status === "cancelled") {
-      return { ok: false, code: "already_cancelled", order };
-    }
-    if (order.status !== "pending" && order.status !== "paid") {
-      return { ok: false, code: "invalid_status", status: order.status };
-    }
+  async finalizeCancelOrderClearingQr(orderId, order) {
     if (order.qr_code_s3_url) {
       try {
         const key = s3Service.extractKeyFromUrl(order.qr_code_s3_url);
@@ -875,6 +877,32 @@ var DatabaseStorage = class {
       return { ok: false, code: "not_found" };
     }
     return { ok: true, order: updated };
+  }
+  async discardPendingOrder(orderId) {
+    const order = await this.getOrder(orderId);
+    if (!order) {
+      return { ok: false, code: "not_found" };
+    }
+    if (order.status === "cancelled") {
+      return { ok: false, code: "already_cancelled", order };
+    }
+    if (order.status !== "pending") {
+      return { ok: false, code: "invalid_status", status: order.status };
+    }
+    return this.finalizeCancelOrderClearingQr(orderId, order);
+  }
+  async cancelPaidOrderAndInvalidateQr(orderId) {
+    const order = await this.getOrder(orderId);
+    if (!order) {
+      return { ok: false, code: "not_found" };
+    }
+    if (order.status === "cancelled") {
+      return { ok: false, code: "already_cancelled", order };
+    }
+    if (order.status !== "paid") {
+      return { ok: false, code: "invalid_status", status: order.status };
+    }
+    return this.finalizeCancelOrderClearingQr(orderId, order);
   }
   async undoOrderCheckIn(orderId) {
     const order = await this.getOrder(orderId);

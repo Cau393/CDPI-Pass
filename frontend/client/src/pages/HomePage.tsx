@@ -6,7 +6,7 @@ import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
-import type { Event } from "@shared/schema";
+import type { Event, Order } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
 
@@ -27,6 +27,21 @@ export default function HomePage() {
   const { data: events, isLoading } = useQuery<Event[]>({
     queryKey: ["/api/events"],
   });
+
+  const { data: userOrdersData } = useQuery<{ orders: Order[] }>({
+    queryKey: ["/api/orders", "home-gate"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/orders?page=1");
+      return res.json() as Promise<{ orders: Order[] }>;
+    },
+    enabled: isAuthenticated,
+  });
+
+  const paidEventIds = new Set(
+    userOrdersData?.orders
+      ?.filter((o) => o.status === "paid")
+      .map((o) => o.eventId) ?? [],
+  );
 
   const { data: promoLink } = useQuery({
     queryKey: ["/api/courtesy-links", promoCode],
@@ -159,8 +174,11 @@ export default function HomePage() {
                           }}
                           className="shrink-0 bg-green-500 hover:bg-green-600 text-white px-6 py-3"
                           data-testid="button-buy-main"
+                          disabled={paidEventIds.has(mainEvent.id)}
                         >
-                          Comprar Ingresso
+                          {paidEventIds.has(mainEvent.id)
+                            ? "Ingresso confirmado"
+                            : "Comprar Ingresso"}
                         </Button>
                       </div>
                     </div>

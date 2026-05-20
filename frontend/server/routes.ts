@@ -48,7 +48,7 @@ import {
   mapMassSendRecipientFromLink,
   mapRedemptionRowFromOrder,
 } from "./utils/massSendCourtesyQueries";
-import { buildCancellationEmailHtml } from "./utils/cancellationEmailTemplate";
+import { executeOrderCancel } from "./utils/executeOrderCancel";
 import { finalizeOrderPaidLikeWebhook } from "./utils/finalizeOrderPaidLikeWebhook";
 import { enqueueEventPrintIfEnabled } from "./utils/enqueueEventPrintIfEnabled";
 import { emailService } from "./services/emailService";
@@ -1926,7 +1926,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const orderId = parsed.data;
 
-      const result = await storage.cancelOrderAndInvalidateQr(orderId);
+      const result = await executeOrderCancel(orderId, { actor: "admin" });
       if (!result.ok) {
         if (result.code === "not_found") {
           return res.status(404).json({
@@ -1946,37 +1946,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             message: `Não é possível cancelar um pedido com status: ${result.status}`,
           });
         }
+        if (result.code === "forbidden") {
+          return res.status(403).json({
+            success: false,
+            message: "Acesso negado.",
+          });
+        }
         return res.status(400).json({ success: false, message: "Não foi possível cancelar o pedido." });
-      }
-
-      const buyer = await storage.getUser(result.order.userId);
-      const event = await storage.getEvent(result.order.eventId);
-      if (buyer?.email) {
-        const html = buildCancellationEmailHtml(
-          buyer.name ?? "Participante",
-          event?.title ?? "Evento",
-        );
-        const text = [
-          `Olá, ${buyer.name ?? "Participante"},`,
-          "",
-          `Sua inscrição no evento ${event?.title ?? "Evento"} foi cancelada pela organização.`,
-          "O QR Code do ingresso foi invalidado.",
-          "",
-          "Equipe CDPI Pass",
-        ].join("\n");
-        await storage.addEmailToQueue({
-          to: buyer.email,
-          subject: "Cancelamento de inscrição — CDPI Pass",
-          html,
-          text,
-          attachments: null,
-        });
       }
 
       res.json({
         success: true,
-        message:
-          "Inscrição cancelada com sucesso. O QR Code foi invalidado e um e-mail foi enfileirado.",
+        message: result.message,
       });
     } catch (error) {
       console.error("POST /api/admin/orders/:id/cancel:", error);
@@ -2022,12 +2003,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const result = await finalizeOrderPaidLikeWebhook(order, {
           billingType: "CREDIT_CARD",
           value: Number.parseFloat(String(order.amount)),
-        });
+        }, { duplicatePolicy: "reject_only" });
         if (!result.ok) {
           if (result.code === "already_paid") {
             return res.status(409).json({
               success: false,
               message: "Este pedido já está pago.",
+            });
+          }
+          if (result.code === "duplicate_other_paid") {
+            return res.status(409).json({
+              success: false,
+              message:
+                "Já existe inscrição paga para este CPF neste evento. Não é possível confirmar um segundo ingresso.",
             });
           }
           return res.status(400).json({
@@ -2339,35 +2327,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`Manual check - Payment status for order ${id}:`, payment.status);
 
       if ((payment.status === 'CONFIRMED' || payment.status === 'RECEIVED') && order.status !== 'paid') {
-        // Update order status
-        await storage.updateOrder(id, { status: 'paid' });
-        
-        // Get event and user details
-        const event = await storage.getEvent(order.eventId);
-        const ticketUser = await storage.getUser(order.userId);
-        
-        if (event && ticketUser) {
-          // Increment event attendees
-          await storage.updateEvent(event.id, {
-            currentAttendees: (event.currentAttendees || 0) + 1,
-          });
+        const result = await finalizeOrderPaidLikeWebhook(order, {
+          billingType: payment.billingType || "unknown",
+          value: payment.value ?? null,
+        });
 
-          // Send confirmation email with QR code ticket
-          await emailService.sendTicketEmail(ticketUser.email, {
-            userName: ticketUser.name,
-            eventTitle: event.title,
-            eventDate: event.date,
-            eventLocation: event.location,
-            qrCodeData: order.qrCodeData || '',
-            orderId: order.id,
-            qrCodeS3Url: order.qr_code_s3_url || '',
+        if (result.ok) {
+          const updatedOrder = await storage.getOrder(id);
+          return res.json({
+            message: "Pagamento confirmado!",
+            order: updatedOrder,
           });
         }
 
-        const updatedOrder = await storage.getOrder(id);
-        return res.json({ 
-          message: "Pagamento confirmado!", 
-          order: updatedOrder 
+        if (result.code === "duplicate_other_paid") {
+          const updatedOrder = await storage.getOrder(id);
+          return res.status(409).json({
+            message:
+              "Já existe ingresso confirmado para este evento. Este pagamento duplicado foi descartado; o estorno será processado quando possível.",
+            order: updatedOrder,
+          });
+        }
+
+        if (result.code === "already_paid") {
+          const updatedOrder = await storage.getOrder(id);
+          return res.json({
+            message: "Pagamento já estava confirmado.",
+            order: updatedOrder,
+          });
+        }
+
+        return res.status(400).json({
+          message: "Não foi possível confirmar o pagamento deste pedido.",
+          order,
         });
       } else if ((payment.status === 'OVERDUE' || payment.status === 'CANCELED') && order.status === 'pending') {
         await storage.updateOrder(id, { status: 'cancelled' });
@@ -2395,27 +2387,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const { id } = req.params;
         const userId = req.user.id;
 
-        const order = await storage.getOrder(id);
+        const result = await executeOrderCancel(id, { actor: "user", userId });
 
-        if (!order) {
+        if (!result.ok) {
+          if (result.code === "not_found") {
             return res.status(404).json({ message: "Pedido não encontrado" });
-        }
-
-        if (order.userId !== userId) {
+          }
+          if (result.code === "forbidden") {
             return res.status(403).json({ message: "Acesso não autorizado" });
-        }
-
-        if (order.status !== 'pending') {
+          }
+          if (result.code === "already_cancelled") {
+            return res.status(409).json({ message: "Este ingresso já está cancelado." });
+          }
+          if (result.code === "invalid_status") {
             return res.status(400).json({ message: "Este pedido não pode ser cancelado" });
+          }
+          return res.status(400).json({ message: "Não foi possível cancelar o pedido." });
         }
 
-        if (order.asaasPaymentId) {
-            await asaasService.cancelPayment(order.asaasPaymentId);
-        }
-
-        await storage.deleteOrder(id);
-
-        res.status(200).json({ message: "Pedido cancelado com sucesso" });
+        res.status(200).json({ message: result.message });
     } catch (error) {
         console.error("Cancel order error:", error);
         res.status(500).json({ message: "Erro ao cancelar o pedido" });
@@ -2540,10 +2530,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           : await storage.getOrderByAsaasPaymentId(payment.id);
 
         if (order) {
-          await finalizeOrderPaidLikeWebhook(order, {
+          const result = await finalizeOrderPaidLikeWebhook(order, {
             billingType: payment?.billingType || "unknown",
             value: payment?.value ?? null,
           });
+          if (!result.ok && result.code === "duplicate_other_paid") {
+            console.warn(
+              `Duplicate paid inscription rejected for order ${order.id} (CPF ${order.cpf}, event ${order.eventId})`,
+            );
+          }
         }
       } else if (eventType === "PAYMENT_OVERDUE" || eventType === "PAYMENT_DELETED") {
         const order = await storage.getOrderByAsaasPaymentId(payment.id);

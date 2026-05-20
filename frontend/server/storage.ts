@@ -77,6 +77,12 @@ export interface IStorage {
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
   getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined>;
   isCpfAlreadyRegisteredForEvent(cpf: string, eventId: string): Promise<boolean>;
+  /** True when another order (not excludeOrderId) is already paid for cpf+event. */
+  existsOtherPaidOrderForCpfAndEvent(
+    excludeOrderId: string,
+    cpf: string,
+    eventId: string,
+  ): Promise<boolean>;
   createCourtesyAttendee(attendee: InsertCourtesyAttendee): Promise<CourtesyAttendee>;
 
   // Email queue operations
@@ -93,8 +99,10 @@ export interface IStorage {
   updateCourtesyLinkTicketCount(id: string, ticketCount: number): Promise<CourtesyLink>;
   incrementCourtesyLinkUsage(id: string): Promise<void>;
 
-  /** Cancels order, clears QR fields, deletes S3 object when present. */
-  cancelOrderAndInvalidateQr(orderId: string): Promise<CancelOrderResult>;
+  /** Pending only: clears QR/S3 then sets status cancelled (no participant email — see executeOrderCancel). */
+  discardPendingOrder(orderId: string): Promise<CancelOrderResult>;
+  /** Paid only: clears QR/S3 then sets status cancelled. */
+  cancelPaidOrderAndInvalidateQr(orderId: string): Promise<CancelOrderResult>;
 
   /** Reverts one check-in (decrement amntUsed, sync qr flags). */
   undoOrderCheckIn(orderId: string): Promise<Order>;
@@ -358,16 +366,42 @@ export class DatabaseStorage implements IStorage {
     return order;
   }
 
-  async isCpfAlreadyRegisteredForEvent(cpf: string, eventId: string): Promise<boolean> {  
-  const existingOrder = await db.select().from(orders).where(
-    and(
-      eq(orders.cpf, cpf),
-      eq(orders.eventId, eventId),
-      ne(orders.status, "cancelled")
-    )
-  ).limit(1);
+  /** True when this CPF already has a confirmed (paid) inscription for the event. */
+  async isCpfAlreadyRegisteredForEvent(cpf: string, eventId: string): Promise<boolean> {
+    const existingOrder = await db
+      .select()
+      .from(orders)
+      .where(
+        and(
+          eq(orders.cpf, cpf),
+          eq(orders.eventId, eventId),
+          eq(orders.status, "paid"),
+        ),
+      )
+      .limit(1);
 
-  return existingOrder.length > 0;
+    return existingOrder.length > 0;
+  }
+
+  async existsOtherPaidOrderForCpfAndEvent(
+    excludeOrderId: string,
+    cpf: string,
+    eventId: string,
+  ): Promise<boolean> {
+    const existingOrder = await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.cpf, cpf),
+          eq(orders.eventId, eventId),
+          eq(orders.status, "paid"),
+          ne(orders.id, excludeOrderId),
+        ),
+      )
+      .limit(1);
+
+    return existingOrder.length > 0;
   }
 
   // Email queue operations
@@ -499,18 +533,10 @@ export class DatabaseStorage implements IStorage {
       .where(eq(courtesyLinks.id, id));
   }
 
-  async cancelOrderAndInvalidateQr(orderId: string): Promise<CancelOrderResult> {
-    const order = await this.getOrder(orderId);
-    if (!order) {
-      return { ok: false, code: "not_found" };
-    }
-    if (order.status === "cancelled") {
-      return { ok: false, code: "already_cancelled", order };
-    }
-    if (order.status !== "pending" && order.status !== "paid") {
-      return { ok: false, code: "invalid_status", status: order.status };
-    }
-
+  private async finalizeCancelOrderClearingQr(
+    orderId: string,
+    order: Order,
+  ): Promise<CancelOrderResult> {
     if (order.qr_code_s3_url) {
       try {
         const key = s3Service.extractKeyFromUrl(order.qr_code_s3_url);
@@ -535,6 +561,36 @@ export class DatabaseStorage implements IStorage {
       return { ok: false, code: "not_found" };
     }
     return { ok: true, order: updated };
+  }
+
+  async discardPendingOrder(orderId: string): Promise<CancelOrderResult> {
+    const order = await this.getOrder(orderId);
+    if (!order) {
+      return { ok: false, code: "not_found" };
+    }
+    if (order.status === "cancelled") {
+      return { ok: false, code: "already_cancelled", order };
+    }
+    if (order.status !== "pending") {
+      return { ok: false, code: "invalid_status", status: order.status };
+    }
+    return this.finalizeCancelOrderClearingQr(orderId, order);
+  }
+
+  async cancelPaidOrderAndInvalidateQr(
+    orderId: string,
+  ): Promise<CancelOrderResult> {
+    const order = await this.getOrder(orderId);
+    if (!order) {
+      return { ok: false, code: "not_found" };
+    }
+    if (order.status === "cancelled") {
+      return { ok: false, code: "already_cancelled", order };
+    }
+    if (order.status !== "paid") {
+      return { ok: false, code: "invalid_status", status: order.status };
+    }
+    return this.finalizeCancelOrderClearingQr(orderId, order);
   }
 
   async undoOrderCheckIn(orderId: string): Promise<Order> {

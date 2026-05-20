@@ -382,17 +382,27 @@ export default function AdminCommercialSalesPage() {
                               <AlertDialogContent>
                                 <AlertDialogHeader>
                                   <AlertDialogTitle>
-                                    Confirmar cancelamento?
+                                    Remover pedido pendente?
                                   </AlertDialogTitle>
                                   <AlertDialogDescription className="space-y-2 text-left">
                                     <span>
-                                      Cancelar o pedido de{" "}
-                                      <strong>{sale.nome}</strong>? O QR Code
-                                      será invalidado e um e-mail será
-                                      enfileirado.
+                                      O pedido em aberto de{" "}
+                                      <strong>{sale.nome}</strong> será
+                                      descartado no sistema (o QR gerado deixa
+                                      de valer para este pedido e{" "}
+                                      <strong>não</strong> será enviado e-mail
+                                      de cancelamento — o ingresso ainda não
+                                      estava confirmado).
                                     </span>
                                     <span className="block text-sm text-muted-foreground">
-                                      Estorno Asaas, se houver, é manual.
+                                      Se existir <strong>outro pedido já pago</strong>{" "}
+                                      para a mesma pessoa neste evento, ele{" "}
+                                      <strong>não</strong> é alterado: são
+                                      registros independentes.
+                                    </span>
+                                    <span className="block text-sm text-muted-foreground">
+                                      Estorno no Asaas, se houver cobrança ativa,
+                                      continua sendo manual.
                                     </span>
                                   </AlertDialogDescription>
                                 </AlertDialogHeader>

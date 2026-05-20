@@ -6,6 +6,9 @@ const incrementCourtesyLinkUsage = vi.fn();
 const getEvent = vi.fn();
 const getUser = vi.fn();
 const updateEvent = vi.fn();
+const existsOtherPaidOrderForCpfAndEvent = vi.fn();
+const discardPendingOrder = vi.fn();
+const cancelPayment = vi.fn();
 
 vi.mock("../../storage", () => ({
   storage: {
@@ -15,12 +18,21 @@ vi.mock("../../storage", () => ({
     getEvent: (...a: unknown[]) => getEvent(...a),
     getUser: (...a: unknown[]) => getUser(...a),
     updateEvent: (...a: unknown[]) => updateEvent(...a),
+    existsOtherPaidOrderForCpfAndEvent: (...a: unknown[]) =>
+      existsOtherPaidOrderForCpfAndEvent(...a),
+    discardPendingOrder: (...a: unknown[]) => discardPendingOrder(...a),
   },
 }));
 
 vi.mock("../../services/emailService", () => ({
   emailService: {
     sendTicketEmail: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+vi.mock("../../services/asaasService", () => ({
+  asaasService: {
+    cancelPayment: (...a: unknown[]) => cancelPayment(...a),
   },
 }));
 
@@ -38,7 +50,7 @@ function baseOrder(overrides: Partial<Order> = {}): Order {
     amount: "100.00",
     status: "pending",
     paymentMethod: "credit_card",
-    asaasPaymentId: "link-1",
+    asaasPaymentId: "pay-1",
     cpf: "123",
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -55,6 +67,12 @@ function baseOrder(overrides: Partial<Order> = {}): Order {
 describe("finalizeOrderPaidLikeWebhook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    existsOtherPaidOrderForCpfAndEvent.mockResolvedValue(false);
+    discardPendingOrder.mockResolvedValue({
+      ok: true,
+      order: baseOrder({ status: "cancelled", qrCodeData: null }),
+    });
+    cancelPayment.mockResolvedValue(undefined);
     getEvent.mockResolvedValue({
       id: "evt-1",
       title: "E",
@@ -98,6 +116,11 @@ describe("finalizeOrderPaidLikeWebhook", () => {
       value: 100,
     });
     expect(r).toEqual({ ok: true });
+    expect(existsOtherPaidOrderForCpfAndEvent).toHaveBeenCalledWith(
+      "order-uuid",
+      "123",
+      "evt-1",
+    );
     expect(updateOrder).toHaveBeenCalledWith("order-uuid", { status: "paid" });
     expect(incrementCourtesyLinkUsage).toHaveBeenCalledWith("cl-1");
     expect(updateEvent).toHaveBeenCalledWith("evt-1", {
@@ -128,5 +151,36 @@ describe("finalizeOrderPaidLikeWebhook", () => {
     expect(r).toEqual({ ok: true });
     expect(updateOrder).toHaveBeenCalledWith("order-uuid", { status: "paid" });
     expect(incrementCourtesyLinkUsage).not.toHaveBeenCalled();
+  });
+
+  it("refund_then_discard: cancels Asaas and discards when another paid order exists", async () => {
+    existsOtherPaidOrderForCpfAndEvent.mockResolvedValue(true);
+    const o = baseOrder({ asaasPaymentId: "pay-dup" });
+
+    const r = await finalizeOrderPaidLikeWebhook(o, {
+      billingType: "CREDIT_CARD",
+    });
+
+    expect(r).toEqual({ ok: false, code: "duplicate_other_paid" });
+    expect(cancelPayment).toHaveBeenCalledWith("pay-dup");
+    expect(discardPendingOrder).toHaveBeenCalledWith("order-uuid");
+    expect(updateOrder).not.toHaveBeenCalled();
+    expect(updateEvent).not.toHaveBeenCalled();
+  });
+
+  it("reject_only: returns duplicate without Asaas or discard", async () => {
+    existsOtherPaidOrderForCpfAndEvent.mockResolvedValue(true);
+    const o = baseOrder({ asaasPaymentId: "pay-dup" });
+
+    const r = await finalizeOrderPaidLikeWebhook(
+      o,
+      { billingType: "CREDIT_CARD" },
+      { duplicatePolicy: "reject_only" },
+    );
+
+    expect(r).toEqual({ ok: false, code: "duplicate_other_paid" });
+    expect(cancelPayment).not.toHaveBeenCalled();
+    expect(discardPendingOrder).not.toHaveBeenCalled();
+    expect(updateOrder).not.toHaveBeenCalled();
   });
 });

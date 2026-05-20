@@ -2,13 +2,17 @@ import axios from "axios";
 import type { Order } from "@shared/schema";
 import { storage } from "../storage";
 import { emailService } from "../services/emailService";
+import { asaasService } from "../services/asaasService";
 
 const MAKE_WEBHOOK_URL =
   "https://hook.us2.make.com/wrlqnqumlmgvfjicglpdrc3gv8lkbqce";
 
 export type FinalizeOrderPaidResult =
   | { ok: true }
-  | { ok: false; code: "already_paid" | "not_pending" };
+  | {
+      ok: false;
+      code: "already_paid" | "not_pending" | "duplicate_other_paid";
+    };
 
 export type PaymentMetaForFinalize = {
   /** Asaas `billingType` (e.g. CREDIT_CARD) or manual label. */
@@ -16,6 +20,45 @@ export type PaymentMetaForFinalize = {
   /** Optional override; defaults to `order.amount` (numeric from DB). */
   value?: number | null;
 };
+
+export type FinalizeOrderOptions = {
+  /**
+   * When another paid order exists for the same CPF+event:
+   * - refund_then_discard: cancel Asaas charge (best-effort) and discard this pending order
+   * - reject_only: return duplicate_other_paid without side effects (admin mark-paid-external)
+   */
+  duplicatePolicy?: "refund_then_discard" | "reject_only";
+};
+
+async function handleDuplicatePaidInscription(
+  order: Order,
+  policy: "refund_then_discard" | "reject_only",
+): Promise<FinalizeOrderPaidResult> {
+  if (policy === "reject_only") {
+    return { ok: false, code: "duplicate_other_paid" };
+  }
+
+  if (order.asaasPaymentId) {
+    try {
+      await asaasService.cancelPayment(order.asaasPaymentId);
+    } catch (e) {
+      console.error(
+        `Erro ao estornar/cancelar cobrança Asaas (order ${order.id}):`,
+        e,
+      );
+    }
+  }
+
+  const discard = await storage.discardPendingOrder(order.id);
+  if (!discard.ok && discard.code !== "already_cancelled") {
+    console.error(
+      `Falha ao descartar pedido duplicado ${order.id}:`,
+      discard,
+    );
+  }
+
+  return { ok: false, code: "duplicate_other_paid" };
+}
 
 /**
  * Same business effects as a successful `PAYMENT_RECEIVED` / `PAYMENT_CONFIRMED` Asaas webhook:
@@ -25,12 +68,24 @@ export type PaymentMetaForFinalize = {
 export async function finalizeOrderPaidLikeWebhook(
   order: Order,
   paymentMeta: PaymentMetaForFinalize,
+  options: FinalizeOrderOptions = {},
 ): Promise<FinalizeOrderPaidResult> {
+  const duplicatePolicy = options.duplicatePolicy ?? "refund_then_discard";
+
   if (order.status === "paid") {
     return { ok: false, code: "already_paid" };
   }
   if (order.status !== "pending") {
     return { ok: false, code: "not_pending" };
+  }
+
+  const hasOtherPaid = await storage.existsOtherPaidOrderForCpfAndEvent(
+    order.id,
+    order.cpf,
+    order.eventId,
+  );
+  if (hasOtherPaid) {
+    return handleDuplicatePaidInscription(order, duplicatePolicy);
   }
 
   await storage.updateOrder(order.id, { status: "paid" });

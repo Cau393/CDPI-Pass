@@ -857,12 +857,24 @@ var init_storage = __esm({
         const [order] = await db.select().from(orders).where(eq(orders.asaasPaymentId, paymentId));
         return order;
       }
+      /** True when this CPF already has a confirmed (paid) inscription for the event. */
       async isCpfAlreadyRegisteredForEvent(cpf, eventId) {
         const existingOrder = await db.select().from(orders).where(
           and(
             eq(orders.cpf, cpf),
             eq(orders.eventId, eventId),
-            ne(orders.status, "cancelled")
+            eq(orders.status, "paid")
+          )
+        ).limit(1);
+        return existingOrder.length > 0;
+      }
+      async existsOtherPaidOrderForCpfAndEvent(excludeOrderId, cpf, eventId) {
+        const existingOrder = await db.select({ id: orders.id }).from(orders).where(
+          and(
+            eq(orders.cpf, cpf),
+            eq(orders.eventId, eventId),
+            eq(orders.status, "paid"),
+            ne(orders.id, excludeOrderId)
           )
         ).limit(1);
         return existingOrder.length > 0;
@@ -942,17 +954,7 @@ var init_storage = __esm({
           updatedAt: /* @__PURE__ */ new Date()
         }).where(eq(courtesyLinks.id, id));
       }
-      async cancelOrderAndInvalidateQr(orderId) {
-        const order = await this.getOrder(orderId);
-        if (!order) {
-          return { ok: false, code: "not_found" };
-        }
-        if (order.status === "cancelled") {
-          return { ok: false, code: "already_cancelled", order };
-        }
-        if (order.status !== "pending" && order.status !== "paid") {
-          return { ok: false, code: "invalid_status", status: order.status };
-        }
+      async finalizeCancelOrderClearingQr(orderId, order) {
         if (order.qr_code_s3_url) {
           try {
             const key = s3Service.extractKeyFromUrl(order.qr_code_s3_url);
@@ -971,6 +973,32 @@ var init_storage = __esm({
           return { ok: false, code: "not_found" };
         }
         return { ok: true, order: updated };
+      }
+      async discardPendingOrder(orderId) {
+        const order = await this.getOrder(orderId);
+        if (!order) {
+          return { ok: false, code: "not_found" };
+        }
+        if (order.status === "cancelled") {
+          return { ok: false, code: "already_cancelled", order };
+        }
+        if (order.status !== "pending") {
+          return { ok: false, code: "invalid_status", status: order.status };
+        }
+        return this.finalizeCancelOrderClearingQr(orderId, order);
+      }
+      async cancelPaidOrderAndInvalidateQr(orderId) {
+        const order = await this.getOrder(orderId);
+        if (!order) {
+          return { ok: false, code: "not_found" };
+        }
+        if (order.status === "cancelled") {
+          return { ok: false, code: "already_cancelled", order };
+        }
+        if (order.status !== "paid") {
+          return { ok: false, code: "invalid_status", status: order.status };
+        }
+        return this.finalizeCancelOrderClearingQr(orderId, order);
       }
       async undoOrderCheckIn(orderId) {
         const order = await this.getOrder(orderId);
@@ -3716,7 +3744,7 @@ var require_lib = __commonJS({
       }
       flowParseDeclareVariable(node) {
         this.next();
-        node.id = this.flowParseTypeAnnotatableIdentifier(true);
+        node.id = this.flowParseTypeAnnotatableIdentifier();
         this.scope.declareName(node.id.name, 5, node.id.loc.start);
         this.semicolon();
         return this.finishNode(node, "DeclareVariable");
@@ -3890,9 +3918,14 @@ var require_lib = __commonJS({
           reservedType: word
         });
       }
-      flowParseRestrictedIdentifier(liberal, declaration) {
+      flowParseRestrictedIdentifierName(liberal, declaration) {
         this.checkReservedType(this.state.value, this.state.startLoc, declaration);
-        return this.parseIdentifier(liberal);
+        return this.parseIdentifierName(liberal);
+      }
+      flowParseRestrictedIdentifier(liberal, declaration) {
+        const node = this.startNode();
+        const name = this.flowParseRestrictedIdentifierName(liberal, declaration);
+        return this.createIdentifier(node, name);
       }
       flowParseTypeAlias(node) {
         node.id = this.flowParseRestrictedIdentifier(false, true);
@@ -3926,14 +3959,21 @@ var require_lib = __commonJS({
         this.semicolon();
         return this.finishNode(node, "OpaqueType");
       }
+      flowParseTypeParameterBound() {
+        if (this.match(14) || this.isContextual(81)) {
+          const node = this.startNode();
+          this.next();
+          node.typeAnnotation = this.flowParseType();
+          return this.finishNode(node, "TypeAnnotation");
+        }
+      }
       flowParseTypeParameter(requireDefault = false) {
         const nodeStartLoc = this.state.startLoc;
         const node = this.startNode();
         const variance = this.flowParseVariance();
-        const ident = this.flowParseTypeAnnotatableIdentifier();
-        node.name = ident.name;
+        node.name = this.flowParseRestrictedIdentifierName();
         node.variance = variance;
-        node.bound = ident.typeAnnotation;
+        node.bound = this.flowParseTypeParameterBound();
         if (this.match(29)) {
           this.eat(29);
           node.default = this.flowParseType();
@@ -4628,13 +4668,13 @@ var require_lib = __commonJS({
         node.typeAnnotation = this.flowParseTypeInitialiser();
         return this.finishNode(node, "TypeAnnotation");
       }
-      flowParseTypeAnnotatableIdentifier(allowPrimitiveOverride) {
-        const ident = allowPrimitiveOverride ? this.parseIdentifier() : this.flowParseRestrictedIdentifier();
+      flowParseTypeAnnotatableIdentifier() {
+        const node = this.startNode();
+        const name = this.parseIdentifierName();
         if (this.match(14)) {
-          ident.typeAnnotation = this.flowParseTypeAnnotation();
-          this.resetEndLocation(ident);
+          node.typeAnnotation = this.flowParseTypeAnnotation();
         }
-        return ident;
+        return this.createIdentifier(node, name);
       }
       typeCastToParameter(node) {
         node.expression.typeAnnotation = node.typeAnnotation;
@@ -6851,6 +6891,7 @@ var require_lib = __commonJS({
                 adjustInnerComments(node, node.properties, commentWS);
                 break;
               case "CallExpression":
+              case "NewExpression":
               case "OptionalCallExpression":
                 adjustInnerComments(node, node.arguments, commentWS);
                 break;
@@ -6863,6 +6904,7 @@ var require_lib = __commonJS({
               case "ObjectMethod":
               case "ClassMethod":
               case "ClassPrivateMethod":
+              case "TSTypeParameterDeclaration":
                 adjustInnerComments(node, node.params, commentWS);
                 break;
               case "ArrayExpression":
@@ -6878,6 +6920,9 @@ var require_lib = __commonJS({
                 break;
               case "TSEnumBody":
                 adjustInnerComments(node, node.members, commentWS);
+                break;
+              case "TSInterfaceBody":
+                adjustInnerComments(node, node.body, commentWS);
                 break;
               default: {
                 if (node.type === "RecordExpression") {
@@ -45992,6 +46037,189 @@ function buildMassSendRecipientIlikePattern(search) {
   return `%${t.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")}%`;
 }
 
+// server/utils/executeOrderCancel.ts
+init_esm_shims();
+init_storage();
+
+// server/services/asaasService.ts
+init_esm_shims();
+var AsaasService = class {
+  apiKey;
+  baseUrl;
+  constructor() {
+    this.apiKey = process.env.ASAAS_API_KEY || "";
+    this.baseUrl = "https://api.asaas.com/v3";
+    if (!process.env.ASAAS_API_KEY) {
+      console.error("ASAAS_API_KEY environment variable is required for payment processing");
+    }
+  }
+  async makeRequest(endpoint, method = "GET", data) {
+    const url = `${this.baseUrl}${endpoint}`;
+    const options = {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        "access_token": this.apiKey
+      }
+    };
+    if (data && (method === "POST" || method === "PUT")) {
+      options.body = JSON.stringify(data);
+    }
+    try {
+      const response = await fetch(url, options);
+      const responseData = await response.json();
+      if (!response.ok) {
+        throw new Error(`Asaas API error: ${response.status} - ${JSON.stringify(responseData)}`);
+      }
+      return responseData;
+    } catch (error) {
+      console.error("Asaas API request failed:", error);
+      throw error;
+    }
+  }
+  async createCustomer(customerData) {
+    try {
+      const existingCustomers = await this.makeRequest(`/customers?cpfCnpj=${customerData.cpfCnpj}`);
+      if (existingCustomers.data && existingCustomers.data.length > 0) {
+        return existingCustomers.data[0];
+      }
+      return await this.makeRequest("/customers", "POST", customerData);
+    } catch (error) {
+      console.error("Error creating/finding customer:", error);
+      throw error;
+    }
+  }
+  async createPayment(paymentData) {
+    try {
+      const customer = await this.createCustomer(paymentData.customer);
+      if (paymentData.billingType === "CREDIT_CARD") {
+        const paymentLinkPayload = {
+          name: `Pedido ${paymentData.externalReference}`,
+          billingType: "CREDIT_CARD",
+          chargeType: "INSTALLMENT",
+          maxInstallmentCount: 3,
+          value: paymentData.value,
+          dueDateLimitDays: 1,
+          description: paymentData.description,
+          externalReference: paymentData.externalReference,
+          notificationEnabled: false
+        };
+        const paymentLinkData = await this.makeRequest("/paymentLinks", "POST", paymentLinkPayload);
+        return {
+          id: paymentLinkData.id,
+          dateCreated: paymentLinkData.dateCreated,
+          customer: customer.id,
+          paymentLink: paymentLinkData.url,
+          value: paymentLinkData.value,
+          netValue: paymentLinkData.netValue ?? paymentLinkData.value,
+          billingType: "CREDIT_CARD",
+          status: "PENDING"
+        };
+      }
+      const paymentPayload = {
+        customer: customer.id,
+        billingType: paymentData.billingType,
+        value: paymentData.value,
+        dueDate: paymentData.dueDate.toISOString().split("T")[0],
+        description: paymentData.description,
+        externalReference: paymentData.externalReference
+      };
+      const payment = await this.makeRequest("/payments", "POST", paymentPayload);
+      if (paymentData.billingType === "PIX") {
+        try {
+          const pixInfo = await this.makeRequest(`/payments/${payment.id}/pixQrCode`);
+          payment.pixTransaction = {
+            qrCode: {
+              encodedImage: pixInfo.encodedImage,
+              payload: pixInfo.payload
+            },
+            expirationDate: pixInfo.expirationDate
+          };
+        } catch (pixError) {
+          console.error("Error getting PIX QR code:", pixError);
+        }
+      }
+      if (paymentData.billingType === "BOLETO") {
+        payment.bankSlipUrl = payment.bankSlipUrl;
+      }
+      return payment;
+    } catch (error) {
+      console.error("Error creating payment:", error);
+      throw error;
+    }
+  }
+  /**
+   * Cobranças PIX/boleto usam id `pay_...`. Cartão via link de pagamento guarda o id do link (numérico);
+   * a cobrança real é resolvida por `externalReference` (= id do pedido no sistema).
+   */
+  pickBestPaymentFromList(payments) {
+    const paidStatuses = /* @__PURE__ */ new Set(["CONFIRMED", "RECEIVED"]);
+    const paid = payments.filter((p) => paidStatuses.has(p.status));
+    const pool2 = paid.length > 0 ? paid : payments;
+    const sorted = [...pool2].sort((a, b) => {
+      const ta = new Date(
+        a.paymentDate || a.confirmedDate || a.dateCreated || 0
+      ).getTime();
+      const tb = new Date(
+        b.paymentDate || b.confirmedDate || b.dateCreated || 0
+      ).getTime();
+      return tb - ta;
+    });
+    return sorted[0];
+  }
+  async getPayment(storedAsaasId, orderExternalRef) {
+    try {
+      if (storedAsaasId.startsWith("pay_")) {
+        return await this.makeRequest(`/payments/${storedAsaasId}`);
+      }
+      const query = new URLSearchParams({
+        externalReference: orderExternalRef,
+        limit: "100"
+      });
+      const list = await this.makeRequest(`/payments?${query.toString()}`);
+      if (!list.data || list.data.length === 0) {
+        return { status: "PENDING" };
+      }
+      return this.pickBestPaymentFromList(list.data);
+    } catch (error) {
+      console.error("Error getting payment:", error);
+      throw error;
+    }
+  }
+  async updatePayment(paymentId, updateData) {
+    try {
+      return await this.makeRequest(`/payments/${paymentId}`, "POST", updateData);
+    } catch (error) {
+      console.error("Error updating payment:", error);
+      throw error;
+    }
+  }
+  // Webhook signature validation (for production use)
+  validateWebhookSignature(requestToken) {
+    const expectedToken = process.env.ASAAS_WEBHOOK_TOKEN;
+    if (!expectedToken) {
+      console.warn("ASAAS_WEBHOOK_TOKEN is not set. Skipping webhook validation.");
+      return true;
+    }
+    if (!requestToken) {
+      return false;
+    }
+    return requestToken === expectedToken;
+  }
+  async cancelPayment(paymentId) {
+    try {
+      if (paymentId.startsWith("pay_")) {
+        return await this.makeRequest(`/payments/${paymentId}`, "DELETE");
+      }
+      return await this.makeRequest(`/paymentLinks/${paymentId}`, "DELETE");
+    } catch (error) {
+      console.error("Error canceling Asaas payment:", error);
+      throw error;
+    }
+  }
+};
+var asaasService = new AsaasService();
+
 // server/utils/cancellationEmailTemplate.ts
 init_esm_shims();
 
@@ -46025,6 +46253,104 @@ function buildCancellationEmailHtml(recipientName, eventTitle) {
     nome: recipientName,
     evento: eventTitle
   });
+}
+
+// server/utils/executeOrderCancel.ts
+function buildOrderCancelSuccessMessage(handled) {
+  if (handled === "pending") {
+    return "Pedido pendente removido com sucesso.";
+  }
+  return "Inscri\xE7\xE3o cancelada com sucesso. O QR Code foi invalidado e um e-mail foi enfileirado.";
+}
+function mapCancelFailure(result) {
+  if (result.code === "already_cancelled") {
+    return { ok: false, code: "already_cancelled" };
+  }
+  if (result.code === "invalid_status") {
+    return { ok: false, code: "invalid_status", status: result.status };
+  }
+  return { ok: false, code: "not_found" };
+}
+function gateUserCancel(order, options) {
+  if (options.actor !== "user") {
+    return null;
+  }
+  if (!options.userId || order.userId !== options.userId) {
+    return { ok: false, code: "forbidden" };
+  }
+  if (order.status === "paid") {
+    return { ok: false, code: "invalid_status", status: order.status };
+  }
+  return null;
+}
+async function cancelPendingViaStorage(orderId) {
+  const result = await storage.discardPendingOrder(orderId);
+  if (!result.ok) {
+    return mapCancelFailure(result);
+  }
+  return { ok: true, message: buildOrderCancelSuccessMessage("pending") };
+}
+async function cancelAsaasChargeIfNeeded(asaasPaymentId) {
+  if (!asaasPaymentId) {
+    return;
+  }
+  try {
+    await asaasService.cancelPayment(asaasPaymentId);
+  } catch (e) {
+    console.error("Erro ao cancelar cobran\xE7a Asaas:", e);
+  }
+}
+async function enqueuePaidCancellationEmail(order) {
+  const buyer = await storage.getUser(order.userId);
+  const event = await storage.getEvent(order.eventId);
+  if (!buyer?.email) {
+    return;
+  }
+  const html = buildCancellationEmailHtml(
+    buyer.name ?? "Participante",
+    event?.title ?? "Evento"
+  );
+  const text2 = [
+    `Ol\xE1, ${buyer.name ?? "Participante"},`,
+    "",
+    `Sua inscri\xE7\xE3o no evento ${event?.title ?? "Evento"} foi cancelada pela organiza\xE7\xE3o.`,
+    "O QR Code do ingresso foi invalidado.",
+    "",
+    "Equipe CDPI Pass"
+  ].join("\n");
+  await storage.addEmailToQueue({
+    to: buyer.email,
+    subject: "Cancelamento de inscri\xE7\xE3o \u2014 CDPI Pass",
+    html,
+    text: text2,
+    attachments: null
+  });
+}
+async function executeOrderCancel(orderId, options) {
+  const order = await storage.getOrder(orderId);
+  if (!order) {
+    return { ok: false, code: "not_found" };
+  }
+  if (order.status === "cancelled") {
+    return { ok: false, code: "already_cancelled" };
+  }
+  const userGate = gateUserCancel(order, options);
+  if (userGate) {
+    return userGate;
+  }
+  if (order.status !== "pending" && order.status !== "paid") {
+    return { ok: false, code: "invalid_status", status: order.status };
+  }
+  if (order.status === "pending") {
+    await cancelAsaasChargeIfNeeded(order.asaasPaymentId ?? null);
+    return cancelPendingViaStorage(orderId);
+  }
+  const result = await storage.cancelPaidOrderAndInvalidateQr(orderId);
+  if (!result.ok) {
+    return mapCancelFailure(result);
+  }
+  await enqueuePaidCancellationEmail(result.order);
+  return { ok: true, message: buildOrderCancelSuccessMessage("paid") };
 }
 
 // server/utils/finalizeOrderPaidLikeWebhook.ts
@@ -46450,12 +46776,44 @@ var emailService = new EmailService();
 
 // server/utils/finalizeOrderPaidLikeWebhook.ts
 var MAKE_WEBHOOK_URL = "https://hook.us2.make.com/wrlqnqumlmgvfjicglpdrc3gv8lkbqce";
-async function finalizeOrderPaidLikeWebhook(order, paymentMeta) {
+async function handleDuplicatePaidInscription(order, policy) {
+  if (policy === "reject_only") {
+    return { ok: false, code: "duplicate_other_paid" };
+  }
+  if (order.asaasPaymentId) {
+    try {
+      await asaasService.cancelPayment(order.asaasPaymentId);
+    } catch (e) {
+      console.error(
+        `Erro ao estornar/cancelar cobran\xE7a Asaas (order ${order.id}):`,
+        e
+      );
+    }
+  }
+  const discard = await storage.discardPendingOrder(order.id);
+  if (!discard.ok && discard.code !== "already_cancelled") {
+    console.error(
+      `Falha ao descartar pedido duplicado ${order.id}:`,
+      discard
+    );
+  }
+  return { ok: false, code: "duplicate_other_paid" };
+}
+async function finalizeOrderPaidLikeWebhook(order, paymentMeta, options = {}) {
+  const duplicatePolicy = options.duplicatePolicy ?? "refund_then_discard";
   if (order.status === "paid") {
     return { ok: false, code: "already_paid" };
   }
   if (order.status !== "pending") {
     return { ok: false, code: "not_pending" };
+  }
+  const hasOtherPaid = await storage.existsOtherPaidOrderForCpfAndEvent(
+    order.id,
+    order.cpf,
+    order.eventId
+  );
+  if (hasOtherPaid) {
+    return handleDuplicatePaidInscription(order, duplicatePolicy);
   }
   await storage.updateOrder(order.id, { status: "paid" });
   if (order.courtesyLinkId) {
@@ -46549,185 +46907,6 @@ async function enqueueEventPrintIfEnabled(order) {
   }
   return displayName;
 }
-
-// server/services/asaasService.ts
-init_esm_shims();
-var AsaasService = class {
-  apiKey;
-  baseUrl;
-  constructor() {
-    this.apiKey = process.env.ASAAS_API_KEY || "";
-    this.baseUrl = "https://api.asaas.com/v3";
-    if (!process.env.ASAAS_API_KEY) {
-      console.error("ASAAS_API_KEY environment variable is required for payment processing");
-    }
-  }
-  async makeRequest(endpoint, method = "GET", data) {
-    const url = `${this.baseUrl}${endpoint}`;
-    const options = {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-        "access_token": this.apiKey
-      }
-    };
-    if (data && (method === "POST" || method === "PUT")) {
-      options.body = JSON.stringify(data);
-    }
-    try {
-      const response = await fetch(url, options);
-      const responseData = await response.json();
-      if (!response.ok) {
-        throw new Error(`Asaas API error: ${response.status} - ${JSON.stringify(responseData)}`);
-      }
-      return responseData;
-    } catch (error) {
-      console.error("Asaas API request failed:", error);
-      throw error;
-    }
-  }
-  async createCustomer(customerData) {
-    try {
-      const existingCustomers = await this.makeRequest(`/customers?cpfCnpj=${customerData.cpfCnpj}`);
-      if (existingCustomers.data && existingCustomers.data.length > 0) {
-        return existingCustomers.data[0];
-      }
-      return await this.makeRequest("/customers", "POST", customerData);
-    } catch (error) {
-      console.error("Error creating/finding customer:", error);
-      throw error;
-    }
-  }
-  async createPayment(paymentData) {
-    try {
-      const customer = await this.createCustomer(paymentData.customer);
-      if (paymentData.billingType === "CREDIT_CARD") {
-        const paymentLinkPayload = {
-          name: `Pedido ${paymentData.externalReference}`,
-          billingType: "CREDIT_CARD",
-          chargeType: "INSTALLMENT",
-          maxInstallmentCount: 3,
-          value: paymentData.value,
-          dueDateLimitDays: 1,
-          description: paymentData.description,
-          externalReference: paymentData.externalReference,
-          notificationEnabled: false
-        };
-        const paymentLinkData = await this.makeRequest("/paymentLinks", "POST", paymentLinkPayload);
-        return {
-          id: paymentLinkData.id,
-          dateCreated: paymentLinkData.dateCreated,
-          customer: customer.id,
-          paymentLink: paymentLinkData.url,
-          value: paymentLinkData.value,
-          netValue: paymentLinkData.netValue ?? paymentLinkData.value,
-          billingType: "CREDIT_CARD",
-          status: "PENDING"
-        };
-      }
-      const paymentPayload = {
-        customer: customer.id,
-        billingType: paymentData.billingType,
-        value: paymentData.value,
-        dueDate: paymentData.dueDate.toISOString().split("T")[0],
-        description: paymentData.description,
-        externalReference: paymentData.externalReference
-      };
-      const payment = await this.makeRequest("/payments", "POST", paymentPayload);
-      if (paymentData.billingType === "PIX") {
-        try {
-          const pixInfo = await this.makeRequest(`/payments/${payment.id}/pixQrCode`);
-          payment.pixTransaction = {
-            qrCode: {
-              encodedImage: pixInfo.encodedImage,
-              payload: pixInfo.payload
-            },
-            expirationDate: pixInfo.expirationDate
-          };
-        } catch (pixError) {
-          console.error("Error getting PIX QR code:", pixError);
-        }
-      }
-      if (paymentData.billingType === "BOLETO") {
-        payment.bankSlipUrl = payment.bankSlipUrl;
-      }
-      return payment;
-    } catch (error) {
-      console.error("Error creating payment:", error);
-      throw error;
-    }
-  }
-  /**
-   * Cobranças PIX/boleto usam id `pay_...`. Cartão via link de pagamento guarda o id do link (numérico);
-   * a cobrança real é resolvida por `externalReference` (= id do pedido no sistema).
-   */
-  pickBestPaymentFromList(payments) {
-    const paidStatuses = /* @__PURE__ */ new Set(["CONFIRMED", "RECEIVED"]);
-    const paid = payments.filter((p) => paidStatuses.has(p.status));
-    const pool2 = paid.length > 0 ? paid : payments;
-    const sorted = [...pool2].sort((a, b) => {
-      const ta = new Date(
-        a.paymentDate || a.confirmedDate || a.dateCreated || 0
-      ).getTime();
-      const tb = new Date(
-        b.paymentDate || b.confirmedDate || b.dateCreated || 0
-      ).getTime();
-      return tb - ta;
-    });
-    return sorted[0];
-  }
-  async getPayment(storedAsaasId, orderExternalRef) {
-    try {
-      if (storedAsaasId.startsWith("pay_")) {
-        return await this.makeRequest(`/payments/${storedAsaasId}`);
-      }
-      const query = new URLSearchParams({
-        externalReference: orderExternalRef,
-        limit: "100"
-      });
-      const list = await this.makeRequest(`/payments?${query.toString()}`);
-      if (!list.data || list.data.length === 0) {
-        return { status: "PENDING" };
-      }
-      return this.pickBestPaymentFromList(list.data);
-    } catch (error) {
-      console.error("Error getting payment:", error);
-      throw error;
-    }
-  }
-  async updatePayment(paymentId, updateData) {
-    try {
-      return await this.makeRequest(`/payments/${paymentId}`, "POST", updateData);
-    } catch (error) {
-      console.error("Error updating payment:", error);
-      throw error;
-    }
-  }
-  // Webhook signature validation (for production use)
-  validateWebhookSignature(requestToken) {
-    const expectedToken = process.env.ASAAS_WEBHOOK_TOKEN;
-    if (!expectedToken) {
-      console.warn("ASAAS_WEBHOOK_TOKEN is not set. Skipping webhook validation.");
-      return true;
-    }
-    if (!requestToken) {
-      return false;
-    }
-    return requestToken === expectedToken;
-  }
-  async cancelPayment(paymentId) {
-    try {
-      if (paymentId.startsWith("pay_")) {
-        return await this.makeRequest(`/payments/${paymentId}`, "DELETE");
-      }
-      return await this.makeRequest(`/paymentLinks/${paymentId}`, "DELETE");
-    } catch (error) {
-      console.error("Error canceling Asaas payment:", error);
-      throw error;
-    }
-  }
-};
-var asaasService = new AsaasService();
 
 // server/services/qrCodeService.ts
 init_esm_shims();
@@ -48679,7 +48858,7 @@ async function registerRoutes(app2) {
         return res.status(400).json({ success: false, message: "orderId inv\xE1lido" });
       }
       const orderId = parsed.data;
-      const result = await storage.cancelOrderAndInvalidateQr(orderId);
+      const result = await executeOrderCancel(orderId, { actor: "admin" });
       if (!result.ok) {
         if (result.code === "not_found") {
           return res.status(404).json({
@@ -48699,34 +48878,17 @@ async function registerRoutes(app2) {
             message: `N\xE3o \xE9 poss\xEDvel cancelar um pedido com status: ${result.status}`
           });
         }
+        if (result.code === "forbidden") {
+          return res.status(403).json({
+            success: false,
+            message: "Acesso negado."
+          });
+        }
         return res.status(400).json({ success: false, message: "N\xE3o foi poss\xEDvel cancelar o pedido." });
-      }
-      const buyer = await storage.getUser(result.order.userId);
-      const event = await storage.getEvent(result.order.eventId);
-      if (buyer?.email) {
-        const html = buildCancellationEmailHtml(
-          buyer.name ?? "Participante",
-          event?.title ?? "Evento"
-        );
-        const text2 = [
-          `Ol\xE1, ${buyer.name ?? "Participante"},`,
-          "",
-          `Sua inscri\xE7\xE3o no evento ${event?.title ?? "Evento"} foi cancelada pela organiza\xE7\xE3o.`,
-          "O QR Code do ingresso foi invalidado.",
-          "",
-          "Equipe CDPI Pass"
-        ].join("\n");
-        await storage.addEmailToQueue({
-          to: buyer.email,
-          subject: "Cancelamento de inscri\xE7\xE3o \u2014 CDPI Pass",
-          html,
-          text: text2,
-          attachments: null
-        });
       }
       res.json({
         success: true,
-        message: "Inscri\xE7\xE3o cancelada com sucesso. O QR Code foi invalidado e um e-mail foi enfileirado."
+        message: result.message
       });
     } catch (error) {
       console.error("POST /api/admin/orders/:id/cancel:", error);
@@ -48768,12 +48930,18 @@ async function registerRoutes(app2) {
         const result = await finalizeOrderPaidLikeWebhook(order, {
           billingType: "CREDIT_CARD",
           value: Number.parseFloat(String(order.amount))
-        });
+        }, { duplicatePolicy: "reject_only" });
         if (!result.ok) {
           if (result.code === "already_paid") {
             return res.status(409).json({
               success: false,
               message: "Este pedido j\xE1 est\xE1 pago."
+            });
+          }
+          if (result.code === "duplicate_other_paid") {
+            return res.status(409).json({
+              success: false,
+              message: "J\xE1 existe inscri\xE7\xE3o paga para este CPF neste evento. N\xE3o \xE9 poss\xEDvel confirmar um segundo ingresso."
             });
           }
           return res.status(400).json({
@@ -49024,27 +49192,34 @@ async function registerRoutes(app2) {
       );
       console.log(`Manual check - Payment status for order ${id}:`, payment.status);
       if ((payment.status === "CONFIRMED" || payment.status === "RECEIVED") && order.status !== "paid") {
-        await storage.updateOrder(id, { status: "paid" });
-        const event = await storage.getEvent(order.eventId);
-        const ticketUser = await storage.getUser(order.userId);
-        if (event && ticketUser) {
-          await storage.updateEvent(event.id, {
-            currentAttendees: (event.currentAttendees || 0) + 1
-          });
-          await emailService.sendTicketEmail(ticketUser.email, {
-            userName: ticketUser.name,
-            eventTitle: event.title,
-            eventDate: event.date,
-            eventLocation: event.location,
-            qrCodeData: order.qrCodeData || "",
-            orderId: order.id,
-            qrCodeS3Url: order.qr_code_s3_url || ""
+        const result = await finalizeOrderPaidLikeWebhook(order, {
+          billingType: payment.billingType || "unknown",
+          value: payment.value ?? null
+        });
+        if (result.ok) {
+          const updatedOrder = await storage.getOrder(id);
+          return res.json({
+            message: "Pagamento confirmado!",
+            order: updatedOrder
           });
         }
-        const updatedOrder = await storage.getOrder(id);
-        return res.json({
-          message: "Pagamento confirmado!",
-          order: updatedOrder
+        if (result.code === "duplicate_other_paid") {
+          const updatedOrder = await storage.getOrder(id);
+          return res.status(409).json({
+            message: "J\xE1 existe ingresso confirmado para este evento. Este pagamento duplicado foi descartado; o estorno ser\xE1 processado quando poss\xEDvel.",
+            order: updatedOrder
+          });
+        }
+        if (result.code === "already_paid") {
+          const updatedOrder = await storage.getOrder(id);
+          return res.json({
+            message: "Pagamento j\xE1 estava confirmado.",
+            order: updatedOrder
+          });
+        }
+        return res.status(400).json({
+          message: "N\xE3o foi poss\xEDvel confirmar o pagamento deste pedido.",
+          order
         });
       } else if ((payment.status === "OVERDUE" || payment.status === "CANCELED") && order.status === "pending") {
         await storage.updateOrder(id, { status: "cancelled" });
@@ -49068,21 +49243,23 @@ async function registerRoutes(app2) {
     try {
       const { id } = req.params;
       const userId = req.user.id;
-      const order = await storage.getOrder(id);
-      if (!order) {
-        return res.status(404).json({ message: "Pedido n\xE3o encontrado" });
+      const result = await executeOrderCancel(id, { actor: "user", userId });
+      if (!result.ok) {
+        if (result.code === "not_found") {
+          return res.status(404).json({ message: "Pedido n\xE3o encontrado" });
+        }
+        if (result.code === "forbidden") {
+          return res.status(403).json({ message: "Acesso n\xE3o autorizado" });
+        }
+        if (result.code === "already_cancelled") {
+          return res.status(409).json({ message: "Este ingresso j\xE1 est\xE1 cancelado." });
+        }
+        if (result.code === "invalid_status") {
+          return res.status(400).json({ message: "Este pedido n\xE3o pode ser cancelado" });
+        }
+        return res.status(400).json({ message: "N\xE3o foi poss\xEDvel cancelar o pedido." });
       }
-      if (order.userId !== userId) {
-        return res.status(403).json({ message: "Acesso n\xE3o autorizado" });
-      }
-      if (order.status !== "pending") {
-        return res.status(400).json({ message: "Este pedido n\xE3o pode ser cancelado" });
-      }
-      if (order.asaasPaymentId) {
-        await asaasService.cancelPayment(order.asaasPaymentId);
-      }
-      await storage.deleteOrder(id);
-      res.status(200).json({ message: "Pedido cancelado com sucesso" });
+      res.status(200).json({ message: result.message });
     } catch (error) {
       console.error("Cancel order error:", error);
       res.status(500).json({ message: "Erro ao cancelar o pedido" });
@@ -49173,10 +49350,15 @@ async function registerRoutes(app2) {
       if (eventType === "PAYMENT_CONFIRMED" || eventType === "PAYMENT_RECEIVED") {
         const order = payment.externalReference ? await storage.getOrder(payment.externalReference) : await storage.getOrderByAsaasPaymentId(payment.id);
         if (order) {
-          await finalizeOrderPaidLikeWebhook(order, {
+          const result = await finalizeOrderPaidLikeWebhook(order, {
             billingType: payment?.billingType || "unknown",
             value: payment?.value ?? null
           });
+          if (!result.ok && result.code === "duplicate_other_paid") {
+            console.warn(
+              `Duplicate paid inscription rejected for order ${order.id} (CPF ${order.cpf}, event ${order.eventId})`
+            );
+          }
         }
       } else if (eventType === "PAYMENT_OVERDUE" || eventType === "PAYMENT_DELETED") {
         const order = await storage.getOrderByAsaasPaymentId(payment.id);

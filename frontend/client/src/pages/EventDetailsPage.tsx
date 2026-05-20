@@ -7,7 +7,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
-import type { Event } from "@shared/schema";
+import type { Event, Order } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
@@ -39,6 +39,22 @@ export default function EventDetailsPage() {
     queryKey: [`/api/events/${id}`],
     enabled: !!id,
   });
+
+  const { data: userOrdersData } = useQuery<{ orders: Order[] }>({
+    queryKey: ["/api/orders", "event-details-gate"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/orders?page=1");
+      return res.json() as Promise<{ orders: Order[] }>;
+    },
+    enabled: isAuthenticated && !!event?.id,
+  });
+
+  const hasPaidForEvent =
+    !!event?.id &&
+    (userOrdersData?.orders?.some(
+      (o) => o.eventId === event.id && o.status === "paid",
+    ) ??
+      false);
 
   // ✅ Fetch promo link details only if a promo code exists
   const { data: promoLink } = useQuery({
@@ -242,12 +258,19 @@ export default function EventDetailsPage() {
               <Button
                 onClick={() => handleBuyTicket(event, promoCode)}
                 className="bg-primary hover:bg-secondary text-white px-8 py-6 text-lg"
-                disabled={spotsLeft === 0}
+                disabled={spotsLeft === 0 || hasPaidForEvent}
               >
                 {spotsLeft === 0
                   ? "Evento Esgotado"
-                  : "Comprar Ingresso"}
+                  : hasPaidForEvent
+                    ? "Ingresso já confirmado"
+                    : "Comprar Ingresso"}
               </Button>
+              {hasPaidForEvent && (
+                <p className="text-sm text-muted-foreground text-center sm:text-right w-full sm:w-auto">
+                  Você já possui inscrição confirmada para este evento.
+                </p>
+              )}
             </div>
           </div>
         </CardContent>
