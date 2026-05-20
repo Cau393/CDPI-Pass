@@ -220,13 +220,23 @@ export default function CertificateTemplateAdminPage({
 
           <div className="space-y-2">
             <Label htmlFor="docx-file">Arquivo .docx</Label>
-            <input
-              id="docx-file"
-              type="file"
-              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              className="block w-full text-sm text-muted-foreground file:mr-4 file:rounded-md file:border file:bg-background file:px-3 file:py-2"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                id="docx-file"
+                type="file"
+                accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                className="sr-only"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              />
+              <Button type="button" variant="outline" asChild>
+                <label htmlFor="docx-file" className="cursor-pointer">
+                  Escolher arquivo
+                </label>
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                {file ? file.name : "Nenhum arquivo selecionado"}
+              </span>
+            </div>
           </div>
 
           <Button
