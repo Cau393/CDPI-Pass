@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { MockInstance } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -84,7 +85,10 @@ const MOCK_REDEMPTIONS = {
   total: 1,
 };
 
-let fetchSpy: ReturnType<typeof vi.spyOn>;
+// Typed against globalThis.fetch so the mock keeps fetch's real signature.
+// `ReturnType<typeof vi.spyOn>` erases it to (...args: unknown[]) => unknown,
+// which no longer accepts a (input: RequestInfo | URL) implementation.
+let fetchSpy: MockInstance<typeof globalThis.fetch>;
 
 function createQueryClient() {
   return new QueryClient({
@@ -211,7 +215,7 @@ describe("CourtesyMassSendingPage (T-06+)", () => {
     await user.click(screen.getByRole("button", { name: /enviar e-mails/i }));
 
     await waitFor(() => {
-      const massSendCalls = fetchSpy.mock.calls.filter(([req]: [RequestInfo | URL, unknown]) => {
+      const massSendCalls = fetchSpy.mock.calls.filter(([req]) => {
         const url = typeof req === "string" ? req : req.toString();
         return url.includes("/api/admin/courtesy/mass-send");
       });

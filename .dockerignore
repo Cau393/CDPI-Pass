@@ -1,0 +1,40 @@
+# Docker build context is the REPO ROOT (see frontend/Dockerfile), so this file
+# must live here. A .dockerignore inside frontend/ is NOT read for a root-context
+# build, which previously let host node_modules leak into the image and broke
+# `pnpm install` with ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY.
+
+# Never ship host-built dependency trees. pnpm's node_modules is full of
+# absolute symlinks into the host store and is invalid inside the image.
+**/node_modules
+
+# Build outputs are regenerated inside the image.
+**/dist
+frontend/dist
+
+# Secrets must never enter the build context or an image layer.
+**/.env
+**/.env.*
+*.pem
+
+# VCS, editor and OS noise.
+.git
+.gitignore
+**/.DS_Store
+.vscode
+.cursor
+.claude
+**/CLAUDE.md
+**/CLAUDE.local.md
+
+# Docs and local-only material, irrelevant to the runtime image.
+Documentation
+CDPI-Pass-Vault
+**/*.md
+!frontend/package.json
+
+# Test/tooling caches
+**/coverage
+**/.rtk
+**/npm-debug.log
+**/pnpm-debug.log
+backend/**/__pycache__

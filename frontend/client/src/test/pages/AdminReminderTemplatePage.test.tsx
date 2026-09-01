@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { MockInstance } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -62,7 +63,10 @@ const MOCK_EVENTS = [
   },
 ];
 
-let fetchSpy: ReturnType<typeof vi.spyOn>;
+// Typed against globalThis.fetch so the mock keeps fetch's real signature.
+// `ReturnType<typeof vi.spyOn>` erases it to (...args: unknown[]) => unknown,
+// which no longer accepts a (input: RequestInfo | URL) implementation.
+let fetchSpy: MockInstance<typeof globalThis.fetch>;
 
 function createQueryClient() {
   return new QueryClient({

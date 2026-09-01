@@ -1,0 +1,31 @@
+# pnpm workspace configuration.
+#
+# `allowBuilds` is the supply-chain control that makes pnpm safer than npm here.
+# pnpm refuses to run install-time lifecycle scripts (preinstall/install/
+# postinstall) unless the package is explicitly approved below. Under npm every
+# transitive package can execute arbitrary code during `npm install`, which is
+# the standard vector for compromised-package attacks.
+#
+# Only approve a package if it genuinely needs to compile or download a native
+# binary. Each `true` grants that package's maintainers arbitrary code execution
+# on developer machines and in CI.
+#
+#   bcrypt      - compiles a native node-gyp addon (password hashing)
+#   bufferutil  - optional native WebSocket speedup (ws)
+#   esbuild     - downloads/links the platform build binary; vite/tsup need it
+#   sharp       - native libvips image processing binary
+#   es5-ext     - denied: only prints a postinstall banner, needs no build
+#
+# Regenerate/modify with `pnpm approve-builds`, then review the diff.
+allowBuilds:
+  bcrypt: true
+  bufferutil: true
+  es5-ext: false
+  esbuild: true
+  sharp: true
+
+# `pnpm import` inherited this from the npm lockfile. Left on, pnpm silently
+# invents peer dependencies instead of surfacing genuine version conflicts,
+# which is how the vite/vitest mismatch stayed hidden under npm. Keep it off so
+# incompatible peers fail loudly at install time.
+autoInstallPeers: false
