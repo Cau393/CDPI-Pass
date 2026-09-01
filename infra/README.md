@@ -63,6 +63,25 @@ The app is reachable only through nginx on localhost. Do not reopen it.
 Requests arriving by raw IP or an unknown `Host` header get `444` (connection
 closed) from the default server block.
 
+**SSH is pinned to a single IP that is now stale.** As of 2026-09-01 the rule
+allows `177.126.10.130/32`, but the office/home address has since changed, so
+nobody can currently SSH in. Update it to the current address before any work
+that needs the box (checking the live `.env`, the PM2 build, or auditing the
+production database):
+
+```bash
+MY_IP=$(curl -s https://checkip.amazonaws.com)
+aws ec2 authorize-security-group-ingress --region sa-east-1 \
+  --group-id sg-07b4756896d70ac93 --protocol tcp --port 22 --cidr "${MY_IP}/32"
+# then revoke the stale entry
+aws ec2 revoke-security-group-ingress --region sa-east-1 \
+  --group-id sg-07b4756896d70ac93 --protocol tcp --port 22 --cidr 177.126.10.130/32
+```
+
+SSM Session Manager would remove this whole class of problem (no open port 22,
+no IP pinning, and access logged to CloudTrail). It needs an instance profile,
+which is also a prerequisite for dropping the static AWS keys from the box.
+
 ## Capacity
 
 `t2.micro`: 1 vCPU, 954 MB RAM, 14 GB disk (69% used). CPU credit balance sits
@@ -75,6 +94,66 @@ previously had no swap and only ~250 MB available.
 
 The idle Docker container still holds ~183 MB (19% of RAM) while serving no
 traffic. Removing it, or cutting over to it properly, would reclaim that.
+
+## Audit, threat detection and backups
+
+Added 2026-09-01. Before this, the account had no audit trail, no threat
+detection, and the production volume had never been backed up.
+
+### CloudTrail
+
+Trail `cdpi-pass-audit` (sa-east-1, multi-region, log file validation on),
+delivering to `s3://cdpi-pass-cloudtrail-866605741038`. That bucket blocks all
+public access, has AES256 default encryption, versioning (so log files cannot
+be silently overwritten), and a policy that denies non-TLS access and scopes
+`cloudtrail.amazonaws.com` writes to this trail's ARN only.
+
+```bash
+aws cloudtrail get-trail-status --region sa-east-1 --name cdpi-pass-audit
+aws cloudtrail lookup-events --region sa-east-1 --max-results 10
+```
+
+`lookup-events` is near-real-time and works even before S3 delivery, which
+lags ~5-15 minutes.
+
+### GuardDuty
+
+Detector enabled in sa-east-1, findings published every 6 hours. Analyses
+CloudTrail management events, VPC flow logs, DNS logs and S3 data events.
+
+```bash
+D=$(aws guardduty list-detectors --region sa-east-1 --query 'DetectorIds[0]' --output text)
+aws guardduty get-findings --region sa-east-1 --detector-id "$D" \
+  --finding-ids $(aws guardduty list-findings --region sa-east-1 --detector-id "$D" --query 'FindingIds[]' --output text)
+```
+
+Findings currently go nowhere. Wiring them to email/Slack via EventBridge +
+SNS is still open.
+
+### EBS backups
+
+`vol-0d0e72222efe1c22b` (15 GB, root, **unencrypted**) previously had zero
+snapshots: no backup, no DR, on a single t2.micro.
+
+- First manual snapshot: `snap-0ecd745712a74fc67`.
+- DLM policy `policy-0492d5200b1e4df67`: daily at 07:00 UTC (04:00 local,
+  off-peak), 7 snapshots retained.
+- The policy targets the tag `Backup=daily`, which is now on the volume. If
+  the volume is ever replaced, **re-apply that tag or backups silently stop.**
+
+```bash
+aws ec2 describe-snapshots --owner-ids self --region sa-east-1 \
+  --query 'sort_by(Snapshots,&StartTime)[-5:].{Id:SnapshotId,Time:StartTime,State:State}' --output table
+```
+
+Still open: the volume itself is unencrypted. Encrypting requires a
+snapshot -> encrypted copy -> new volume swap, which means downtime, so it is
+deliberately not done yet. Neon PITR status is also unconfirmed.
+
+### Cost
+
+GuardDuty ~USD 3-10/mo after the 30-day trial, snapshots ~USD 0.50-1/mo,
+CloudTrail first trail free (S3 storage is cents). Nothing else added cost.
 
 ## Known drift (not yet resolved)
 
