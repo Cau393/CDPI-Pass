@@ -49,6 +49,10 @@ import {
   mapRedemptionRowFromOrder,
 } from "./utils/massSendCourtesyQueries";
 import { executeOrderCancel } from "./utils/executeOrderCancel";
+import {
+  profileUpdateSchema,
+  PROFILE_SENSITIVE_FIELDS,
+} from "./utils/profileUpdateSchema";
 import { finalizeOrderPaidLikeWebhook } from "./utils/finalizeOrderPaidLikeWebhook";
 import { enqueueEventPrintIfEnabled } from "./utils/enqueueEventPrintIfEnabled";
 import { emailService } from "./services/emailService";
@@ -2589,10 +2593,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/profile", authenticateToken, async (req: any, res) => {
     try {
       const userId = req.user.id;
-      const { currentPassword, ...updates } = req.body;
-      
+      const { currentPassword } = req.body ?? {};
+
+      // SECURITY: allowlist, never a blacklist. See profileUpdateSchema for
+      // the full rationale (this endpoint previously allowed any user to set
+      // isAdmin=true and take over the admin surface).
+      const parsedUpdates = profileUpdateSchema.safeParse(req.body ?? {});
+      if (!parsedUpdates.success) {
+        return res.status(400).json({
+          message: parsedUpdates.error.errors[0]?.message ?? "Dados inválidos",
+        });
+      }
+
+      const updates: Record<string, unknown> = { ...parsedUpdates.data };
+
       // Define sensitive fields that require password verification
-      const sensitiveFields = ['name', 'email', 'phone'];
+      const sensitiveFields = PROFILE_SENSITIVE_FIELDS;
       const hasChangedSensitiveField = sensitiveFields.some(field => 
         updates[field] !== undefined && updates[field] !== req.user[field]
       );
@@ -2611,14 +2627,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(401).json({ message: "Senha incorreta" });
         }
       }
-      
-      // Remove fields that shouldn't be updated via this endpoint
-      delete updates.password;
-      delete updates.cpf;
-      delete updates.emailVerified;
-      delete updates.id;
-      delete updates.createdAt;
-      delete updates.updatedAt;
 
       // Convert birthDate string to Date object if present
       if (updates.birthDate && typeof updates.birthDate === 'string') {
