@@ -63,6 +63,19 @@ The app is reachable only through nginx on localhost. Do not reopen it.
 Requests arriving by raw IP or an unknown `Host` header get `444` (connection
 closed) from the default server block.
 
+## Capacity
+
+`t2.micro`: 1 vCPU, 954 MB RAM, 14 GB disk (69% used). CPU credit balance sits
+around 30-58, so the instance is not CPU starved at current traffic
+(~1.5k requests/day, ~112 unique IPs/day).
+
+Memory is the tight resource. A 2 GB swapfile (`/swapfile`, `vm.swappiness=10`,
+persisted in `/etc/fstab`) was added as an OOM safety net, since the box
+previously had no swap and only ~250 MB available.
+
+The idle Docker container still holds ~183 MB (19% of RAM) while serving no
+traffic. Removing it, or cutting over to it properly, would reclaim that.
+
 ## Known drift (not yet resolved)
 
 Production is served by the **PM2 process**, not the Docker container.
