@@ -5,7 +5,26 @@ import { log } from "./vite";
 
 const app = express();
 
-app.set('trust proxy', true);
+// Trust exactly one proxy hop (nginx on localhost). Using `true` trusts any
+// X-Forwarded-For value the client sends, which lets an attacker rotate the
+// header to bypass IP-based rate limiting.
+app.set('trust proxy', 1);
+
+// Do not advertise the framework.
+app.disable('x-powered-by');
+
+// Defense-in-depth security headers. nginx sets these too, but this keeps the
+// app safe if it is ever exposed without the proxy in front of it.
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader(
+    'Permissions-Policy',
+    'geolocation=(), microphone=(), camera=(), payment=(), usb=(self)',
+  );
+  next();
+});
 
 // Increase upload size limits BEFORE other middleware
 app.use(express.json({ limit: '50mb' }));
