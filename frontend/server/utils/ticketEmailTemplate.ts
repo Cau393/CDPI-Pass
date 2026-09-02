@@ -1,3 +1,5 @@
+import { CONTACT_EMAIL, CONTACT_PHONE_DISPLAY } from "@shared/contact";
+
 /** Match EventDetailsPage / Brazil wall-clock display regardless of server TZ. */
 const EVENT_TZ = "America/Sao_Paulo";
 
@@ -28,7 +30,7 @@ export const TICKET_INSTRUCTIONS = [
   "Em caso de dúvidas, entre em contato conosco.",
 ] as const;
 
-const SUPPORT_LINE = "relacionamento.mkt@cdpipharma.com.br | +55 (62) 3636-9909 / (62) 99610-1694";
+const SUPPORT_LINE = `${CONTACT_EMAIL} | ${CONTACT_PHONE_DISPLAY}`;
 
 export function confirmationKindForPaymentMethod(
   paymentMethod: string | null | undefined,

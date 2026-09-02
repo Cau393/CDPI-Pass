@@ -1,6 +1,7 @@
 import { MailService } from '@sendgrid/mail';
 import jwt from 'jsonwebtoken';
 import { storage } from '../storage';
+import { CONTACT_EMAIL, CONTACT_PHONE_DISPLAY } from '@shared/contact';
 import { buildTicketQrAttachment } from '../utils/ticketQrAttachment';
 import {
   buildTicketEmailHtml,
@@ -322,7 +323,7 @@ class EmailService {
           </div>
           <div class="footer">
             <p>Atenciosamente,<br>Equipe CDPI Pass</p>
-            <p>relacionamento.mkt@cdpipharma.com.br | +55 (62) 3636-9909 / (62) 99610-1694</p>
+            <p>${CONTACT_EMAIL} | ${CONTACT_PHONE_DISPLAY}</p>
           </div>
         </div>
       </body>
@@ -402,7 +403,7 @@ Equipe CDPI Pass
           </div>
           <div class="footer">
             <p>Atenciosamente,<br>Equipe CDPI Pass</p>
-            <p>relacionamento.mkt@cdpipharma.com.br | +55 (62) 3636-9909 / (62) 99610-1694</p>
+            <p>${CONTACT_EMAIL} | ${CONTACT_PHONE_DISPLAY}</p>
           </div>
         </div>
       </body>

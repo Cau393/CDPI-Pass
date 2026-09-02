@@ -63,6 +63,14 @@ describe("buildTicketEmailHtml", () => {
   it("shows the event title", () => {
     expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).toContain("Workshop Peptídeos");
   });
+
+  it("shows the current support phone in the footer", () => {
+    expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).toContain("+55 (62) 99865-5500");
+  });
+
+  it("no longer shows the old landline", () => {
+    expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).not.toContain("3636-9909");
+  });
 });
 
 describe("buildTicketEmailText", () => {
