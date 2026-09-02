@@ -222,3 +222,43 @@ describe("EventDetailsPage — 'Encerrar Vendas'", () => {
     expect(screen.getByText("São Paulo")).toBeInTheDocument();
   });
 });
+
+describe("EventDetailsPage — cover image", () => {
+  const COVER_URL = "https://cdn.example.com/covers/poster-1408x768.jpeg";
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", mockApi({ ...baseEvent, imageUrl: COVER_URL }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the whole poster with object-contain instead of cropping it", async () => {
+    renderPage();
+
+    const cover = await screen.findByRole("img", { name: baseEvent.title });
+    expect(cover).toHaveClass("object-contain");
+  });
+
+  it("never uses object-cover on the poster", async () => {
+    renderPage();
+
+    const cover = await screen.findByRole("img", { name: baseEvent.title });
+    expect(cover).not.toHaveClass("object-cover");
+  });
+
+  it("keeps the poster in a 16:9 frame like the home card", async () => {
+    renderPage();
+
+    const cover = await screen.findByRole("img", { name: baseEvent.title });
+    expect(cover.parentElement).toHaveClass("aspect-video");
+  });
+
+  it("loads the poster eagerly because it is the page's largest element", async () => {
+    renderPage();
+
+    const cover = await screen.findByRole("img", { name: baseEvent.title });
+    expect(cover).toHaveAttribute("loading", "eager");
+  });
+});

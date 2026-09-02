@@ -1,6 +1,7 @@
 import { useParams, useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
+import EventCoverImage from "@/components/EventCoverImage";
 import { Button } from "@/components/ui/button";
 import { Calendar, MapPin, Users, Clock, ArrowLeft, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
@@ -228,13 +229,13 @@ export default function EventDetailsPage() {
       <Card className="overflow-hidden">
         {/* Event Image */}
         {event.imageUrl && (
-          <div className="h-64 md:h-96 overflow-hidden">
-            <img
-              src={event.imageUrl}
-              alt={event.title}
-              className="w-full h-full object-cover"
-            />
-          </div>
+          <EventCoverImage
+            src={event.imageUrl}
+            alt={event.title}
+            priority
+            className="aspect-video w-full"
+            data-testid="img-event-cover"
+          />
         )}
 
         <CardContent className="p-8">
