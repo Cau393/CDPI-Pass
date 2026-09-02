@@ -77,6 +77,7 @@ import csv from 'csv-parser';
 import { parse } from 'csv-parse/sync';
 import { Readable } from 'stream';
 import { toTitleCaseName } from "./utils/toTitleCaseName";
+import { decodeCsvBuffer } from "./utils/decodeCsvBuffer";
 import { normalizePhoneE164 } from "./utils/normalizePhoneE164";
 import {
   cdpiApoiandoNpsAnswersSchema,
@@ -3186,7 +3187,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   function detectDelimiter(csvBuffer: Buffer): string {
-  const sample = csvBuffer.toString('utf-8').split('\n')[0]; // Get first line
+  const sample = decodeCsvBuffer(csvBuffer).split('\n')[0]; // Get first line
   
   const commaCount = (sample.match(/,/g) || []).length;
   const semicolonCount = (sample.match(/;/g) || []).length;
@@ -3241,7 +3242,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // 2. Add the job to the database queue
         await storage.addMassSendJobToQueue({
-          csvData: csvBuffer.toString("utf-8"),
+          csvData: decodeCsvBuffer(csvBuffer),
           attachmentData: attachmentData ? JSON.stringify(attachmentData) : null,
           createdBy: req.user.id,
         });
@@ -3288,7 +3289,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           : null;
 
         await storage.addMassSendJobToQueue({
-          csvData: csvBuffer.toString("utf-8"),
+          csvData: decodeCsvBuffer(csvBuffer),
           attachmentData: attachmentData ? JSON.stringify(attachmentData) : null,
           createdBy: req.user.id,
         });
