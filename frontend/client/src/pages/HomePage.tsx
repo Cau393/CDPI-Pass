@@ -115,13 +115,16 @@ export default function HomePage() {
                   data-testid={`card-main-event-${mainEvent.id}`}
                 >
 
-                  <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,52%)_minmax(0,48%)] lg:items-stretch min-h-0">
+                  <div
+                    className="grid grid-cols-1 md:grid-cols-[minmax(0,55%)_minmax(0,45%)] md:items-start"
+                    data-testid="main-event-layout"
+                  >
                     <EventCoverImage
                       src={mainEvent.imageUrl}
                       alt={mainEvent.title}
                       priority
                       data-testid="img-main-event"
-                      className="w-full aspect-[4/3] sm:aspect-video lg:aspect-auto lg:h-full lg:min-h-[420px]"
+                      className="aspect-video w-full md:self-start"
                       fallback={
                         <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-primary to-secondary p-8">
                           <div className="text-center text-white">
@@ -136,32 +139,35 @@ export default function HomePage() {
                     />
 
                     {/* Event Details */}
-                    <div className="min-w-0 p-8">
-                      <h2 className="text-3xl font-bold text-gray-900 mb-2">
+                    <div className="min-w-0 p-5 sm:p-6 md:p-4 xl:p-6">
+                      <h2 className="mb-2 line-clamp-3 text-2xl font-bold leading-tight text-gray-900 md:text-xl xl:text-2xl">
                         {mainEvent.title}
                       </h2>
-                      <div className="mb-6 line-clamp-[10] overflow-hidden text-gray-600">
+                      <div
+                        className="mb-4 line-clamp-2 overflow-hidden text-sm text-gray-600 md:hidden xl:block"
+                        data-testid="main-event-description"
+                      >
                         <EventDescriptionDisplay html={mainEvent.description} />
                       </div>
                       
-                      <div className="space-y-3 mb-6">
+                      <div className="mb-5 space-y-2 text-sm">
                         <div className="flex items-center text-gray-600">
-                          <Calendar className="h-5 w-5 mr-3 text-primary" />
-                          <span>{new Date(mainEvent.date).toLocaleDateString('pt-BR', {
+                          <Calendar className="mr-2 h-4 w-4 shrink-0 text-primary" />
+                          <span className="truncate">{new Date(mainEvent.date).toLocaleDateString('pt-BR', {
                             day: 'numeric',
                             month: 'long',
                             year: 'numeric'
                           })}</span>
                         </div>
-                        <div className="flex items-center text-gray-600">
-                          <MapPin className="h-5 w-5 mr-3 text-primary" />
-                          <span>{mainEvent.location}</span>
+                        <div className="flex min-w-0 items-center text-gray-600">
+                          <MapPin className="mr-2 h-4 w-4 shrink-0 text-primary" />
+                          <span className="truncate">{mainEvent.location}</span>
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between gap-6">
+                      <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0 shrink">
-                          <p className="text-2xl font-bold text-primary tabular-nums">
+                          <p className="text-xl font-bold text-primary tabular-nums xl:text-2xl">
                             R$ {displayPriceForEvent(mainEvent).toFixed(2)}
                           </p>
                           <p className="text-xs text-gray-500">+ taxa de conveniência</p>
@@ -171,7 +177,7 @@ export default function HomePage() {
                             e.stopPropagation();
                             handleBuyTicket(mainEvent);
                           }}
-                          className="shrink-0 bg-green-500 hover:bg-green-600 text-white px-6 py-3"
+                          className="h-10 shrink-0 bg-green-500 px-4 text-sm text-white hover:bg-green-600"
                           data-testid="button-buy-main"
                           disabled={paidEventIds.has(mainEvent.id)}
                         >

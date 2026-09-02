@@ -13,8 +13,7 @@ interface EventCoverImageProps {
 
 /**
  * Event poster that keeps the source aspect ratio (`object-contain`).
- * Letterbox gaps are filled with a blurred, darkened copy of the same image
- * so the card never shows empty bars or stretched artwork.
+ * The wrapper controls the display ratio; no duplicate or blur is rendered.
  */
 export default function EventCoverImage({
   src,
@@ -41,16 +40,9 @@ export default function EventCoverImage({
       data-testid={testId}
     >
       <img
-        aria-hidden="true"
-        alt=""
-        src={src}
-        className="absolute inset-0 h-full w-full scale-110 object-cover opacity-60 blur-xl"
-      />
-      <div className="absolute inset-0 bg-black/30" />
-      <img
         src={src}
         alt={alt}
-        className="relative z-10 h-full w-full object-contain"
+        className="h-full w-full object-contain"
         decoding="async"
         loading={priority ? "eager" : "lazy"}
         {...(priority ? ({ fetchpriority: "high" } as { fetchpriority: "high" }) : {})}

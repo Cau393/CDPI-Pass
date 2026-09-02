@@ -26,19 +26,10 @@ describe("EventCoverImage", () => {
     expect(screen.getByRole("img", { name: ALT })).not.toHaveClass("object-fill");
   });
 
-  it("renders an aria-hidden backdrop image with the same src", () => {
+  it("renders only the clean cover without a blurred duplicate", () => {
     const { container } = render(<EventCoverImage src={SRC} alt={ALT} />);
 
-    const backdrop = container.querySelector('img[aria-hidden="true"]');
-    expect(backdrop).toHaveAttribute("src", SRC);
-  });
-
-  it("fills the backdrop with a blurred object-cover copy", () => {
-    const { container } = render(<EventCoverImage src={SRC} alt={ALT} />);
-
-    const backdrop = container.querySelector('img[aria-hidden="true"]');
-    expect(backdrop).toHaveClass("object-cover");
-    expect(backdrop?.className).toMatch(/blur/);
+    expect(container.querySelectorAll("img")).toHaveLength(1);
   });
 
   it("loads the hero eagerly with high fetch priority when priority is set", () => {

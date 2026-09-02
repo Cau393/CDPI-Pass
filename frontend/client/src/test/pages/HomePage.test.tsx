@@ -95,20 +95,28 @@ describe("HomePage — main event cover image", () => {
     expect(foreground).not.toHaveClass("object-fill");
   });
 
-  it("gives the cover a mobile aspect-ratio box", async () => {
+  it("gives the cover a full-width 16:9 frame", async () => {
     vi.stubGlobal("fetch", mockApi(baseEvent));
     renderPage();
 
     const wrapper = await screen.findByTestId("img-main-event");
-    expect(wrapper.className).toMatch(/aspect-/);
+    expect(wrapper).toHaveClass("w-full", "aspect-video");
   });
 
-  it("keeps a desktop min-height so a short description does not squash the poster", async () => {
+  it("uses a compact side-by-side layout from tablet widths", async () => {
     vi.stubGlobal("fetch", mockApi(baseEvent));
     renderPage();
 
-    const wrapper = await screen.findByTestId("img-main-event");
-    expect(wrapper.className).toMatch(/lg:min-h-/);
+    const layout = await screen.findByTestId("main-event-layout");
+    expect(layout.className).toMatch(/md:grid-cols/);
+  });
+
+  it("limits the homepage description to a short teaser", async () => {
+    vi.stubGlobal("fetch", mockApi(baseEvent));
+    renderPage();
+
+    const description = await screen.findByTestId("main-event-description");
+    expect(description).toHaveClass("line-clamp-2");
   });
 
   it("shows the gradient placeholder when the event has no cover", async () => {
