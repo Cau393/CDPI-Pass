@@ -53,6 +53,7 @@ import {
   profileUpdateSchema,
   PROFILE_SENSITIVE_FIELDS,
 } from "./utils/profileUpdateSchema";
+import { toPresignedUrl } from "./utils/presignedUrl";
 import { finalizeOrderPaidLikeWebhook } from "./utils/finalizeOrderPaidLikeWebhook";
 import { enqueueEventPrintIfEnabled } from "./utils/enqueueEventPrintIfEnabled";
 import { emailService } from "./services/emailService";
@@ -3213,8 +3214,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const totalPages = total > 0 ? Math.ceil(total / pageSize) : 0;
 
-      res.json({
-        data: rows.map((row) => ({
+      // Certificate PDFs contain the attendee's name and live in a bucket that
+      // is no longer world-readable. Sign each URL for this response; the
+      // client always refetches from this endpoint, so a short TTL is fine.
+      const data = await Promise.all(
+        rows.map(async (row) => ({
           eventId: row.eventId,
           eventName: row.eventName,
           eventDate:
@@ -3222,8 +3226,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               ? row.eventDate.toISOString()
               : new Date(row.eventDate as string).toISOString(),
           npsType: row.npsType ?? "cdpi_event",
-          certificateUrl: row.certificateUrl,
+          certificateUrl: await toPresignedUrl(row.certificateUrl),
         })),
+      );
+
+      res.json({
+        data,
         pagination: {
           page,
           pageSize,
@@ -3400,7 +3408,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      return res.status(201).json({ certificateUrl });
+      // Sign before returning: the raw S3 URL is not publicly readable.
+      return res.status(201).json({
+        certificateUrl: (await toPresignedUrl(certificateUrl)) ?? certificateUrl,
+      });
     } catch (error: any) {
       const code = error?.code ?? error?.cause?.code;
       if (code === "23505") {
