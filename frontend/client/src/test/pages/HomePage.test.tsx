@@ -112,11 +112,53 @@ describe("HomePage — main event cover image", () => {
   });
 
   it("limits the homepage description to a short teaser", async () => {
+    const longDescription = `<p>${"Descrição longa para o evento e seus participantes. ".repeat(10)}</p>`;
+    vi.stubGlobal(
+      "fetch",
+      mockApi({ ...baseEvent, description: longDescription }),
+    );
+    renderPage();
+
+    const description = await screen.findByTestId("main-event-description");
+    expect(description.textContent?.length).toBeLessThanOrEqual(90);
+    expect(description).toHaveTextContent(/…$/);
+  });
+
+  it("keeps a short homepage description unchanged", async () => {
     vi.stubGlobal("fetch", mockApi(baseEvent));
     renderPage();
 
     const description = await screen.findByTestId("main-event-description");
-    expect(description).toHaveClass("line-clamp-2");
+    expect(description).toHaveTextContent(
+      "O maior evento de peptídeos da América Latina.",
+    );
+  });
+
+  it("shows Grátis without a convenience-fee label for a free event", async () => {
+    vi.stubGlobal("fetch", mockApi(baseEvent));
+    renderPage();
+
+    expect(await screen.findByText("Grátis")).toBeInTheDocument();
+    expect(screen.getByTestId("button-buy-main")).toHaveTextContent(
+      "Se Inscrever",
+    );
+    expect(
+      screen.queryByText("+ taxa de conveniência"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the price and convenience-fee label for a paid event", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockApi({ ...baseEvent, isFree: false, price: "100.00" }),
+    );
+    renderPage();
+
+    expect(await screen.findByText("R$ 100.00")).toBeInTheDocument();
+    expect(screen.getByTestId("button-buy-main")).toHaveTextContent(
+      "Comprar Ingresso",
+    );
+    expect(screen.getByText("+ taxa de conveniência")).toBeInTheDocument();
   });
 
   it("shows the gradient placeholder when the event has no cover", async () => {

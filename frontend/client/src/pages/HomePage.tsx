@@ -8,8 +8,32 @@ import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
 import type { Event, Order } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
-import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
 import EventCoverImage from "@/components/EventCoverImage";
+import { eventDescriptionPlainText } from "@/lib/eventDescriptionHtml";
+
+const MAIN_EVENT_DESCRIPTION_MAX_LENGTH = 90;
+
+function getMainEventDescriptionTeaser(html: string): string {
+  const text = eventDescriptionPlainText(html);
+  if (text.length <= MAIN_EVENT_DESCRIPTION_MAX_LENGTH) return text;
+
+  let clipped = text
+    .slice(0, MAIN_EVENT_DESCRIPTION_MAX_LENGTH - 1)
+    .trimEnd();
+
+  // Avoid cutting a UTF-16 surrogate pair (for example, an emoji).
+  const lastCodeUnit = clipped.charCodeAt(clipped.length - 1);
+  if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) {
+    clipped = clipped.slice(0, -1);
+  }
+
+  const wordBoundary = clipped.lastIndexOf(" ");
+  if (wordBoundary >= Math.floor(MAIN_EVENT_DESCRIPTION_MAX_LENGTH * 0.65)) {
+    clipped = clipped.slice(0, wordBoundary);
+  }
+
+  return `${clipped.trimEnd()}…`;
+}
 
 export default function HomePage() {
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
@@ -143,12 +167,12 @@ export default function HomePage() {
                       <h2 className="mb-2 line-clamp-3 text-2xl font-bold leading-tight text-gray-900 md:text-xl xl:text-2xl">
                         {mainEvent.title}
                       </h2>
-                      <div
+                      <p
                         className="mb-4 line-clamp-2 overflow-hidden text-sm text-gray-600 md:hidden xl:block"
                         data-testid="main-event-description"
                       >
-                        <EventDescriptionDisplay html={mainEvent.description} />
-                      </div>
+                        {getMainEventDescriptionTeaser(mainEvent.description)}
+                      </p>
                       
                       <div className="mb-5 space-y-2 text-sm">
                         <div className="flex items-center text-gray-600">
@@ -168,9 +192,15 @@ export default function HomePage() {
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0 shrink">
                           <p className="text-xl font-bold text-primary tabular-nums xl:text-2xl">
-                            R$ {displayPriceForEvent(mainEvent).toFixed(2)}
+                            {mainEvent.isFree
+                              ? "Grátis"
+                              : `R$ ${displayPriceForEvent(mainEvent).toFixed(2)}`}
                           </p>
-                          <p className="text-xs text-gray-500">+ taxa de conveniência</p>
+                          {!mainEvent.isFree && (
+                            <p className="text-xs text-gray-500">
+                              + taxa de conveniência
+                            </p>
+                          )}
                         </div>
                         <Button
                           onClick={(e) => {
@@ -183,7 +213,9 @@ export default function HomePage() {
                         >
                           {paidEventIds.has(mainEvent.id)
                             ? "Ingresso confirmado"
-                            : "Comprar Ingresso"}
+                            : mainEvent.isFree
+                              ? "Se Inscrever"
+                              : "Comprar Ingresso"}
                         </Button>
                       </div>
                     </div>
