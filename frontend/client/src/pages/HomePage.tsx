@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
 import type { Event, Order } from "@shared/schema";
+import { CONTACT_PHONE_DISPLAY } from "@shared/contact";
 import { apiRequest } from "@/lib/queryClient";
 import EventCoverImage from "@/components/EventCoverImage";
 import { eventDescriptionPlainText } from "@/lib/eventDescriptionHtml";
@@ -450,7 +451,7 @@ export default function HomePage() {
             {/* Contact */}
             <div className="text-center">
               <h3 className="font-bold mb-4">Telefone</h3>
-              <p className="text-2xl font-bold mb-2">+55 (62) 99860-6833</p>
+              <p className="text-2xl font-bold mb-2">{CONTACT_PHONE_DISPLAY}</p>
               <p className="text-sm text-white/80">
                 Entre em contato conosco<br/>
                 e tire suas dúvidas

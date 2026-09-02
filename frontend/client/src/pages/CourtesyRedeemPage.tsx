@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { z } from "zod";
 import { courtesyRedemptionSchema } from "@shared/schema";
+import { CONTACT_PHONE_DISPLAY } from "@shared/contact";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -472,7 +473,7 @@ export default function CourtesyRedeemPage() {
         </Card>
 
         <div className="mt-6 text-center text-sm text-gray-600">
-          <p>Dúvidas? Entre em contato pelo telefone: <strong>+55 (62) 99860-6833</strong></p>
+          <p>Dúvidas? Entre em contato pelo telefone: <strong>{CONTACT_PHONE_DISPLAY}</strong></p>
         </div>
       </div>
     </div>
