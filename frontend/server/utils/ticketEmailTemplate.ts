@@ -1,4 +1,4 @@
-import { CONTACT_EMAIL, CONTACT_PHONE_DISPLAY } from "@shared/contact";
+import { EMAIL_CONTACT_LINE } from "@shared/contact";
 
 /** Match EventDetailsPage / Brazil wall-clock display regardless of server TZ. */
 const EVENT_TZ = "America/Sao_Paulo";
@@ -30,7 +30,7 @@ export const TICKET_INSTRUCTIONS = [
   "Em caso de dúvidas, entre em contato conosco.",
 ] as const;
 
-const SUPPORT_LINE = `${CONTACT_EMAIL} | ${CONTACT_PHONE_DISPLAY}`;
+const SUPPORT_LINE = EMAIL_CONTACT_LINE;
 
 export function confirmationKindForPaymentMethod(
   paymentMethod: string | null | undefined,

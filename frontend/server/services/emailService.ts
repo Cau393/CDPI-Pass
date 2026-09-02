@@ -1,7 +1,7 @@
 import { MailService } from '@sendgrid/mail';
 import jwt from 'jsonwebtoken';
 import { storage } from '../storage';
-import { CONTACT_EMAIL, CONTACT_PHONE_DISPLAY } from '@shared/contact';
+import { EMAIL_CONTACT_LINE } from '@shared/contact';
 import { buildTicketQrAttachment } from '../utils/ticketQrAttachment';
 import {
   buildTicketEmailHtml,
@@ -323,7 +323,7 @@ class EmailService {
           </div>
           <div class="footer">
             <p>Atenciosamente,<br>Equipe CDPI Pass</p>
-            <p>${CONTACT_EMAIL} | ${CONTACT_PHONE_DISPLAY}</p>
+            <p>${EMAIL_CONTACT_LINE}</p>
           </div>
         </div>
       </body>
@@ -403,7 +403,7 @@ Equipe CDPI Pass
           </div>
           <div class="footer">
             <p>Atenciosamente,<br>Equipe CDPI Pass</p>
-            <p>${CONTACT_EMAIL} | ${CONTACT_PHONE_DISPLAY}</p>
+            <p>${EMAIL_CONTACT_LINE}</p>
           </div>
         </div>
       </body>

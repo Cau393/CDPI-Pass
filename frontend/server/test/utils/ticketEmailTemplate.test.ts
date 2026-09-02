@@ -68,8 +68,12 @@ describe("buildTicketEmailHtml", () => {
     expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).toContain("+55 (62) 99865-5500");
   });
 
-  it("no longer shows the old landline", () => {
-    expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).not.toContain("3636-9909");
+  it("keeps the existing landline alongside the new number", () => {
+    expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).toContain("3636-9909");
+  });
+
+  it("keeps the existing mobile alongside the new number", () => {
+    expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).toContain("99610-1694");
   });
 });
 

@@ -569,8 +569,10 @@ export function NpsCertificateModal({
             <p className="text-sm text-muted-foreground italic">
               Seu certificado está pronto para download.
             </p>
-            <Button type="button" onClick={() => window.open(certificateUrl, "_blank")}>
-              Baixar certificado
+            <Button asChild>
+              <a href={certificateUrl} target="_blank" rel="noopener noreferrer">
+                Baixar certificado
+              </a>
             </Button>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Fechar
