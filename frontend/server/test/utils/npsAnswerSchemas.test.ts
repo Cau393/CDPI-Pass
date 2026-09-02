@@ -8,17 +8,16 @@ const baseEvent = {
   name: "Maria Silva",
   email: "m@example.com",
   phone: "5511987654321",
-  overallRating: "Boa" as const,
-  themesRelevance: "Relevantes" as const,
-  speakersRating: "Boa" as const,
-  applicability: "Parcialmente aplicável" as const,
+  workshopFeeling: "Gostei bastante" as const,
+  themesRelevant: "Sim" as const,
+  instructorsDidactics: "Boa" as const,
   highlight: "ok",
-  organizationRating: "Boa" as const,
-  wouldAttendAgain: "Talvez, dependendo do tema" as const,
-  improvements: "nada",
-  interestInTopics: "Não" as const,
-  interestTopicText: "",
-  recommendationScore: 7,
+  careerValue: "Em partes" as const,
+  wouldAttendAgain: "Talvez, depende do tema" as const,
+  supportRating: "Bom, mas pode melhorar" as const,
+  supportOtherText: "",
+  messageToTeam: "",
+  privacyConsent: true as const,
 };
 
 const baseApoiando = {
@@ -26,71 +25,123 @@ const baseApoiando = {
   email: "m@example.com",
   phone: "5511987654321",
   overallScore: 8,
-  themesRelevance: "Relevantes" as const,
-  applicability: "Totalmente aplicável" as const,
   futureTopics: "mais",
-  organizationExperience: "Excelente" as const,
-  improvements: "ok",
-  wantsUpdates: "Sim" as const,
+  organizationExperience: "Excelente, sempre por perto" as const,
+  organizationOtherText: "",
+  feedback: "",
+  privacyConsent: true as const,
 };
 
 describe("cdpiEventNpsAnswersSchema", () => {
-  it("accepts valid payload with Sim + topic text", () => {
+  it("accepts a valid payload", () => {
+    const r = cdpiEventNpsAnswersSchema.safeParse(baseEvent);
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts Outro with follow-up text", () => {
     const r = cdpiEventNpsAnswersSchema.safeParse({
       ...baseEvent,
-      interestInTopics: "Sim",
-      interestTopicText: "Farmacovigilância",
+      supportRating: "Outro",
+      supportOtherText: "Fila no credenciamento",
     });
     expect(r.success).toBe(true);
   });
 
-  it("rejects Sim without topic text", () => {
+  it("rejects Outro without follow-up text", () => {
     const r = cdpiEventNpsAnswersSchema.safeParse({
       ...baseEvent,
-      interestInTopics: "Sim",
-      interestTopicText: "",
+      supportRating: "Outro",
+      supportOtherText: "",
     });
     expect(r.success).toBe(false);
   });
 
-  it("rejects Não with leftover topic text", () => {
+  it("rejects leftover follow-up text when not Outro", () => {
     const r = cdpiEventNpsAnswersSchema.safeParse({
       ...baseEvent,
-      interestInTopics: "Não",
-      interestTopicText: "oops",
+      supportRating: "Bom, mas pode melhorar",
+      supportOtherText: "oops",
     });
     expect(r.success).toBe(false);
   });
 
-  it("rejects invalid enum", () => {
+  it("rejects privacyConsent false", () => {
     const r = cdpiEventNpsAnswersSchema.safeParse({
       ...baseEvent,
-      overallRating: "Ótimo",
+      privacyConsent: false,
     });
     expect(r.success).toBe(false);
   });
 
-  it("rejects recommendation out of range", () => {
+  it("accepts optional recado omitted", () => {
+    const { messageToTeam: _ignored, ...rest } = baseEvent;
+    const r = cdpiEventNpsAnswersSchema.safeParse(rest);
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects invalid workshopFeeling enum", () => {
     const r = cdpiEventNpsAnswersSchema.safeParse({
       ...baseEvent,
-      recommendationScore: 11,
+      workshopFeeling: "Ótimo",
     });
     expect(r.success).toBe(false);
   });
 
-  it("rejects text over 2000 chars", () => {
+  it("rejects invalid themesRelevant", () => {
+    const r = cdpiEventNpsAnswersSchema.safeParse({
+      ...baseEvent,
+      themesRelevant: "Talvez",
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects highlight over 2000 chars", () => {
     const r = cdpiEventNpsAnswersSchema.safeParse({
       ...baseEvent,
       highlight: "x".repeat(2001),
     });
     expect(r.success).toBe(false);
   });
+
+  it("rejects empty name", () => {
+    const r = cdpiEventNpsAnswersSchema.safeParse({
+      ...baseEvent,
+      name: "",
+    });
+    expect(r.success).toBe(false);
+  });
 });
 
 describe("cdpiApoiandoNpsAnswersSchema", () => {
-  it("accepts valid payload", () => {
+  it("accepts a valid payload", () => {
     const r = cdpiApoiandoNpsAnswersSchema.safeParse(baseApoiando);
     expect(r.success).toBe(true);
+  });
+
+  it("accepts Outro with follow-up text", () => {
+    const r = cdpiApoiandoNpsAnswersSchema.safeParse({
+      ...baseApoiando,
+      organizationExperience: "Outro",
+      organizationOtherText: "Sinalização",
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects Outro without follow-up text", () => {
+    const r = cdpiApoiandoNpsAnswersSchema.safeParse({
+      ...baseApoiando,
+      organizationExperience: "Outro",
+      organizationOtherText: "",
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("rejects leftover follow-up text when not Outro", () => {
+    const r = cdpiApoiandoNpsAnswersSchema.safeParse({
+      ...baseApoiando,
+      organizationOtherText: "oops",
+    });
+    expect(r.success).toBe(false);
   });
 
   it("rejects overallScore out of range", () => {
@@ -99,5 +150,19 @@ describe("cdpiApoiandoNpsAnswersSchema", () => {
       overallScore: 11,
     });
     expect(r.success).toBe(false);
+  });
+
+  it("rejects privacyConsent false", () => {
+    const r = cdpiApoiandoNpsAnswersSchema.safeParse({
+      ...baseApoiando,
+      privacyConsent: false,
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("accepts optional feedback omitted", () => {
+    const { feedback: _ignored, ...rest } = baseApoiando;
+    const r = cdpiApoiandoNpsAnswersSchema.safeParse(rest);
+    expect(r.success).toBe(true);
   });
 });

@@ -71,7 +71,7 @@ export const events = pgTable("events", {
   salesClosed: boolean("sales_closed").notNull().default(false),
 });
 
-/** NPS responses for "Evento do CDPI" certificate flow. */
+/** NPS responses for "Evento CDPI" certificate flow. */
 export const npsCdpiEventResponses = pgTable(
   "nps_cdpi_event_responses",
   {
@@ -85,23 +85,22 @@ export const npsCdpiEventResponses = pgTable(
     name: varchar("name", { length: 255 }).notNull(),
     email: varchar("email", { length: 255 }).notNull(),
     phone: varchar("phone", { length: 20 }).notNull(),
-    overallRating: text("overall_rating").notNull(),
-    themesRelevance: text("themes_relevance").notNull(),
-    speakersRating: text("speakers_rating").notNull(),
-    applicability: text("applicability").notNull(),
+    workshopFeeling: text("workshop_feeling").notNull(),
+    themesRelevant: text("themes_relevant").notNull(),
+    instructorsDidactics: text("instructors_didactics").notNull(),
     highlight: text("highlight").notNull(),
-    organizationRating: text("organization_rating").notNull(),
+    careerValue: text("career_value").notNull(),
     wouldAttendAgain: text("would_attend_again").notNull(),
-    improvements: text("improvements").notNull(),
-    interestInTopics: text("interest_in_topics").notNull(),
-    interestTopicText: text("interest_topic_text"),
-    recommendationScore: integer("recommendation_score").notNull(),
+    supportRating: text("support_rating").notNull(),
+    supportOtherText: text("support_other_text"),
+    messageToTeam: text("message_to_team"),
+    privacyConsent: boolean("privacy_consent").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [unique("nps_cdpi_event_user_event_unique").on(t.userId, t.eventId)],
 );
 
-/** NPS responses for "CDPI Apoiando Evento" certificate flow. */
+/** NPS responses for "Evento de Terceiros" certificate flow. */
 export const npsCdpiApoiandoResponses = pgTable(
   "nps_cdpi_apoiando_responses",
   {
@@ -116,12 +115,11 @@ export const npsCdpiApoiandoResponses = pgTable(
     email: varchar("email", { length: 255 }).notNull(),
     phone: varchar("phone", { length: 20 }).notNull(),
     overallScore: integer("overall_score").notNull(),
-    themesRelevance: text("themes_relevance").notNull(),
-    applicability: text("applicability").notNull(),
     futureTopics: text("future_topics").notNull(),
     organizationExperience: text("organization_experience").notNull(),
-    improvements: text("improvements").notNull(),
-    wantsUpdates: text("wants_updates").notNull(),
+    organizationOtherText: text("organization_other_text"),
+    feedback: text("feedback"),
+    privacyConsent: boolean("privacy_consent").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [unique("nps_cdpi_apoiando_user_event_unique").on(t.userId, t.eventId)],

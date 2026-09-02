@@ -19,7 +19,7 @@ describe("NpsCertificateModal", () => {
     vi.clearAllMocks();
   });
 
-  it("shows conditional tema field when interestInTopics is Sim (cdpi_event)", async () => {
+  it("shows Outro follow-up when support rating is Outro (cdpi_event)", async () => {
     const user = userEvent.setup();
 
     render(
@@ -31,19 +31,37 @@ describe("NpsCertificateModal", () => {
       />,
     );
 
-    expect(
-      screen.queryByLabelText(/Descreva o tema abordado que gostaria de se aprofundar/i),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Descreva/i)).not.toBeInTheDocument();
 
-    const sim = screen.getByRole("radio", { name: /^Sim$/i });
-    await user.click(sim);
+    await user.click(
+      screen.getByRole("combobox", {
+        name: /Como você avalia o suporte da equipe CDPI durante o evento/i,
+      }),
+    );
+    await user.click(await screen.findByRole("option", { name: "Outro" }));
 
+    expect(await screen.findByLabelText(/^Descreva/i)).toBeInTheDocument();
+  });
+
+  it("renders Evento CDPI form with privacy checkbox", () => {
+    render(
+      <NpsCertificateModal
+        event={{ ...baseEvent, npsType: "cdpi_event" }}
+        open
+        onOpenChange={() => {}}
+        onCertificateGenerated={() => {}}
+      />,
+    );
+
+    expect(screen.getByText(/pesquisa de satisfação \(Evento CDPI\)/i)).toBeInTheDocument();
     expect(
-      await screen.findByLabelText(/Descreva o tema abordado que gostaria de se aprofundar/i),
+      screen.getByRole("checkbox", {
+        name: /Li e concordo com a Política de Privacidade e Consentimento/i,
+      }),
     ).toBeInTheDocument();
   });
 
-  it("renders CDPI Apoiando form without interest topic follow-up", () => {
+  it("renders Evento de Terceiros form without CDPI workshop-feeling question", () => {
     render(
       <NpsCertificateModal
         event={{ ...baseEvent, npsType: "cdpi_apoiando" }}
@@ -53,16 +71,38 @@ describe("NpsCertificateModal", () => {
       />,
     );
 
-    expect(screen.getByText(/CDPI Apoiando Evento/i)).toBeInTheDocument();
+    expect(screen.getByText(/Evento de Terceiros/i)).toBeInTheDocument();
     expect(
-      screen.queryByText(/pesquisa de satisfação \(Evento do CDPI\)/i),
+      screen.queryByText(/pesquisa de satisfação \(Evento CDPI\)/i),
     ).not.toBeInTheDocument();
 
     const dialog = screen.getByRole("dialog");
     expect(
-      within(dialog).queryByLabelText(
-        /Descreva o tema abordado que gostaria de se aprofundar/i,
-      ),
+      within(dialog).queryByText(/Como você se sentiu participando do nosso Workshop/i),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows Outro follow-up on Evento de Terceiros organization question", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <NpsCertificateModal
+        event={{ ...baseEvent, npsType: "cdpi_apoiando" }}
+        open
+        onOpenChange={() => {}}
+        onCertificateGenerated={() => {}}
+      />,
+    );
+
+    expect(screen.queryByLabelText(/^Descreva/i)).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("combobox", {
+        name: /Como foi sua experiência com a equipe organizadora/i,
+      }),
+    );
+    await user.click(await screen.findByRole("option", { name: "Outro" }));
+
+    expect(await screen.findByLabelText(/^Descreva/i)).toBeInTheDocument();
   });
 });

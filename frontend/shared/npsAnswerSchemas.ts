@@ -1,79 +1,97 @@
 import { z } from "zod";
 
 const text2000 = z.string().min(1).max(2000);
+const optionalText2000 = z.string().max(2000).optional().default("");
 const emailField = z.string().min(1).email("E-mail inválido");
 
-const experienceRadio = z.enum(["Excelente", "Muito boa", "Boa", "Regular", "Ruim"]);
-const themesRelevance = z.enum([
-  "Muito relevantes",
-  "Relevantes",
-  "Pouco relevantes",
-  "Não foram relevantes",
-]);
-const applicability = z.enum([
-  "Totalmente aplicável",
-  "Parcialmente aplicável",
-  "Pouco aplicável",
-  "Não aplicável",
-]);
-const attendAgain = z.enum([
-  "Sim, com certeza",
-  "Talvez, dependendo do tema",
-  "Não",
+const workshopFeeling = z.enum([
+  "Foi incrível!",
+  "Gostei bastante",
+  "Foi bom, mas esperava mais",
+  "Não atendeu minhas expectativas",
 ]);
 const simNao = z.enum(["Sim", "Não"]);
+const experienceRadio = z.enum(["Excelente", "Muito boa", "Boa", "Regular", "Ruim"]);
+const careerValue = z.enum(["Com certeza", "Em partes", "Ainda estou processando"]);
+const attendAgain = z.enum(["Sim, com certeza", "Talvez, depende do tema", "Ainda não sei"]);
+const supportRating = z.enum([
+  "Excelente, sempre por perto",
+  "Bom, mas pode melhorar",
+  "Tive algumas dificuldades",
+  "Outro",
+]);
 
-/** Answers for "Evento do CDPI" NPS (11 questions). DB: nps_cdpi_event_responses */
+function refineOutroFollowUp(
+  selected: string,
+  followUp: string | undefined,
+  followUpPath: string,
+  ctx: z.RefinementCtx,
+) {
+  const t = followUp?.trim() ?? "";
+  if (selected === "Outro") {
+    if (!t) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Descreva quando selecionar Outro",
+        path: [followUpPath],
+      });
+    }
+  } else if (t.length > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Remova a descrição quando não selecionar Outro",
+      path: [followUpPath],
+    });
+  }
+}
+
+/** Answers for "Evento CDPI" NPS. DB: nps_cdpi_event_responses */
 export const cdpiEventNpsAnswersSchema = z
   .object({
     name: z.string().min(1, "Nome é obrigatório").max(255),
     email: emailField,
     phone: z.string().min(1, "WhatsApp é obrigatório").max(20),
-    overallRating: experienceRadio,
-    themesRelevance,
-    speakersRating: experienceRadio,
-    applicability,
+    workshopFeeling,
+    themesRelevant: simNao,
+    instructorsDidactics: experienceRadio,
     highlight: text2000,
-    organizationRating: experienceRadio,
+    careerValue,
     wouldAttendAgain: attendAgain,
-    improvements: text2000,
-    interestInTopics: simNao,
-    interestTopicText: z.string().max(2000).optional().default(""),
-    recommendationScore: z.number().int().min(0).max(10),
+    supportRating,
+    supportOtherText: z.string().max(2000).optional().default(""),
+    messageToTeam: optionalText2000,
+    privacyConsent: z.literal(true, {
+      errorMap: () => ({ message: "É necessário concordar com a política de privacidade" }),
+    }),
   })
   .superRefine((data, ctx) => {
-    if (data.interestInTopics === "Sim") {
-      const t = data.interestTopicText?.trim() ?? "";
-      if (!t) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Descreva o tema quando selecionar Sim",
-          path: ["interestTopicText"],
-        });
-      }
-    } else if ((data.interestTopicText?.trim() ?? "").length > 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Remova a descrição quando selecionar Não",
-        path: ["interestTopicText"],
-      });
-    }
+    refineOutroFollowUp(data.supportRating, data.supportOtherText, "supportOtherText", ctx);
   });
 
 export type CdpiEventNpsAnswers = z.infer<typeof cdpiEventNpsAnswersSchema>;
 
-/** Answers for "CDPI Apoiando" NPS (8 questions). DB: nps_cdpi_apoiando_responses */
-export const cdpiApoiandoNpsAnswersSchema = z.object({
-  name: z.string().min(1, "Nome é obrigatório").max(255),
-  email: emailField,
-  phone: z.string().min(1, "WhatsApp é obrigatório").max(20),
-  overallScore: z.number().int().min(0).max(10),
-  themesRelevance,
-  applicability,
-  futureTopics: text2000,
-  organizationExperience: experienceRadio,
-  improvements: text2000,
-  wantsUpdates: simNao,
-});
+/** Answers for "Evento de Terceiros" NPS. DB: nps_cdpi_apoiando_responses */
+export const cdpiApoiandoNpsAnswersSchema = z
+  .object({
+    name: z.string().min(1, "Nome é obrigatório").max(255),
+    email: emailField,
+    phone: z.string().min(1, "WhatsApp é obrigatório").max(20),
+    overallScore: z.number().int().min(0).max(10),
+    futureTopics: text2000,
+    organizationExperience: supportRating,
+    organizationOtherText: z.string().max(2000).optional().default(""),
+    feedback: optionalText2000,
+    privacyConsent: z.literal(true, {
+      errorMap: () => ({ message: "É necessário concordar com a política de privacidade" }),
+    }),
+  })
+  .superRefine((data, ctx) => {
+    refineOutroFollowUp(
+      data.organizationExperience,
+      data.organizationOtherText,
+      "organizationOtherText",
+      ctx,
+    );
+  });
 
 export type CdpiApoiandoNpsAnswers = z.infer<typeof cdpiApoiandoNpsAnswersSchema>;

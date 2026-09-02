@@ -62,7 +62,7 @@ export default function AdminNpsPage() {
         <CardHeader>
           <CardTitle>Evento</CardTitle>
           <CardDescription>
-            As colunas do arquivo seguem o modelo “Evento do CDPI” ou “CDPI Apoiando Evento”.
+            As colunas do arquivo seguem o modelo “Evento CDPI” ou “Evento de Terceiros”.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -100,7 +100,7 @@ export default function AdminNpsPage() {
               <div className="text-sm">
                 <p>
                   <span className="font-medium">Tipo de pesquisa:</span>{" "}
-                  {data.npsType === "cdpi_event" ? "Evento do CDPI" : "CDPI Apoiando Evento"}
+                  {data.npsType === "cdpi_event" ? "Evento CDPI" : "Evento de Terceiros"}
                 </p>
                 <p className="text-muted-foreground">
                   {data.count} resposta{data.count === 1 ? "" : "s"}

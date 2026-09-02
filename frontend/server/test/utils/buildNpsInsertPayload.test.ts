@@ -8,17 +8,16 @@ const eventAnswers = {
   name: "maria DA silva",
   email: "Test@Example.com",
   phone: "(11) 98765-4321",
-  overallRating: "Boa" as const,
-  themesRelevance: "Relevantes" as const,
-  speakersRating: "Boa" as const,
-  applicability: "Parcialmente aplicável" as const,
+  workshopFeeling: "Gostei bastante" as const,
+  themesRelevant: "Sim" as const,
+  instructorsDidactics: "Boa" as const,
   highlight: "ok",
-  organizationRating: "Boa" as const,
-  wouldAttendAgain: "Talvez, dependendo do tema" as const,
-  improvements: "nada",
-  interestInTopics: "Sim" as const,
-  interestTopicText: "  tema x ",
-  recommendationScore: 7,
+  careerValue: "Em partes" as const,
+  wouldAttendAgain: "Talvez, depende do tema" as const,
+  supportRating: "Outro" as const,
+  supportOtherText: "  fila x ",
+  messageToTeam: "  recado ",
+  privacyConsent: true as const,
 };
 
 const apoiandoAnswers = {
@@ -26,12 +25,11 @@ const apoiandoAnswers = {
   email: "j@ex.com",
   phone: "11987654321",
   overallScore: 9,
-  themesRelevance: "Muito relevantes" as const,
-  applicability: "Não aplicável" as const,
   futureTopics: "x",
-  organizationExperience: "Regular" as const,
-  improvements: "y",
-  wantsUpdates: "Não" as const,
+  organizationExperience: "Excelente, sempre por perto" as const,
+  organizationOtherText: "",
+  feedback: "  y ",
+  privacyConsent: true as const,
 };
 
 describe("buildNpsInsertPayload", () => {
@@ -41,17 +39,39 @@ describe("buildNpsInsertPayload", () => {
     expect(r.row.name).toBe("Maria da Silva");
     expect(r.row.email).toBe("test@example.com");
     expect(r.row.phone).toMatch(/^55/);
-    expect(r.row.interestTopicText).toBe("tema x");
   });
 
-  it("clears interest text when Não", () => {
+  it("trims Outro follow-up text", () => {
+    const r = buildNpsInsertPayload(uid, eid, "cdpi_event", eventAnswers);
+    expect(r.table).toBe("cdpi_event");
+    expect(r.row.supportOtherText).toBe("fila x");
+  });
+
+  it("stores recado trimmed", () => {
+    const r = buildNpsInsertPayload(uid, eid, "cdpi_event", eventAnswers);
+    expect(r.table).toBe("cdpi_event");
+    expect(r.row.messageToTeam).toBe("recado");
+  });
+
+  it("clears Outro text when not Outro", () => {
     const r = buildNpsInsertPayload(uid, eid, "cdpi_event", {
       ...eventAnswers,
-      interestInTopics: "Não",
-      interestTopicText: "",
+      supportRating: "Bom, mas pode melhorar",
+      supportOtherText: "",
     });
     expect(r.table).toBe("cdpi_event");
-    expect(r.row.interestTopicText).toBeNull();
+    expect(r.row.supportOtherText).toBeNull();
+  });
+
+  it("clears empty recado to null", () => {
+    const r = buildNpsInsertPayload(uid, eid, "cdpi_event", {
+      ...eventAnswers,
+      supportRating: "Bom, mas pode melhorar",
+      supportOtherText: "",
+      messageToTeam: "  ",
+    });
+    expect(r.table).toBe("cdpi_event");
+    expect(r.row.messageToTeam).toBeNull();
   });
 
   it("cdpi_apoiando returns correct table", () => {
@@ -59,5 +79,17 @@ describe("buildNpsInsertPayload", () => {
     expect(r.table).toBe("cdpi_apoiando");
     expect(r.row.overallScore).toBe(9);
     expect(r.row.name).toBe("João Costa");
+  });
+
+  it("cdpi_apoiando stores feedback trimmed", () => {
+    const r = buildNpsInsertPayload(uid, eid, "cdpi_apoiando", apoiandoAnswers);
+    expect(r.table).toBe("cdpi_apoiando");
+    expect(r.row.feedback).toBe("y");
+  });
+
+  it("cdpi_apoiando clears organization other when not Outro", () => {
+    const r = buildNpsInsertPayload(uid, eid, "cdpi_apoiando", apoiandoAnswers);
+    expect(r.table).toBe("cdpi_apoiando");
+    expect(r.row.organizationOtherText).toBeNull();
   });
 });

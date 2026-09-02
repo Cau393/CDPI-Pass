@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, CheckCircle2 } from "lucide-react";
+import { Loader2, CheckCircle2, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -19,6 +20,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
@@ -26,18 +32,22 @@ import {
   cdpiEventNpsAnswersSchema,
   cdpiApoiandoNpsAnswersSchema,
   type CdpiEventNpsAnswers,
-  type CdpiApoiandoNpsAnswers,
 } from "@shared/npsAnswerSchemas";
 import {
-  APPLICABILITY_OPTIONS,
   ATTEND_AGAIN_OPTIONS,
+  CAREER_VALUE_OPTIONS,
   CDPI_APOIANDO_FIELD_LABELS,
   CDPI_EVENT_FIELD_LABELS,
   EXPERIENCE_RADIO_OPTIONS,
   NPS_SCORE_OPTIONS,
   SIM_NAO_OPTIONS,
-  THEMES_RELEVANCE_OPTIONS,
+  SUPPORT_RATING_OPTIONS,
+  WORKSHOP_FEELING_OPTIONS,
 } from "@/lib/npsForms";
+import {
+  NPS_PRIVACY_CONSENT_SECTIONS,
+  NPS_PRIVACY_CONSENT_TITLE,
+} from "@/lib/npsPrivacyConsent";
 import type { ZodIssue } from "zod";
 
 export interface NpsCertificateEventInfo {
@@ -68,34 +78,60 @@ function zodIssuesToMap(issues: ZodIssue[]): Record<string, string> {
   return m;
 }
 
-const emptyCdpiEventAnswers = (): CdpiEventNpsAnswers => ({
+type CdpiEventNpsForm = {
+  name: string;
+  email: string;
+  phone: string;
+  workshopFeeling: string;
+  themesRelevant: string;
+  instructorsDidactics: string;
+  highlight: string;
+  careerValue: string;
+  wouldAttendAgain: string;
+  supportRating: string;
+  supportOtherText: string;
+  messageToTeam: string;
+  privacyConsent: boolean;
+};
+
+type CdpiApoiandoNpsForm = {
+  name: string;
+  email: string;
+  phone: string;
+  overallScore: number | undefined;
+  futureTopics: string;
+  organizationExperience: string;
+  organizationOtherText: string;
+  feedback: string;
+  privacyConsent: boolean;
+};
+
+const emptyCdpiEventAnswers = (): CdpiEventNpsForm => ({
   name: "",
   email: "",
   phone: "",
-  overallRating: "Excelente",
-  themesRelevance: "Muito relevantes",
-  speakersRating: "Excelente",
-  applicability: "Totalmente aplicável",
+  workshopFeeling: "",
+  themesRelevant: "",
+  instructorsDidactics: "",
   highlight: "",
-  organizationRating: "Excelente",
-  wouldAttendAgain: "Sim, com certeza",
-  improvements: "",
-  interestInTopics: "Não",
-  interestTopicText: "",
-  recommendationScore: 10,
+  careerValue: "",
+  wouldAttendAgain: "",
+  supportRating: "",
+  supportOtherText: "",
+  messageToTeam: "",
+  privacyConsent: false,
 });
 
-const emptyCdpiApoiandoAnswers = (): CdpiApoiandoNpsAnswers => ({
+const emptyCdpiApoiandoAnswers = (): CdpiApoiandoNpsForm => ({
   name: "",
   email: "",
   phone: "",
-  overallScore: 10,
-  themesRelevance: "Muito relevantes",
-  applicability: "Totalmente aplicável",
+  overallScore: undefined,
   futureTopics: "",
-  organizationExperience: "Excelente",
-  improvements: "",
-  wantsUpdates: "Não",
+  organizationExperience: "",
+  organizationOtherText: "",
+  feedback: "",
+  privacyConsent: false,
 });
 
 type Step = "form" | "loading" | "success";
@@ -204,7 +240,7 @@ export function NpsCertificateModal({
             <DialogHeader>
               <DialogTitle>Gerar certificado</DialogTitle>
               <DialogDescription>
-                {event.eventName} — pesquisa de satisfação (Evento do CDPI).
+                {event.eventName} — pesquisa de satisfação (Evento CDPI).
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
@@ -241,52 +277,46 @@ export function NpsCertificateModal({
               </div>
 
               <FieldSelect
-                label={CDPI_EVENT_FIELD_LABELS.overallRating}
-                value={cdpiEventForm.overallRating}
-                onChange={(v) =>
-                  setCdpiEventForm((s) => ({
-                    ...s,
-                    overallRating: v as CdpiEventNpsAnswers["overallRating"],
-                  }))
-                }
+                label={CDPI_EVENT_FIELD_LABELS.workshopFeeling}
+                value={cdpiEventForm.workshopFeeling}
+                onChange={(v) => setCdpiEventForm((s) => ({ ...s, workshopFeeling: v }))}
+                options={WORKSHOP_FEELING_OPTIONS}
+                error={err("workshopFeeling")}
+                required
+              />
+
+              <div className="space-y-2">
+                <Label>{CDPI_EVENT_FIELD_LABELS.themesRelevant} *</Label>
+                <RadioGroup
+                  value={cdpiEventForm.themesRelevant}
+                  onValueChange={(v) =>
+                    setCdpiEventForm((s) => ({
+                      ...s,
+                      themesRelevant: v as CdpiEventNpsAnswers["themesRelevant"],
+                    }))
+                  }
+                >
+                  {SIM_NAO_OPTIONS.map((opt) => (
+                    <div key={opt} className="flex items-center space-x-2">
+                      <RadioGroupItem value={opt} id={`themes-${opt}`} />
+                      <Label htmlFor={`themes-${opt}`} className="font-normal">
+                        {opt}
+                      </Label>
+                    </div>
+                  ))}
+                </RadioGroup>
+                {err("themesRelevant") && (
+                  <p className="text-sm text-destructive">{err("themesRelevant")}</p>
+                )}
+              </div>
+
+              <FieldSelect
+                label={CDPI_EVENT_FIELD_LABELS.instructorsDidactics}
+                value={cdpiEventForm.instructorsDidactics}
+                onChange={(v) => setCdpiEventForm((s) => ({ ...s, instructorsDidactics: v }))}
                 options={EXPERIENCE_RADIO_OPTIONS}
-                error={err("overallRating")}
-              />
-              <FieldSelect
-                label={CDPI_EVENT_FIELD_LABELS.themesRelevance}
-                value={cdpiEventForm.themesRelevance}
-                onChange={(v) =>
-                  setCdpiEventForm((s) => ({
-                    ...s,
-                    themesRelevance: v as CdpiEventNpsAnswers["themesRelevance"],
-                  }))
-                }
-                options={THEMES_RELEVANCE_OPTIONS}
-                error={err("themesRelevance")}
-              />
-              <FieldSelect
-                label={CDPI_EVENT_FIELD_LABELS.speakersRating}
-                value={cdpiEventForm.speakersRating}
-                onChange={(v) =>
-                  setCdpiEventForm((s) => ({
-                    ...s,
-                    speakersRating: v as CdpiEventNpsAnswers["speakersRating"],
-                  }))
-                }
-                options={EXPERIENCE_RADIO_OPTIONS}
-                error={err("speakersRating")}
-              />
-              <FieldSelect
-                label={CDPI_EVENT_FIELD_LABELS.applicability}
-                value={cdpiEventForm.applicability}
-                onChange={(v) =>
-                  setCdpiEventForm((s) => ({
-                    ...s,
-                    applicability: v as CdpiEventNpsAnswers["applicability"],
-                  }))
-                }
-                options={APPLICABILITY_OPTIONS}
-                error={err("applicability")}
+                error={err("instructorsDidactics")}
+                required
               />
 
               <div className="space-y-2">
@@ -303,94 +333,77 @@ export function NpsCertificateModal({
               </div>
 
               <FieldSelect
-                label={CDPI_EVENT_FIELD_LABELS.organizationRating}
-                value={cdpiEventForm.organizationRating}
-                onChange={(v) =>
-                  setCdpiEventForm((s) => ({
-                    ...s,
-                    organizationRating: v as CdpiEventNpsAnswers["organizationRating"],
-                  }))
-                }
-                options={EXPERIENCE_RADIO_OPTIONS}
-                error={err("organizationRating")}
+                label={CDPI_EVENT_FIELD_LABELS.careerValue}
+                value={cdpiEventForm.careerValue}
+                onChange={(v) => setCdpiEventForm((s) => ({ ...s, careerValue: v }))}
+                options={CAREER_VALUE_OPTIONS}
+                error={err("careerValue")}
+                required
               />
               <FieldSelect
                 label={CDPI_EVENT_FIELD_LABELS.wouldAttendAgain}
                 value={cdpiEventForm.wouldAttendAgain}
+                onChange={(v) => setCdpiEventForm((s) => ({ ...s, wouldAttendAgain: v }))}
+                options={ATTEND_AGAIN_OPTIONS}
+                error={err("wouldAttendAgain")}
+                required
+              />
+              <FieldSelect
+                label={CDPI_EVENT_FIELD_LABELS.supportRating}
+                value={cdpiEventForm.supportRating}
                 onChange={(v) =>
                   setCdpiEventForm((s) => ({
                     ...s,
-                    wouldAttendAgain: v as CdpiEventNpsAnswers["wouldAttendAgain"],
+                    supportRating: v,
+                    ...(v !== "Outro" ? { supportOtherText: "" } : {}),
                   }))
                 }
-                options={ATTEND_AGAIN_OPTIONS}
-                error={err("wouldAttendAgain")}
+                options={SUPPORT_RATING_OPTIONS}
+                error={err("supportRating")}
+                required
               />
 
-              <div className="space-y-2">
-                <Label htmlFor="nps-improvements">{CDPI_EVENT_FIELD_LABELS.improvements} *</Label>
-                <Textarea
-                  id="nps-improvements"
-                  value={cdpiEventForm.improvements}
-                  onChange={(e) => setCdpiEventForm((s) => ({ ...s, improvements: e.target.value }))}
-                  rows={3}
-                />
-                {err("improvements") && (
-                  <p className="text-sm text-destructive">{err("improvements")}</p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>{CDPI_EVENT_FIELD_LABELS.interestInTopics}</Label>
-                <RadioGroup
-                  value={cdpiEventForm.interestInTopics}
-                  onValueChange={(v) =>
-                    setCdpiEventForm((s) => ({
-                      ...s,
-                      interestInTopics: v as CdpiEventNpsAnswers["interestInTopics"],
-                      ...(v === "Não" ? { interestTopicText: "" } : {}),
-                    }))
-                  }
-                >
-                  {SIM_NAO_OPTIONS.map((opt) => (
-                    <div key={opt} className="flex items-center space-x-2">
-                      <RadioGroupItem value={opt} id={`interest-${opt}`} />
-                      <Label htmlFor={`interest-${opt}`} className="font-normal">
-                        {opt}
-                      </Label>
-                    </div>
-                  ))}
-                </RadioGroup>
-                {err("interestInTopics") && (
-                  <p className="text-sm text-destructive">{err("interestInTopics")}</p>
-                )}
-              </div>
-
-              {cdpiEventForm.interestInTopics === "Sim" && (
+              {cdpiEventForm.supportRating === "Outro" && (
                 <div className="space-y-2">
-                  <Label htmlFor="nps-interest-text">{CDPI_EVENT_FIELD_LABELS.interestTopicText}</Label>
+                  <Label htmlFor="nps-support-other">
+                    {CDPI_EVENT_FIELD_LABELS.supportOtherText} *
+                  </Label>
                   <Textarea
-                    id="nps-interest-text"
-                    value={cdpiEventForm.interestTopicText ?? ""}
+                    id="nps-support-other"
+                    value={cdpiEventForm.supportOtherText}
                     onChange={(e) =>
-                      setCdpiEventForm((s) => ({ ...s, interestTopicText: e.target.value }))
+                      setCdpiEventForm((s) => ({ ...s, supportOtherText: e.target.value }))
                     }
                     rows={2}
                   />
-                  {err("interestTopicText") && (
-                    <p className="text-sm text-destructive">{err("interestTopicText")}</p>
+                  {err("supportOtherText") && (
+                    <p className="text-sm text-destructive">{err("supportOtherText")}</p>
                   )}
                 </div>
               )}
 
-              <FieldSelect
-                label={CDPI_EVENT_FIELD_LABELS.recommendationScore}
-                value={String(cdpiEventForm.recommendationScore)}
-                onChange={(v) =>
-                  setCdpiEventForm((s) => ({ ...s, recommendationScore: Number.parseInt(v, 10) }))
+              <div className="space-y-2">
+                <Label htmlFor="nps-message">{CDPI_EVENT_FIELD_LABELS.messageToTeam}</Label>
+                <Textarea
+                  id="nps-message"
+                  value={cdpiEventForm.messageToTeam}
+                  onChange={(e) =>
+                    setCdpiEventForm((s) => ({ ...s, messageToTeam: e.target.value }))
+                  }
+                  rows={3}
+                />
+                {err("messageToTeam") && (
+                  <p className="text-sm text-destructive">{err("messageToTeam")}</p>
+                )}
+              </div>
+
+              <PrivacyConsentBlock
+                checked={cdpiEventForm.privacyConsent}
+                onCheckedChange={(checked) =>
+                  setCdpiEventForm((s) => ({ ...s, privacyConsent: checked }))
                 }
-                options={NPS_SCORE_OPTIONS.map(String)}
-                error={err("recommendationScore")}
+                error={err("privacyConsent")}
+                checkboxId="nps-privacy"
               />
 
               {submitError && <p className="text-sm text-destructive">{submitError}</p>}
@@ -406,7 +419,7 @@ export function NpsCertificateModal({
             <DialogHeader>
               <DialogTitle>Gerar certificado</DialogTitle>
               <DialogDescription>
-                {event.eventName} — pesquisa de satisfação (CDPI Apoiando Evento).
+                {event.eventName} — pesquisa de satisfação (Evento de Terceiros).
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
@@ -444,7 +457,11 @@ export function NpsCertificateModal({
 
               <FieldSelect
                 label={CDPI_APOIANDO_FIELD_LABELS.overallScore}
-                value={String(cdpiApoiandoForm.overallScore)}
+                value={
+                  cdpiApoiandoForm.overallScore === undefined
+                    ? ""
+                    : String(cdpiApoiandoForm.overallScore)
+                }
                 onChange={(v) =>
                   setCdpiApoiandoForm((s) => ({
                     ...s,
@@ -453,30 +470,7 @@ export function NpsCertificateModal({
                 }
                 options={NPS_SCORE_OPTIONS.map(String)}
                 error={err("overallScore")}
-              />
-              <FieldSelect
-                label={CDPI_APOIANDO_FIELD_LABELS.themesRelevance}
-                value={cdpiApoiandoForm.themesRelevance}
-                onChange={(v) =>
-                  setCdpiApoiandoForm((s) => ({
-                    ...s,
-                    themesRelevance: v as CdpiApoiandoNpsAnswers["themesRelevance"],
-                  }))
-                }
-                options={THEMES_RELEVANCE_OPTIONS}
-                error={err("themesRelevance")}
-              />
-              <FieldSelect
-                label={CDPI_APOIANDO_FIELD_LABELS.applicability}
-                value={cdpiApoiandoForm.applicability}
-                onChange={(v) =>
-                  setCdpiApoiandoForm((s) => ({
-                    ...s,
-                    applicability: v as CdpiApoiandoNpsAnswers["applicability"],
-                  }))
-                }
-                options={APPLICABILITY_OPTIONS}
-                error={err("applicability")}
+                required
               />
 
               <div className="space-y-2">
@@ -500,52 +494,57 @@ export function NpsCertificateModal({
                 onChange={(v) =>
                   setCdpiApoiandoForm((s) => ({
                     ...s,
-                    organizationExperience: v as CdpiApoiandoNpsAnswers["organizationExperience"],
+                    organizationExperience: v,
+                    ...(v !== "Outro" ? { organizationOtherText: "" } : {}),
                   }))
                 }
-                options={EXPERIENCE_RADIO_OPTIONS}
+                options={SUPPORT_RATING_OPTIONS}
                 error={err("organizationExperience")}
+                required
               />
 
+              {cdpiApoiandoForm.organizationExperience === "Outro" && (
+                <div className="space-y-2">
+                  <Label htmlFor="nps-a-org-other">
+                    {CDPI_APOIANDO_FIELD_LABELS.organizationOtherText} *
+                  </Label>
+                  <Textarea
+                    id="nps-a-org-other"
+                    value={cdpiApoiandoForm.organizationOtherText}
+                    onChange={(e) =>
+                      setCdpiApoiandoForm((s) => ({ ...s, organizationOtherText: e.target.value }))
+                    }
+                    rows={2}
+                  />
+                  {err("organizationOtherText") && (
+                    <p className="text-sm text-destructive">{err("organizationOtherText")}</p>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-2">
-                <Label htmlFor="nps-a-improvements">{CDPI_APOIANDO_FIELD_LABELS.improvements} *</Label>
+                <Label htmlFor="nps-a-feedback">{CDPI_APOIANDO_FIELD_LABELS.feedback}</Label>
                 <Textarea
-                  id="nps-a-improvements"
-                  value={cdpiApoiandoForm.improvements}
+                  id="nps-a-feedback"
+                  value={cdpiApoiandoForm.feedback}
                   onChange={(e) =>
-                    setCdpiApoiandoForm((s) => ({ ...s, improvements: e.target.value }))
+                    setCdpiApoiandoForm((s) => ({ ...s, feedback: e.target.value }))
                   }
                   rows={3}
                 />
-                {err("improvements") && (
-                  <p className="text-sm text-destructive">{err("improvements")}</p>
+                {err("feedback") && (
+                  <p className="text-sm text-destructive">{err("feedback")}</p>
                 )}
               </div>
 
-              <div className="space-y-2">
-                <Label>{CDPI_APOIANDO_FIELD_LABELS.wantsUpdates}</Label>
-                <RadioGroup
-                  value={cdpiApoiandoForm.wantsUpdates}
-                  onValueChange={(v) =>
-                    setCdpiApoiandoForm((s) => ({
-                      ...s,
-                      wantsUpdates: v as CdpiApoiandoNpsAnswers["wantsUpdates"],
-                    }))
-                  }
-                >
-                  {SIM_NAO_OPTIONS.map((opt) => (
-                    <div key={opt} className="flex items-center space-x-2">
-                      <RadioGroupItem value={opt} id={`wants-${opt}`} />
-                      <Label htmlFor={`wants-${opt}`} className="font-normal">
-                        {opt}
-                      </Label>
-                    </div>
-                  ))}
-                </RadioGroup>
-                {err("wantsUpdates") && (
-                  <p className="text-sm text-destructive">{err("wantsUpdates")}</p>
-                )}
-              </div>
+              <PrivacyConsentBlock
+                checked={cdpiApoiandoForm.privacyConsent}
+                onCheckedChange={(checked) =>
+                  setCdpiApoiandoForm((s) => ({ ...s, privacyConsent: checked }))
+                }
+                error={err("privacyConsent")}
+                checkboxId="nps-a-privacy"
+              />
 
               {submitError && <p className="text-sm text-destructive">{submitError}</p>}
               <Button type="button" className="w-full" onClick={() => void handleSubmitApoiando()}>
@@ -589,18 +588,23 @@ function FieldSelect({
   onChange,
   options,
   error,
+  required,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   options: readonly string[];
   error?: string;
+  required?: boolean;
 }) {
   return (
     <div className="space-y-2">
-      <Label>{label}</Label>
+      <Label>
+        {label}
+        {required ? " *" : ""}
+      </Label>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger>
+        <SelectTrigger aria-label={label}>
           <SelectValue placeholder="Selecione" />
         </SelectTrigger>
         <SelectContent>
@@ -611,6 +615,54 @@ function FieldSelect({
           ))}
         </SelectContent>
       </Select>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+function PrivacyConsentBlock({
+  checked,
+  onCheckedChange,
+  error,
+  checkboxId,
+}: {
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  error?: string;
+  checkboxId: string;
+}) {
+  return (
+    <div className="space-y-3 rounded-lg border p-3">
+      <Collapsible>
+        <CollapsibleTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            className="flex h-auto w-full items-center justify-between px-0 py-1 text-left font-medium hover:bg-transparent"
+          >
+            {NPS_PRIVACY_CONSENT_TITLE}
+            <ChevronDown className="h-4 w-4 shrink-0 opacity-70" />
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="space-y-3 pt-2 text-sm text-muted-foreground">
+          {NPS_PRIVACY_CONSENT_SECTIONS.map((section) => (
+            <div key={section.title} className="space-y-1">
+              <p className="font-medium text-foreground">{section.title}</p>
+              <p>{section.body}</p>
+            </div>
+          ))}
+        </CollapsibleContent>
+      </Collapsible>
+      <div className="flex items-start space-x-2">
+        <Checkbox
+          id={checkboxId}
+          checked={checked}
+          onCheckedChange={(v) => onCheckedChange(v === true)}
+        />
+        <Label htmlFor={checkboxId} className="font-normal leading-snug">
+          {CDPI_EVENT_FIELD_LABELS.privacyConsent} *
+        </Label>
+      </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
     </div>
   );

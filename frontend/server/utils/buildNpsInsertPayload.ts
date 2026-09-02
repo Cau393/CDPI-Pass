@@ -10,17 +10,16 @@ export type NpsCdpiEventInsert = {
   name: string;
   email: string;
   phone: string;
-  overallRating: string;
-  themesRelevance: string;
-  speakersRating: string;
-  applicability: string;
+  workshopFeeling: string;
+  themesRelevant: string;
+  instructorsDidactics: string;
   highlight: string;
-  organizationRating: string;
+  careerValue: string;
   wouldAttendAgain: string;
-  improvements: string;
-  interestInTopics: string;
-  interestTopicText: string | null;
-  recommendationScore: number;
+  supportRating: string;
+  supportOtherText: string | null;
+  messageToTeam: string | null;
+  privacyConsent: boolean;
 };
 
 export type NpsCdpiApoiandoInsert = {
@@ -30,13 +29,17 @@ export type NpsCdpiApoiandoInsert = {
   email: string;
   phone: string;
   overallScore: number;
-  themesRelevance: string;
-  applicability: string;
   futureTopics: string;
   organizationExperience: string;
-  improvements: string;
-  wantsUpdates: string;
+  organizationOtherText: string | null;
+  feedback: string | null;
+  privacyConsent: boolean;
 };
+
+function optionalTrimmed(value: string | undefined): string | null {
+  const t = value?.trim() ?? "";
+  return t.length > 0 ? t : null;
+}
 
 export function buildNpsInsertPayload(
   userId: string,
@@ -52,10 +55,6 @@ export function buildNpsInsertPayload(
 
   if (npsType === "cdpi_event") {
     const a = answers as CdpiEventNpsAnswers;
-    const interestText =
-      a.interestInTopics === "Sim"
-        ? (a.interestTopicText?.trim() ?? "")
-        : null;
     return {
       table: "cdpi_event",
       row: {
@@ -64,17 +63,17 @@ export function buildNpsInsertPayload(
         name,
         email,
         phone,
-        overallRating: a.overallRating,
-        themesRelevance: a.themesRelevance,
-        speakersRating: a.speakersRating,
-        applicability: a.applicability,
+        workshopFeeling: a.workshopFeeling,
+        themesRelevant: a.themesRelevant,
+        instructorsDidactics: a.instructorsDidactics,
         highlight: a.highlight.trim(),
-        organizationRating: a.organizationRating,
+        careerValue: a.careerValue,
         wouldAttendAgain: a.wouldAttendAgain,
-        improvements: a.improvements.trim(),
-        interestInTopics: a.interestInTopics,
-        interestTopicText: interestText && interestText.length > 0 ? interestText : null,
-        recommendationScore: a.recommendationScore,
+        supportRating: a.supportRating,
+        supportOtherText:
+          a.supportRating === "Outro" ? optionalTrimmed(a.supportOtherText) : null,
+        messageToTeam: optionalTrimmed(a.messageToTeam),
+        privacyConsent: a.privacyConsent,
       },
     };
   }
@@ -89,12 +88,12 @@ export function buildNpsInsertPayload(
       email,
       phone,
       overallScore: a.overallScore,
-      themesRelevance: a.themesRelevance,
-      applicability: a.applicability,
       futureTopics: a.futureTopics.trim(),
       organizationExperience: a.organizationExperience,
-      improvements: a.improvements.trim(),
-      wantsUpdates: a.wantsUpdates,
+      organizationOtherText:
+        a.organizationExperience === "Outro" ? optionalTrimmed(a.organizationOtherText) : null,
+      feedback: optionalTrimmed(a.feedback),
+      privacyConsent: a.privacyConsent,
     },
   };
 }

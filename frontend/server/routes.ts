@@ -3504,17 +3504,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
               name: r.name,
               email: r.email,
               phone: r.phone,
-              overallRating: r.overallRating,
-              themesRelevance: r.themesRelevance,
-              speakersRating: r.speakersRating,
-              applicability: r.applicability,
+              workshopFeeling: r.workshopFeeling,
+              themesRelevant: r.themesRelevant,
+              instructorsDidactics: r.instructorsDidactics,
               highlight: r.highlight,
-              organizationRating: r.organizationRating,
+              careerValue: r.careerValue,
               wouldAttendAgain: r.wouldAttendAgain,
-              improvements: r.improvements,
-              interestInTopics: r.interestInTopics,
-              interestTopicText: r.interestTopicText,
-              recommendationScore: r.recommendationScore,
+              supportRating: r.supportRating,
+              supportOtherText: r.supportOtherText,
+              messageToTeam: r.messageToTeam,
+              privacyConsent: r.privacyConsent,
             });
           } else {
             const r = payload.row;
@@ -3525,12 +3524,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               email: r.email,
               phone: r.phone,
               overallScore: r.overallScore,
-              themesRelevance: r.themesRelevance,
-              applicability: r.applicability,
               futureTopics: r.futureTopics,
               organizationExperience: r.organizationExperience,
-              improvements: r.improvements,
-              wantsUpdates: r.wantsUpdates,
+              organizationOtherText: r.organizationOtherText,
+              feedback: r.feedback,
+              privacyConsent: r.privacyConsent,
             });
           }
 
