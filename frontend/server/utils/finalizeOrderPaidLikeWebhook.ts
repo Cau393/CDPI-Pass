@@ -1,4 +1,5 @@
 import axios from "axios";
+import { confirmationKindForPaymentMethod } from "./ticketEmailTemplate";
 import type { Order } from "@shared/schema";
 import { storage } from "../storage";
 import { emailService } from "../services/emailService";
@@ -140,6 +141,7 @@ export async function finalizeOrderPaidLikeWebhook(
       qrCodeData: order.qrCodeData || "",
       orderId: order.id,
       qrCodeS3Url: order.qr_code_s3_url || "",
+      confirmationKind: confirmationKindForPaymentMethod(order.paymentMethod),
     });
   }
 

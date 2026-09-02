@@ -2,6 +2,11 @@ import { MailService } from '@sendgrid/mail';
 import jwt from 'jsonwebtoken';
 import { storage } from '../storage';
 import { buildTicketQrAttachment } from '../utils/ticketQrAttachment';
+import {
+  buildTicketEmailHtml,
+  buildTicketEmailText,
+  type TicketEmailData,
+} from '../utils/ticketEmailTemplate';
 
 if (!process.env.SENDGRID_API_KEY) {
   console.warn("SENDGRID_API_KEY environment variable not set");
@@ -13,9 +18,6 @@ if (process.env.SENDGRID_API_KEY) {
 }
 
 const FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || "relacionamento.mkt@cdpipharma.com.br";
-
-/** Match EventDetailsPage / Brazil wall-clock display regardless of server TZ. */
-const EVENT_TZ = "America/Sao_Paulo";
 
 /** Rough HTML to plain text for multipart/alternative body (no external deps). */
 function courtesyMessageHtmlToPlainText(html: string): string {
@@ -46,16 +48,6 @@ export interface EmailAttachment {
   type: string;
   disposition?: string;
   content_id?: string;
-}
-
-interface TicketEmailData {
-  userName: string;
-  eventTitle: string;
-  eventDate: Date;
-  eventLocation: string;
-  qrCodeData: string;
-  orderId: string;
-  qrCodeS3Url: string;
 }
 
 class EmailService {
@@ -136,112 +128,12 @@ class EmailService {
     }
 
   async sendTicketEmail(email: string, data: TicketEmailData): Promise<boolean> {
-    const eventDate = new Date(data.eventDate).toLocaleDateString("pt-BR", {
-      timeZone: EVENT_TZ,
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-
-    const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <title>Seu ingresso - CDPI Pass</title>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: #0F4C75; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background: #f9f9f9; }
-          .ticket { 
-            background: white; 
-            border: 2px solid #3282B8; 
-            border-radius: 10px; 
-            padding: 20px; 
-            margin: 20px 0; 
-            text-align: center; 
-          }
-          .qr-code { 
-            margin: 20px 0; 
-            padding: 20px; 
-            background: white; 
-            border: 1px solid #ddd; 
-            display: inline-block; 
-          }
-          .event-details { text-align: left; margin: 20px 0; }
-          .footer { text-align: center; color: #666; font-size: 12px; margin-top: 20px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>🎫 Seu Ingresso</h1>
-            <h2>CDPI Pass</h2>
-          </div>
-          <div class="content">
-            <p>Olá, <strong>${data.userName}</strong>!</p>
-            <p>Seu pagamento foi confirmado! Aqui está seu ingresso para o evento:</p>
-            
-            <div class="ticket">
-              <h3>${data.eventTitle}</h3>
-              <div class="event-details">
-                <p><strong>📅 Data:</strong> ${eventDate}</p>
-                <p><strong>📍 Local:</strong> ${data.eventLocation}</p>
-                <p><strong>🎟️ Pedido:</strong> #${data.orderId}</p>
-              </div>
-              
-              <div class="qr-code">
-                <p><strong>QR Code do Ingresso:</strong></p>
-                <img src="cid:qrcode" alt="QR Code do Ingresso" style="max-width: 256px; height: auto; display: block; margin: 10px auto;">
-                <p style="font-size: 12px; color: #666;">
-                  Apresente este QR Code na entrada do evento
-                </p>
-              </div>
-            </div>
-            
-            <div style="background: #BBE1FA; padding: 15px; border-radius: 5px; margin: 20px 0;">
-              <h4>📋 Instruções Importantes:</h4>
-              <ul style="text-align: left;">
-                <li>Chegue com 30 minutos de antecedência</li>
-                <li>O QR Code pode ser apresentado impresso ou no celular</li>
-                <li>Em caso de dúvidas, entre em contato conosco</li>
-              </ul>
-            </div>
-          </div>
-          <div class="footer">
-            <p>CDPI Pass</p>
-            <p>relacionamento.mkt@cdpipharma.com.br | +55 (62) 3636-9909 / (62) 99610-1694</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-
-    const text = `
-      CDPI Pass - Seu Ingresso
-      
-      Olá, ${data.userName}!
-      
-      Seu pagamento foi confirmado! Detalhes do evento:
-      
-      Evento: ${data.eventTitle}
-      Data: ${eventDate}
-      Local: ${data.eventLocation}
-      Pedido: #${data.orderId}
-      
-      Importante: Seu QR Code está anexado neste email. Para visualizá-lo, abra este email em HTML ou acesse sua conta no site.
-      
-      Apresente o QR Code na entrada do evento.
-      Chegue com 30 minutos de antecedência e traga um documento com foto.
-    `;
+    const html = buildTicketEmailHtml(data);
+    const text = buildTicketEmailText(data);
 
     // The QR is attached inline (cid:qrcode) rather than hot-linked from S3.
-    // See buildTicketQrAttachment for why. The template above must keep
-    // referencing the same content_id.
+    // See buildTicketQrAttachment for why. The template must keep referencing
+    // the same content_id.
     const qrAttachment = buildTicketQrAttachment(data.qrCodeData);
 
     if (!qrAttachment) {

@@ -2398,6 +2398,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           qrCodeData,
           orderId: order.id,
           qrCodeS3Url: updatedOrder?.qr_code_s3_url || "",
+          confirmationKind: "free",
         });
       } catch (emailErr) {
         // The inscription itself succeeded; do not fail the request over e-mail.
@@ -3170,6 +3171,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         qrCodeData: qrCodeData,
         orderId: order.id,
         qrCodeS3Url: finalOrderDetails.qr_code_s3_url || '',
+        confirmationKind: "courtesy",
       });
 
       res.status(201).json({
