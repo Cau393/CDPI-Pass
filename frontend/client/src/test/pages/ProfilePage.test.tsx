@@ -123,3 +123,29 @@ describe("ProfilePage — tabs on phones", () => {
     expect(await screen.findByTestId("tab-profile")).toHaveClass("min-h-11");
   });
 });
+
+describe("ProfilePage — ticket QR on mobile", () => {
+  it("shows a Ver QR Code button for a confirmed ticket", async () => {
+    renderPage();
+
+    expect(await screen.findByTestId("button-view-qr-o1")).toBeInTheDocument();
+  });
+
+  it("opens the QR image in a dialog when Ver QR Code is tapped", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-view-qr-o1"));
+
+    expect(await screen.findByTestId("img-qr-preview")).toHaveAttribute("src", QR_DATA_URL);
+  });
+
+  it("downloads the QR through the blob helper with the ticket filename", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-download-o1"));
+
+    expect(downloadDataUrl).toHaveBeenCalledWith(QR_DATA_URL, "ingresso-o1.png");
+  });
+});

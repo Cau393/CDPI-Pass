@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
@@ -23,7 +24,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Download, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, Shield, AlertTriangle, RefreshCw, Mail, ChevronLeft, ChevronRight, Award } from "lucide-react";
+import { downloadDataUrl } from "@/lib/downloadDataUrl";
+import { Download, Eye, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, Shield, AlertTriangle, RefreshCw, Mail, ChevronLeft, ChevronRight, Award } from "lucide-react";
 import { CertificatesTab } from "@/components/CertificatesTab";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 import type { User, Order, CourtesyLink } from "@shared/schema";
@@ -50,6 +52,9 @@ export default function ProfilePage() {
   const [hasChangedSensitiveFields, setHasChangedSensitiveFields] = useState(false);
   const [cooldownTime, setCooldownTime] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
+  const [qrPreview, setQrPreview] = useState<
+    { orderId: string; title: string; dataUrl: string } | null
+  >(null);
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -465,17 +470,28 @@ const handleCancelOrder = (orderId: string) => {
                                   </div>
                                 </div>
                                 {isPaidLikeOrderStatus(order.status) && order.qrCodeData ? (
-                                  <div className="flex gap-2">
+                                  <div className="flex flex-wrap gap-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() =>
+                                        setQrPreview({
+                                          orderId: order.id,
+                                          title: order.event?.title || "Evento",
+                                          dataUrl: order.qrCodeData,
+                                        })
+                                      }
+                                      data-testid={`button-view-qr-${order.id}`}
+                                    >
+                                      <Eye className="h-4 w-4 mr-2" />
+                                      Ver QR Code
+                                    </Button>
                                     <Button
                                       className="bg-primary hover:bg-secondary"
                                       size="sm"
-                                      onClick={() => {
-                                        // Create download link for QR code
-                                        const link = document.createElement('a');
-                                        link.href = order.qrCodeData;
-                                        link.download = `ingresso-${order.id}.png`;
-                                        link.click();
-                                      }}
+                                      onClick={() =>
+                                        downloadDataUrl(order.qrCodeData, `ingresso-${order.id}.png`)
+                                      }
                                       data-testid={`button-download-${order.id}`}
                                     >
                                       <Download className="h-4 w-4 mr-2" />
@@ -864,6 +880,32 @@ const handleCancelOrder = (orderId: string) => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* In-app browsers (WhatsApp/Instagram) block downloads and new tabs, so the QR
+          must also be viewable without leaving the page. */}
+      <Dialog
+        open={qrPreview !== null}
+        onOpenChange={(open) => {
+          if (!open) setQrPreview(null);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{qrPreview?.title}</DialogTitle>
+          </DialogHeader>
+          {qrPreview && (
+            <img
+              src={qrPreview.dataUrl}
+              alt={`QR Code do ingresso ${qrPreview.orderId}`}
+              className="mx-auto h-auto w-full max-w-[280px]"
+              data-testid="img-qr-preview"
+            />
+          )}
+          <p className="text-center text-sm text-muted-foreground">
+            Apresente este QR Code na entrada do evento.
+          </p>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
