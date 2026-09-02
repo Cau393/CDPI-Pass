@@ -9,6 +9,7 @@ import PaymentModal from "@/components/PaymentModal";
 import type { Event, Order } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
+import EventCoverImage from "@/components/EventCoverImage";
 
 export default function HomePage() {
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
@@ -115,26 +116,24 @@ export default function HomePage() {
                 >
 
                   <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,52%)_minmax(0,48%)] lg:items-stretch min-h-0">
-                    {/* Event Image — wider column + grid row stretch = full height next to text; object-fill fills box */}
-                    <div className="relative w-full min-h-[260px] overflow-hidden bg-gray-50 lg:min-h-0">
-                      {mainEvent.imageUrl ? (
-                        <img
-                          src={mainEvent.imageUrl}
-                          alt={mainEvent.title}
-                          className="absolute inset-0 h-full w-full object-fill"
-                        />
-                      ) : (
-                        <div className="absolute inset-0 bg-gradient-to-br from-primary to-secondary p-8 flex items-center justify-center">
+                    <EventCoverImage
+                      src={mainEvent.imageUrl}
+                      alt={mainEvent.title}
+                      priority
+                      data-testid="img-main-event"
+                      className="w-full aspect-[4/3] sm:aspect-video lg:aspect-auto lg:h-full lg:min-h-[420px]"
+                      fallback={
+                        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-primary to-secondary p-8">
                           <div className="text-center text-white">
-                            <div className="w-48 h-48 bg-white/20 rounded-full mx-auto mb-4 flex items-center justify-center">
+                            <div className="mx-auto mb-4 flex h-48 w-48 items-center justify-center rounded-full bg-white/20">
                               <span className="text-6xl">📅</span>
                             </div>
                             <p className="text-sm">Evento</p>
                             <p className="font-bold text-lg">CDPI</p>
                           </div>
                         </div>
-                      )}
-                    </div>
+                      }
+                    />
 
                     {/* Event Details */}
                     <div className="min-w-0 p-8">
