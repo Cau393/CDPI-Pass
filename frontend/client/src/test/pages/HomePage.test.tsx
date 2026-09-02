@@ -95,12 +95,13 @@ describe("HomePage — main event cover image", () => {
     expect(foreground).not.toHaveClass("object-fill");
   });
 
-  it("gives the cover a full-width 16:9 frame", async () => {
+  it("gives the cover a full-width 16:9 frame on mobile", async () => {
     vi.stubGlobal("fetch", mockApi(baseEvent));
     renderPage();
 
     const wrapper = await screen.findByTestId("img-main-event");
     expect(wrapper).toHaveClass("w-full", "aspect-video");
+    expect(wrapper.className).toMatch(/md:aspect-auto/);
   });
 
   it("uses a compact side-by-side layout from tablet widths", async () => {
@@ -109,6 +110,7 @@ describe("HomePage — main event cover image", () => {
 
     const layout = await screen.findByTestId("main-event-layout");
     expect(layout.className).toMatch(/md:grid-cols/);
+    expect(layout.className).toMatch(/md:items-stretch/);
   });
 
   it("limits the homepage description to a short teaser", async () => {
@@ -120,6 +122,7 @@ describe("HomePage — main event cover image", () => {
     renderPage();
 
     const description = await screen.findByTestId("main-event-description");
+    expect(description).toHaveClass("md:hidden", "line-clamp-2");
     expect(description.textContent?.length).toBeLessThanOrEqual(90);
     expect(description).toHaveTextContent(/…$/);
   });

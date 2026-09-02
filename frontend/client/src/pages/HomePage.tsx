@@ -140,7 +140,7 @@ export default function HomePage() {
                 >
 
                   <div
-                    className="grid grid-cols-1 md:grid-cols-[minmax(0,55%)_minmax(0,45%)] md:items-start"
+                    className="grid grid-cols-1 md:grid-cols-[minmax(0,55%)_minmax(0,45%)] md:items-stretch"
                     data-testid="main-event-layout"
                   >
                     <EventCoverImage
@@ -148,7 +148,7 @@ export default function HomePage() {
                       alt={mainEvent.title}
                       priority
                       data-testid="img-main-event"
-                      className="aspect-video w-full md:self-start"
+                      className="aspect-video w-full md:aspect-auto md:h-full md:min-h-0"
                       fallback={
                         <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-primary to-secondary p-8">
                           <div className="text-center text-white">
@@ -162,34 +162,38 @@ export default function HomePage() {
                       }
                     />
 
-                    {/* Event Details */}
-                    <div className="min-w-0 p-5 sm:p-6 md:p-4 xl:p-6">
-                      <h2 className="mb-2 line-clamp-3 text-2xl font-bold leading-tight text-gray-900 md:text-xl xl:text-2xl">
+                    {/* Event Details — mobile unchanged from push; desktop omits body copy */}
+                    <div className="min-w-0 p-5 sm:p-6 md:flex md:h-full md:flex-col md:justify-between md:p-4 xl:p-6">
+                      <h2 className="mb-2 line-clamp-3 text-2xl font-bold leading-tight text-gray-900 md:line-clamp-2 md:text-xl xl:text-2xl">
                         {mainEvent.title}
                       </h2>
                       <p
-                        className="mb-4 line-clamp-2 overflow-hidden text-sm text-gray-600 md:hidden xl:block"
+                        className="mb-4 line-clamp-2 overflow-hidden text-sm text-gray-600 md:hidden"
                         data-testid="main-event-description"
                       >
                         {getMainEventDescriptionTeaser(mainEvent.description)}
                       </p>
-                      
-                      <div className="mb-5 space-y-2 text-sm">
+
+                      <div className="mb-5 space-y-2 text-sm md:mb-0">
                         <div className="flex items-center text-gray-600">
                           <Calendar className="mr-2 h-4 w-4 shrink-0 text-primary" />
-                          <span className="truncate">{new Date(mainEvent.date).toLocaleDateString('pt-BR', {
-                            day: 'numeric',
-                            month: 'long',
-                            year: 'numeric'
-                          })}</span>
+                          <span className="truncate md:whitespace-normal md:line-clamp-2">
+                            {new Date(mainEvent.date).toLocaleDateString("pt-BR", {
+                              day: "numeric",
+                              month: "long",
+                              year: "numeric",
+                            })}
+                          </span>
                         </div>
-                        <div className="flex min-w-0 items-center text-gray-600">
-                          <MapPin className="mr-2 h-4 w-4 shrink-0 text-primary" />
-                          <span className="truncate">{mainEvent.location}</span>
+                        <div className="flex min-w-0 items-center text-gray-600 md:items-start">
+                          <MapPin className="mr-2 h-4 w-4 shrink-0 text-primary md:mt-0.5" />
+                          <span className="truncate md:line-clamp-2 md:whitespace-normal">
+                            {mainEvent.location}
+                          </span>
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center justify-between gap-3 md:mt-3">
                         <div className="min-w-0 shrink">
                           <p className="text-xl font-bold text-primary tabular-nums xl:text-2xl">
                             {mainEvent.isFree
