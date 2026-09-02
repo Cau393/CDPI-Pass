@@ -182,6 +182,78 @@ Note the app currently accepts webhooks on both the apex and `www`. The apex
 must keep proxying `/api/` rather than redirecting, since Asaas has
 historically posted there and a 301 on POST drops the body.
 
+## S3 buckets
+
+### cdpi-pass-qr-codes
+
+Despite the name this bucket holds four different things, with different
+sensitivity, which is why the access policy is not uniform:
+
+| Prefix | Contents | Access |
+|--------|----------|--------|
+| `qr-codes/` | 333 ticket QR PNGs | **private** |
+| `certificates/` | attendee certificate PDFs (full names) | **private** |
+| `certificate-templates/` | admin-uploaded .docx templates | **private** |
+| `events/` | event cover images | public read |
+| 3 root objects | legacy event banners | public read |
+
+Until 2026-09-02 the policy was a single `PublicReadGetObject` on
+`arn:...:cdpi-pass-qr-codes/*`, so **everything above was world-readable**.
+Confirmed by unauthenticated fetch: a QR ticket returned 200 with a 5267-byte
+PNG and a certificate PDF returned 200 with 83179 bytes. Anonymous *listing*
+was denied, so keys were not enumerable, but QR URLs are embedded in every
+ticket email.
+
+Two things to know before touching this policy again:
+
+1. **Public read cannot be scoped to `events/*` alone.** The three live events
+   reference banners stored at the bucket *root*, not under `events/`. Scoping
+   to `events/*` returns 403 for all three and blanks the homepage.
+2. **The root banner keys are NFD-normalised** (`DERIVAÇÃO` with combining
+   accents). Writing them NFC in the policy JSON does not match and silently
+   yields 403. Generate the policy from the exact keys S3 returns:
+
+```bash
+aws s3api list-objects-v2 --bucket cdpi-pass-qr-codes --delimiter '/' \
+  --query 'Contents[].Key' --output json
+```
+
+Public access block is `BlockPublicAcls=true, IgnorePublicAcls=true`, with
+`BlockPublicPolicy` and `RestrictPublicBuckets` deliberately **off**: turning
+them on revokes the `events/*` public read the site depends on.
+
+Verify the split:
+
+```bash
+# must be 403
+curl -s -o /dev/null -w '%{http_code}\n' \
+  "https://cdpi-pass-qr-codes.s3.sa-east-1.amazonaws.com/qr-codes/<key>"
+# must be 200 (all three live banners)
+curl -s https://www.cdpipass.com.br/api/events | \
+  python3 -c "import json,sys;[print(e['imageUrl']) for e in json.load(sys.stdin) if e.get('imageUrl')]"
+```
+
+Certificates are served as 900-second presigned URLs generated per request by
+`/api/users/me/certificates` and `/api/certificates/generate`
+(`server/utils/presignedUrl.ts`). This is transparent to users because the
+client always refetches the URL from the authenticated API.
+
+QR codes needed no equivalent: the app renders them from the base64
+`qr_code_data` column, never the S3 URL. The S3 copies only backed historical
+emails. Old ticket emails will now show a broken QR image, which is acceptable
+because the latest event was 2026-05-20 and there are no upcoming events. If
+ticket sales resume, either embed the QR as a data URI or attach it, rather
+than re-opening the bucket.
+
+Note the certificate feature is currently unused in production: 0 rows in
+`certificates`, 0 events with a template.
+
+### cdpi-pass-frontend-prod
+
+Still fully public with the public access block disabled. It serves a static
+frontend build, so public read is expected, but it should get the same
+treatment: an explicit read-only policy plus ACL blocks. Not yet done.
+
 ## Known drift (RESOLVED 2026-09-02)
 
 Production is served by the **PM2 process** `cdpi-pass`, from a git checkout at
