@@ -53,3 +53,47 @@ describe("prepareDescriptionHtmlForDisplay", () => {
     expect(prepareDescriptionHtmlForDisplay("linha 1\nlinha 2")).toBe("linha 1\nlinha 2");
   });
 });
+
+describe("prepareDescriptionHtmlForDisplay — paragraphs that are only a break", () => {
+  it("keeps a legacy blank line as one blank paragraph, not two", () => {
+    // normalizeDescriptionForEditor emits exactly this for a blank plain-text line.
+    expect(prepareDescriptionHtmlForDisplay("<p><br /></p>")).toBe("<p></p>");
+  });
+
+  it("keeps a blank line between two lines of text", () => {
+    expect(prepareDescriptionHtmlForDisplay("<p>A</p><p><br /></p><p>B</p>")).toBe(
+      "<p>A</p><p></p><p>B</p>",
+    );
+  });
+});
+
+describe("prepareDescriptionHtmlForDisplay — breaks inside formatting", () => {
+  it("converts a trailing break that the editor wrapped in bold", () => {
+    expect(prepareDescriptionHtmlForDisplay("<p><strong>A<br /></strong></p>")).toBe(
+      "<p><strong>A</strong></p><p></p>",
+    );
+  });
+
+  it("converts a trailing break wrapped in nested formatting", () => {
+    expect(prepareDescriptionHtmlForDisplay("<p><em><u>A<br /></u></em></p>")).toBe(
+      "<p><em><u>A</u></em></p><p></p>",
+    );
+  });
+
+  it("keeps a break that is followed by more formatted text", () => {
+    expect(prepareDescriptionHtmlForDisplay("<p><strong>A<br />B</strong></p>")).toBe(
+      "<p><strong>A<br />B</strong></p>",
+    );
+  });
+});
+
+describe("prepareDescriptionHtmlForDisplay — performance", () => {
+  it("handles a paragraph padded with thousands of breaks without hanging the page", () => {
+    const padded = `<p>${"<br />".repeat(20000)}texto</p>`;
+
+    const started = Date.now();
+    prepareDescriptionHtmlForDisplay(padded);
+
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+});
