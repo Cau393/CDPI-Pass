@@ -29,6 +29,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Switch } from "@/components/ui/switch";
 import EventDescriptionEditor from "@/components/admin/EventDescriptionEditor";
 import {
   dateToApiLocalString,
@@ -44,6 +45,7 @@ type EventFormShape = {
   location: string;
   price: string;
   npsType: "cdpi_event" | "cdpi_apoiando";
+  isFree: boolean;
   coverImage?: FileList;
 };
 
@@ -66,6 +68,9 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
   onClearNewCover,
 }: EventFormFieldsProps<T>) {
   const control = form.control;
+  // A free event has no price to set, so the field is faded out and forced to 0.
+  // This is presentation only: the server recomputes free-vs-paid from the DB.
+  const isFree = Boolean(form.watch("isFree" as Path<T>));
 
   return (
     <>
@@ -207,7 +212,12 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
           control={control}
           name={"price" as Path<T>}
           render={({ field }) => (
-            <FormItem>
+            <FormItem
+              aria-disabled={isFree}
+              className={cn(
+                isFree && "pointer-events-none opacity-50",
+              )}
+            >
               <FormLabel>Preço</FormLabel>
               <FormControl>
                 <Input
@@ -216,11 +226,17 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
                   placeholder="0,00"
                   autoComplete="off"
                   className="tabular-nums"
+                  data-testid="input-event-price"
                   {...field}
-                  value={field.value ?? ""}
+                  disabled={isFree}
+                  value={isFree ? "0,00" : (field.value ?? "")}
                 />
               </FormControl>
-              <FormDescription>Reais · vírgula nos centavos (ex.: 1.234,56)</FormDescription>
+              <FormDescription>
+                {isFree
+                  ? "Evento gratuito: o preço fica fixo em R$ 0,00."
+                  : "Reais · vírgula nos centavos (ex.: 1.234,56)"}
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -242,6 +258,42 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
 
       <FormField
         control={control}
+        name={"isFree" as Path<T>}
+        render={({ field }) => (
+          <FormItem className="flex flex-row items-start justify-between gap-4 rounded-lg border p-4">
+            <div className="space-y-1">
+              <FormLabel htmlFor="event-is-free" className="text-base">
+                Evento Grátis
+              </FormLabel>
+              <FormDescription>
+                Inscrição gratuita: sem preço, sem taxa de conveniência de R$ 5,00 e sem
+                etapa de pagamento. O participante confirma e recebe o QR por e-mail.
+              </FormDescription>
+            </div>
+            <FormControl>
+              <Switch
+                id="event-is-free"
+                data-testid="switch-event-is-free"
+                checked={Boolean(field.value)}
+                onCheckedChange={(checked) => {
+                  field.onChange(checked);
+                  // Keep the visible price consistent with the switch. The
+                  // server pins it to 0 regardless, this is just for the form.
+                  if (checked) {
+                    form.setValue("price" as Path<T>, "0,00" as never, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
+                  }
+                }}
+              />
+            </FormControl>
+          </FormItem>
+        )}
+      />
+
+      <FormField
+        control={control}
         name={"npsType" as Path<T>}
         render={({ field }) => (
           <FormItem className="md:col-span-2">
@@ -258,13 +310,13 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
                 <div className="flex items-center space-x-2 rounded-lg border p-3">
                   <RadioGroupItem value="cdpi_event" id="nps-cdpi-event" />
                   <Label htmlFor="nps-cdpi-event" className="cursor-pointer font-normal leading-snug">
-                    Evento do CDPI
+                    Evento CDPI
                   </Label>
                 </div>
                 <div className="flex items-center space-x-2 rounded-lg border p-3">
                   <RadioGroupItem value="cdpi_apoiando" id="nps-apoiando" />
                   <Label htmlFor="nps-apoiando" className="cursor-pointer font-normal leading-snug">
-                    CDPI Apoiando Evento
+                    Evento de Terceiros
                   </Label>
                 </div>
               </RadioGroup>

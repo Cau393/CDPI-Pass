@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Link, useLocation, useParams } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Loader2, Save, Trash2 } from "lucide-react";
+import { Loader2, Lock, LockOpen, Save, Trash2 } from "lucide-react";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -13,6 +13,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -67,6 +68,7 @@ function buildPatchFormData(
   if (dirty.location) fd.append("location", values.location.trim());
   if (dirty.price) fd.append("price", brazilianPriceToApiString(values.price));
   if (dirty.npsType) fd.append("nps_type", values.npsType);
+  if (dirty.isFree) fd.append("is_free", String(values.isFree));
   if (dirty.coverImage && values.coverImage?.[0]) {
     fd.append("coverImage", values.coverImage[0]);
   }
@@ -81,6 +83,7 @@ export default function AdminEditEventPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [salesDialogOpen, setSalesDialogOpen] = useState(false);
 
   const {
     data: event,
@@ -133,6 +136,34 @@ export default function AdminEditEventPage() {
     },
   });
 
+  const updateSalesClosed = useMutation({
+    mutationFn: async (salesClosed: boolean) => {
+      // Sent as its own PATCH so closing sales never depends on the main form
+      // being valid or dirty.
+      const fd = new FormData();
+      fd.append("sales_closed", String(salesClosed));
+      const res = await apiRequest("PATCH", `/api/admin/events/${id}`, fd);
+      return res.json() as Promise<Event>;
+    },
+    onSuccess: (updated) => {
+      void queryClient.invalidateQueries({ queryKey: ["/api/admin/events", id] });
+      void queryClient.invalidateQueries({ queryKey: ["admin-events-paginated"] });
+      toast({
+        title: updated.salesClosed ? "Vendas encerradas" : "Vendas reabertas",
+        description: updated.salesClosed
+          ? "Novas compras e inscrições estão bloqueadas. O resgate de cortesia continua funcionando."
+          : "O evento voltou a aceitar novas compras e inscrições.",
+      });
+    },
+    onError: (err) => {
+      toast({
+        title: "Erro ao salvar",
+        description: parseApiErrorMessage(err),
+        variant: "destructive",
+      });
+    },
+  });
+
   const form = useForm<EditEventFormValues>({
     resolver: zodResolver(editEventSchema),
     defaultValues: {
@@ -142,6 +173,7 @@ export default function AdminEditEventPage() {
       location: "",
       price: "",
       npsType: "cdpi_event",
+      isFree: false,
     },
   });
 
@@ -157,6 +189,7 @@ export default function AdminEditEventPage() {
       location: event.location,
       price: apiPriceToBrazilianDisplay(event.price),
       npsType: event.npsType ?? "cdpi_event",
+      isFree: event.isFree ?? false,
     });
   }, [event, form]);
 
@@ -182,7 +215,8 @@ export default function AdminEditEventPage() {
       dirty.date ||
       dirty.location ||
       dirty.price ||
-      dirty.npsType;
+      dirty.npsType ||
+      dirty.isFree;
 
     if (!hasTextDirty && !hasNewCover) {
       toast({
@@ -208,6 +242,7 @@ export default function AdminEditEventPage() {
         location: updated.location,
         price: apiPriceToBrazilianDisplay(updated.price),
         npsType: updated.npsType ?? "cdpi_event",
+        isFree: updated.isFree ?? false,
         coverImage: undefined,
       });
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -294,6 +329,18 @@ export default function AdminEditEventPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Editar evento</h1>
           <p className="text-sm text-muted-foreground">{event.title}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {event.isFree && (
+              <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
+                Evento Grátis
+              </Badge>
+            )}
+            {event.salesClosed && (
+              <Badge variant="destructive" data-testid="badge-sales-closed">
+                Vendas encerradas
+              </Badge>
+            )}
+          </div>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch sm:gap-3">
           <Card className="w-full min-w-0 sm:min-w-[280px]">
@@ -322,6 +369,64 @@ export default function AdminEditEventPage() {
               </div>
             </CardHeader>
           </Card>
+
+          <AlertDialog open={salesDialogOpen} onOpenChange={setSalesDialogOpen}>
+            <AlertDialogTrigger asChild>
+              <Button
+                type="button"
+                variant={event.salesClosed ? "outline" : "secondary"}
+                size="sm"
+                disabled={updateSalesClosed.isPending}
+                data-testid="button-toggle-sales"
+              >
+                {updateSalesClosed.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : event.salesClosed ? (
+                  <LockOpen className="mr-2 h-4 w-4" />
+                ) : (
+                  <Lock className="mr-2 h-4 w-4" />
+                )}
+                {event.salesClosed ? "Reabrir Vendas" : "Encerrar Vendas"}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {event.salesClosed ? "Reabrir as vendas?" : "Encerrar as vendas?"}
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {event.salesClosed ? (
+                    <>
+                      O evento voltará a aceitar novas compras e inscrições.
+                    </>
+                  ) : (
+                    <>
+                      Novas compras e inscrições serão bloqueadas. O evento continua
+                      ativo e visível, e o <strong>resgate de cortesia continua
+                      funcionando</strong>. Você pode reabrir a qualquer momento.
+                    </>
+                  )}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={updateSalesClosed.isPending}>
+                  Cancelar
+                </AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={updateSalesClosed.isPending}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    updateSalesClosed.mutate(!event.salesClosed, {
+                      onSettled: () => setSalesDialogOpen(false),
+                    });
+                  }}
+                >
+                  {event.salesClosed ? "Reabrir vendas" : "Encerrar vendas"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
         <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
           <AlertDialogTrigger asChild>
             <Button type="button" variant="destructive" size="sm">

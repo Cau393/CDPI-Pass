@@ -1,14 +1,14 @@
 import { useParams, useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Calendar, MapPin, Users, Clock, ArrowLeft } from "lucide-react";
+import { Calendar, MapPin, Users, Clock, ArrowLeft, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
 import type { Event, Order } from "@shared/schema";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
 
@@ -69,6 +69,52 @@ export default function EventDetailsPage() {
   const displayPrice = promoLink?.overridePrice 
     ? parseFloat(promoLink.overridePrice) 
     : (event ? parseFloat(event.price) : 0);
+
+  // Both flags are authoritative on the server; these only drive the UI.
+  const isFree = event?.isFree === true;
+  const salesClosed = event?.salesClosed === true;
+
+  /**
+   * Free inscription: one confirmation click, no payment step, no Asaas call.
+   * The server re-checks that the event really is free and that sales are open.
+   */
+  const subscribeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/events/${id}/subscribe`);
+      return res.json() as Promise<{ message: string }>;
+    },
+    onSuccess: async () => {
+      toast({
+        title: "Inscrição confirmada!",
+        description:
+          "Enviamos seu ingresso com o QR Code por e-mail. Ele também fica no seu perfil.",
+      });
+      await queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      await queryClient.invalidateQueries({ queryKey: [`/api/events/${id}`] });
+      setLocation("/profile");
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Não foi possível confirmar",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleFreeSubscribe = () => {
+    if (!isAuthenticated) {
+      toast({
+        title: "Login necessário",
+        description: "Faça login ou cadastre-se para se inscrever",
+        variant: "destructive",
+      });
+      const next = `${window.location.pathname}${window.location.search}`;
+      setLocation(`/login?next=${encodeURIComponent(next)}`);
+      return;
+    }
+    subscribeMutation.mutate();
+  };
 
   const [modalData, setModalData] = useState<{
     event: Event;
@@ -240,35 +286,75 @@ export default function EventDetailsPage() {
           <div className="border-t pt-6">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
               <div>
-                <p className="text-sm text-gray-600 mb-1">Valor do ingresso</p>
-                <p className="text-3xl font-bold text-primary">
-                  {formatCurrency(displayPrice)}
+                <p className="text-sm text-gray-600 mb-1">
+                  {isFree ? "Inscrição" : "Valor do ingresso"}
                 </p>
-                {promoLink && (
+                <p className="text-3xl font-bold text-primary">
+                  {isFree ? "Grátis" : formatCurrency(displayPrice)}
+                </p>
+                {promoLink && !isFree && (
                   <p className="text-sm text-green-600">
                     Promoção aplicada ({promoCode})
                   </p>
                 )}
-                <p className="text-xs text-gray-500 mt-1">
-                  + taxa de conveniência de R$ 5,00
-                </p>
+                {/* Free events skip the R$5 convenience fee entirely. */}
+                {!isFree && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    + taxa de conveniência de R$ 5,00
+                  </p>
+                )}
+                {isFree && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Sem taxa de conveniência
+                  </p>
+                )}
               </div>
 
-              {/* ✅ Updated Buy Button */}
               <Button
-                onClick={() => handleBuyTicket(event, promoCode)}
+                onClick={() => {
+                  if (isFree) {
+                    handleFreeSubscribe();
+                    return;
+                  }
+                  handleBuyTicket(event, promoCode);
+                }}
                 className="bg-primary hover:bg-secondary text-white px-8 py-6 text-lg"
-                disabled={spotsLeft === 0 || hasPaidForEvent}
+                disabled={
+                  spotsLeft === 0 ||
+                  hasPaidForEvent ||
+                  salesClosed ||
+                  subscribeMutation.isPending
+                }
+                data-testid="button-event-cta"
               >
-                {spotsLeft === 0
-                  ? "Evento Esgotado"
-                  : hasPaidForEvent
-                    ? "Ingresso já confirmado"
-                    : "Comprar Ingresso"}
+                {subscribeMutation.isPending && (
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                )}
+                {hasPaidForEvent
+                  ? isFree
+                    ? "Inscrição confirmada"
+                    : "Ingresso já confirmado"
+                  : spotsLeft === 0
+                    ? "Evento Esgotado"
+                    : salesClosed
+                      ? "Vendas encerradas"
+                      : subscribeMutation.isPending
+                        ? "Confirmando..."
+                        : isFree
+                          ? "Confirmar inscrição"
+                          : "Comprar Ingresso"}
               </Button>
               {hasPaidForEvent && (
                 <p className="text-sm text-muted-foreground text-center sm:text-right w-full sm:w-auto">
                   Você já possui inscrição confirmada para este evento.
+                </p>
+              )}
+              {!hasPaidForEvent && salesClosed && (
+                <p
+                  className="text-sm text-muted-foreground text-center sm:text-right w-full sm:w-auto"
+                  data-testid="text-sales-closed"
+                >
+                  As vendas para este evento foram encerradas.
                 </p>
               )}
             </div>

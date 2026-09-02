@@ -119,7 +119,9 @@ export default function EventsPage() {
                   </div>
                   <div className="flex items-center justify-between">
                     <p className="text-2xl font-bold text-primary">
-                      R$ {parseFloat(event.price).toFixed(2)}
+                      {event.isFree
+                        ? "Grátis"
+                        : `R$ ${parseFloat(event.price).toFixed(2)}`}
                     </p>
                     <Button
                       size="sm"

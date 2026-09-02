@@ -36,6 +36,8 @@ const MOCK_EVENTS = [
     courtesyTemplate: null,
     courtesyEmailSubject: null,
     npsType: "cdpi_event" as const,
+    isFree: false,
+    salesClosed: false,
   },
 ];
 

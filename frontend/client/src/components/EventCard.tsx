@@ -64,7 +64,7 @@ export default function EventCard({ event, onBuyTicket }: EventCardProps) {
         
         <div className="flex items-center justify-between">
           <div className="text-2xl font-bold text-primary" data-testid={`text-event-price-${event.id}`}>
-            {formatCurrency(event.price)}
+            {event.isFree ? "Grátis" : formatCurrency(event.price)}
           </div>
           <div className="flex space-x-2">
             <Button
@@ -78,9 +78,14 @@ export default function EventCard({ event, onBuyTicket }: EventCardProps) {
             <Button
               className="bg-primary hover:bg-secondary text-white"
               onClick={() => onBuyTicket(event)}
+              disabled={event.salesClosed === true}
               data-testid={`button-buy-ticket-${event.id}`}
             >
-              Comprar
+              {event.salesClosed
+                ? "Vendas encerradas"
+                : event.isFree
+                  ? "Inscrever-se"
+                  : "Comprar"}
             </Button>
           </div>
         </div>

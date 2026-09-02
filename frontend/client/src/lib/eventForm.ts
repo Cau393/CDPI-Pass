@@ -89,6 +89,7 @@ export const createEventSchema = z.object({
       return Number.isFinite(n) && n >= 0;
     }, "Digite um valor válido (ex.: 0,00 ou 1234,56)"),
   npsType: npsTypeSchema.default("cdpi_event"),
+  isFree: z.boolean().default(false),
   coverImage: z
     .custom<FileList | undefined>((v) => v === undefined || v instanceof FileList)
     .refine(
@@ -128,6 +129,7 @@ export const editEventSchema = z.object({
       return Number.isFinite(n) && n >= 0;
     }, "Digite um valor válido (ex.: 0,00 ou 1.234,56)"),
   npsType: npsTypeSchema,
+  isFree: z.boolean().default(false),
   coverImage: coverFileListSchema,
 });
 

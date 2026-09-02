@@ -53,10 +53,22 @@ export const events = pgTable("events", {
   courtesyTemplate: text("courtesy_template"),
   /** Plain-text subject template for courtesy mass-send; same placeholders; null = use default subject. */
   courtesyEmailSubject: text("courtesy_email_subject"),
-  /** Which NPS form appears when redeeming certificate: Evento do CDPI vs CDPI Apoiando. */
+  /** Which NPS form appears when redeeming certificate: Evento CDPI vs Evento de Terceiros. */
   npsType: text("nps_type", { enum: ["cdpi_event", "cdpi_apoiando"] })
     .notNull()
     .default("cdpi_event"),
+  /**
+   * Free event ("Evento Grátis"): price is forced to 0, the R$5 convenience fee is
+   * skipped and inscription happens via POST /api/events/:id/subscribe with no
+   * Asaas charge. Authoritative on the server — never trust the client.
+   */
+  isFree: boolean("is_free").notNull().default(false),
+  /**
+   * "Encerrar Vendas": blocks new purchases and free subscriptions while leaving
+   * the event active and visible. Deliberately separate from `isActive`, because
+   * courtesy redemption must keep working after sales close.
+   */
+  salesClosed: boolean("sales_closed").notNull().default(false),
 });
 
 /** NPS responses for "Evento do CDPI" certificate flow. */

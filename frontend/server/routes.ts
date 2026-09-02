@@ -50,6 +50,16 @@ import {
 } from "./utils/massSendCourtesyQueries";
 import { executeOrderCancel } from "./utils/executeOrderCancel";
 import {
+  checkFreeSubscriptionAllowed,
+  checkPaidPurchaseAllowed,
+  computeOrderTotal,
+  isEventFull,
+  normalizeEventPrice,
+  parseBooleanField,
+  salesBlockedMessage,
+  salesBlockedStatus,
+} from "./utils/eventSalesPolicy";
+import {
   profileUpdateSchema,
   PROFILE_SENSITIVE_FIELDS,
 } from "./utils/profileUpdateSchema";
@@ -545,6 +555,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const npsTypeParsed = z.enum(["cdpi_event", "cdpi_apoiando"]).safeParse(npsTypeRaw);
         const npsType = npsTypeParsed.success ? npsTypeParsed.data : "cdpi_event";
 
+        // multipart/form-data sends booleans as strings.
+        const isFree = parseBooleanField((req.body as Record<string, unknown>).is_free);
+        const salesClosed = parseBooleanField(
+          (req.body as Record<string, unknown>).sales_closed,
+        );
+
         const textFields = { title, description, date, location, price } as const;
         for (const key of Object.keys(textFields) as (keyof typeof textFields)[]) {
           const v = textFields[key];
@@ -595,9 +611,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             description: description!.trim(),
             date: dateObj,
             location: location!.trim(),
-            price: normalizedPrice,
+            price: normalizeEventPrice(normalizedPrice, isFree),
             imageUrl,
             npsType,
+            isFree,
+            salesClosed,
           })
           .returning();
 
@@ -1042,6 +1060,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           price: string;
           imageUrl: string;
           npsType: "cdpi_event" | "cdpi_apoiando";
+          isFree: boolean;
+          salesClosed: boolean;
         }> = {};
 
         if (Object.prototype.hasOwnProperty.call(body, "title")) {
@@ -1087,6 +1107,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
+        // Read the flags first: whether the event is free decides what the
+        // price is allowed to be, below.
+        if (Object.prototype.hasOwnProperty.call(body, "is_free")) {
+          const v = parseBooleanField(body.is_free);
+          if (v !== (existing.isFree ?? false)) payload.isFree = v;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(body, "sales_closed")) {
+          const v = parseBooleanField(body.sales_closed);
+          if (v !== (existing.salesClosed ?? false)) payload.salesClosed = v;
+        }
+
+        /** Free state after this PATCH is applied. */
+        const effectiveIsFree = payload.isFree ?? existing.isFree ?? false;
+
         if (Object.prototype.hasOwnProperty.call(body, "price")) {
           const v = body.price;
           if (typeof v !== "string" || !v.trim()) {
@@ -1100,6 +1135,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const prevNum = Number(String(existing.price).replace(",", "."));
           if (!Number.isFinite(prevNum) || priceNum !== prevNum) {
             payload.price = normalizedPrice;
+          }
+        }
+
+        // A free event is always stored at 0, whatever the client sent. This
+        // also keeps the events_free_price_zero_chk constraint satisfied when
+        // an existing paid event is switched to free.
+        if (effectiveIsFree) {
+          const prevNum = Number(String(existing.price).replace(",", "."));
+          if (payload.price !== undefined || prevNum !== 0) {
+            payload.price = "0.00";
           }
         }
 
@@ -2153,9 +2198,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Evento não encontrado" });
       }
 
-      // Check if event is full
-      if (event.maxAttendees && (event.currentAttendees || 0) >= event.maxAttendees) {
-        return res.status(400).json({ message: "Evento lotado" });
+      // Free/paid and sales-open are decided from the stored event row, never
+      // from the client. A free event must not create an Asaas charge, and a
+      // sales-closed event must not accept new purchases.
+      const purchaseCheck = checkPaidPurchaseAllowed(event);
+      if (!purchaseCheck.ok) {
+        return res
+          .status(salesBlockedStatus(purchaseCheck.reason))
+          .json({ message: salesBlockedMessage(purchaseCheck.reason) });
       }
 
       // Calculate total amount (event price + convenience fee)
@@ -2175,8 +2225,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      const convenienceFee = 5.00;
-      const totalAmount = finalPrice + convenienceFee;
+      const totalAmount = computeOrderTotal(event, finalPrice);
 
       // Create order
       const order = await storage.createOrder({
@@ -2267,6 +2316,102 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Create order error:", error);
       res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+
+  /**
+   * Free inscription ("Evento Grátis"). No payment step and no Asaas call at
+   * all: the logged-in user confirms, we create a paid, zero-value order and
+   * send the QR ticket e-mail.
+   *
+   * The event must actually be free in the DB. The client cannot make a paid
+   * event free by calling this route.
+   */
+  app.post("/api/events/:id/subscribe", authenticateToken, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+
+      const parsedId = z.string().uuid().safeParse(req.params.id);
+      if (!parsedId.success) {
+        return res.status(400).json({ message: "Evento inválido" });
+      }
+      const eventId = parsedId.data;
+
+      const event = await storage.getEvent(eventId);
+      if (!event) {
+        return res.status(404).json({ message: "Evento não encontrado" });
+      }
+
+      // Authoritative free/paid + sales-closed gate.
+      const check = checkFreeSubscriptionAllowed(event);
+      if (!check.ok) {
+        return res
+          .status(salesBlockedStatus(check.reason))
+          .json({ message: salesBlockedMessage(check.reason) });
+      }
+
+      const cpf = req.user.cpf;
+      if (!cpf) {
+        return res
+          .status(400)
+          .json({ message: "Complete seu CPF no perfil antes de se inscrever." });
+      }
+
+      // Same one-inscription-per-CPF rule the paid flow relies on.
+      const alreadyRegistered = await storage.isCpfAlreadyRegisteredForEvent(cpf, eventId);
+      if (alreadyRegistered) {
+        return res
+          .status(409)
+          .json({ message: "Você já possui inscrição confirmada para este evento." });
+      }
+
+      // Free inscription is immediately confirmed: there is nothing to pay.
+      const order = await storage.createOrder({
+        userId,
+        eventId,
+        cpf,
+        paymentMethod: "free",
+        amount: "0.00",
+        status: "paid",
+      });
+
+      const qrCodeData = await qrCodeService.generateQRCode({
+        orderId: order.id,
+        eventId: event.id,
+        userId,
+      });
+
+      const updatedOrder = await storage.updateOrder(order.id, { qrCodeData });
+
+      await storage.updateEvent(event.id, {
+        currentAttendees: (event.currentAttendees || 0) + 1,
+      });
+
+      // The QR is attached inline from qrCodeData, so we do not need to wait
+      // for the S3 upload to land before sending.
+      try {
+        await emailService.sendTicketEmail(req.user.email, {
+          userName: req.user.name,
+          eventTitle: event.title,
+          eventDate: event.date,
+          eventLocation: event.location,
+          qrCodeData,
+          orderId: order.id,
+          qrCodeS3Url: updatedOrder?.qr_code_s3_url || "",
+        });
+      } catch (emailErr) {
+        // The inscription itself succeeded; do not fail the request over e-mail.
+        console.error("Erro ao enviar e-mail de inscrição gratuita:", emailErr);
+      }
+
+      return res.status(201).json({
+        message: "Inscrição confirmada!",
+        order: updatedOrder ?? order,
+        qrCode: qrCodeData,
+      });
+    } catch (error) {
+      console.error("POST /api/events/:id/subscribe:", error);
+      return res.status(500).json({ message: "Erro ao confirmar inscrição" });
     }
   });
 
@@ -2903,7 +3048,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Check if event is full
-      if (event.maxAttendees && (event.currentAttendees || 0) >= event.maxAttendees) {
+      //
+      // NOTE: `salesClosed` ("Encerrar Vendas") is deliberately NOT checked here.
+      // Closing sales blocks new purchases and free subscriptions only; courtesy
+      // redemption must keep working so invited guests can still claim a seat.
+      // Use `isActive` if the whole event needs to be shut down.
+      if (isEventFull(event)) {
         return res.status(400).json({ message: "Evento lotado" });
       }
 
