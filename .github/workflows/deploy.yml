@@ -15,8 +15,12 @@ jobs:
 
       # Installs the pnpm version pinned by "packageManager" in
       # frontend/package.json, so CI cannot drift from local/prod.
+      # package_json_file is required because this repo's package.json lives
+      # in frontend/, not at the root, and the action defaults to the root.
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
