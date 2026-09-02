@@ -34,6 +34,11 @@ import {
 } from "@/components/ui/pagination";
 
 
+/** Below `sm` the four tabs sit in a 2x2 grid, long labels wrap and each tab keeps a 44px
+ *  touch target; from `sm` they collapse back to one row of four. */
+const PROFILE_TAB_CLASS =
+  "flex min-h-11 items-center justify-center gap-2 whitespace-normal py-2 text-center leading-tight sm:min-h-0 sm:whitespace-nowrap";
+
 export default function ProfilePage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -378,21 +383,21 @@ const handleCancelOrder = (orderId: string) => {
         {/* Profile Content */}
         <div className="lg:col-span-3">
           <Tabs defaultValue="orders" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="orders" className="flex items-center gap-2" data-testid="tab-orders">
-                <Ticket className="h-4 w-4" />
+            <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
+              <TabsTrigger value="orders" className={PROFILE_TAB_CLASS} data-testid="tab-orders">
+                <Ticket className="h-4 w-4 shrink-0" />
                 Meus Ingressos
               </TabsTrigger>
-              <TabsTrigger value="certificates" className="flex items-center gap-2" data-testid="tab-certificates">
-                <Award className="h-4 w-4" />
+              <TabsTrigger value="certificates" className={PROFILE_TAB_CLASS} data-testid="tab-certificates">
+                <Award className="h-4 w-4 shrink-0" />
                 Certificados
               </TabsTrigger>
-              <TabsTrigger value="profile" className="flex items-center gap-2" data-testid="tab-profile">
-                <UserIcon className="h-4 w-4" />
+              <TabsTrigger value="profile" className={PROFILE_TAB_CLASS} data-testid="tab-profile">
+                <UserIcon className="h-4 w-4 shrink-0" />
                 Informações Pessoais
               </TabsTrigger>
-              <TabsTrigger value="security" className="flex items-center gap-2" data-testid="tab-security">
-                <Shield className="h-4 w-4" />
+              <TabsTrigger value="security" className={PROFILE_TAB_CLASS} data-testid="tab-security">
+                <Shield className="h-4 w-4 shrink-0" />
                 Segurança
               </TabsTrigger>
             </TabsList>
