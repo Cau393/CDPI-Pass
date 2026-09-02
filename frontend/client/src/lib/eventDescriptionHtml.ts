@@ -51,3 +51,19 @@ export function normalizeDescriptionForEditor(raw: string): string {
   });
   return parts.join("") || "<p></p>";
 }
+
+const TRAILING_BREAKS_RE = /((?:<br\s*\/?>\s*)+)<\/p>/gi;
+
+/**
+ * TipTap shows a hard break at the end of a paragraph as a visible blank line
+ * (ProseMirror appends a trailing <br>), but browsers render `<p>text<br></p>`
+ * as a single line. Each trailing break becomes an empty paragraph so the public
+ * page shows the same blank lines the admin sees in the editor.
+ */
+export function prepareDescriptionHtmlForDisplay(html: string): string {
+  const safe = sanitizeEventDescriptionHtml(html);
+  return safe.replace(TRAILING_BREAKS_RE, (_match, breaks: string) => {
+    const count = (breaks.match(/<br/gi) ?? []).length;
+    return `</p>${"<p></p>".repeat(count)}`;
+  });
+}
