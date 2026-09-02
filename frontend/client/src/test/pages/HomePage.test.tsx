@@ -180,17 +180,46 @@ describe("HomePage — contact", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows the new support phone in the footer", async () => {
+  it("shows the support email in the footer", async () => {
     vi.stubGlobal("fetch", mockApi(baseEvent));
     renderPage();
 
-    expect(await screen.findByText("+55 (62) 99865-5500")).toBeInTheDocument();
+    expect(
+      await screen.findByText("relacionamento.mkt@cdpipharma.com.br"),
+    ).toBeInTheDocument();
   });
 
-  it("keeps the existing support phone in the footer", async () => {
+  it("shows the landline in the footer", async () => {
     vi.stubGlobal("fetch", mockApi(baseEvent));
     renderPage();
 
-    expect(await screen.findByText("+55 (62) 99860-6833")).toBeInTheDocument();
+    expect(await screen.findByText(/3636-9909/)).toBeInTheDocument();
+  });
+
+  it("shows the WhatsApp numbers in the footer", async () => {
+    vi.stubGlobal("fetch", mockApi(baseEvent));
+    renderPage();
+
+    expect(await screen.findByText(/99865-5500/)).toBeInTheDocument();
+    expect(screen.getByText(/99610-1694/)).toBeInTheDocument();
+  });
+
+  it("links the support email with mailto", async () => {
+    vi.stubGlobal("fetch", mockApi(baseEvent));
+    renderPage();
+
+    expect(
+      await screen.findByRole("link", {
+        name: "relacionamento.mkt@cdpipharma.com.br",
+      }),
+    ).toHaveAttribute("href", "mailto:relacionamento.mkt@cdpipharma.com.br");
+  });
+
+  it("does not show the retired site number", async () => {
+    vi.stubGlobal("fetch", mockApi(baseEvent));
+    renderPage();
+
+    await screen.findByTestId("site-footer");
+    expect(screen.queryByText(/99860-6833/)).not.toBeInTheDocument();
   });
 });

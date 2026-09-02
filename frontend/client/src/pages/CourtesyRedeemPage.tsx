@@ -1,11 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { z } from "zod";
 import { courtesyRedemptionSchema } from "@shared/schema";
-import { SITE_CONTACT_PHONES } from "@shared/contact";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,6 +14,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
 import { COURTESY_CODE_PARAM_REGEX } from "@/lib/authRedirect";
+import ContactChannels from "@/components/ContactChannels";
+import SiteFooter from "@/components/SiteFooter";
 import {
   Form,
   FormControl,
@@ -25,6 +26,29 @@ import {
 } from "@/components/ui/form";
 
 type RedemptionFormData = z.infer<typeof courtesyRedemptionSchema>;
+
+function CourtesyShell({
+  children,
+  centered = false,
+}: {
+  children: ReactNode;
+  centered?: boolean;
+}) {
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      <div
+        className={
+          centered
+            ? "flex-1 flex items-center justify-center"
+            : "flex-1 py-12"
+        }
+      >
+        {children}
+      </div>
+      <SiteFooter />
+    </div>
+  );
+}
 
 export default function CourtesyRedeemPage() {
   const [, setLocation] = useLocation();
@@ -150,23 +174,23 @@ export default function CourtesyRedeemPage() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <CourtesyShell centered>
         <p className="text-gray-500">Verificando autenticação...</p>
-      </div>
+      </CourtesyShell>
     );
   }
 
   if (!isAuthenticated && code) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <CourtesyShell centered>
         <p className="text-gray-500">Redirecionando para login...</p>
-      </div>
+      </CourtesyShell>
     );
   }
 
   if (!code) {
     return (
-      <div className="min-h-screen bg-gray-50 py-12">
+      <CourtesyShell>
         <div className="max-w-lg mx-auto px-4">
           <Card>
             <CardHeader className="text-center">
@@ -216,21 +240,21 @@ export default function CourtesyRedeemPage() {
             </CardContent>
           </Card>
         </div>
-      </div>
+      </CourtesyShell>
     );
   }
 
   if (linkLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <CourtesyShell centered>
         <p className="text-gray-500">Verificando código de cortesia...</p>
-      </div>
+      </CourtesyShell>
     );
   }
 
   if (linkError || !linkData) {
     return (
-      <div className="min-h-screen bg-gray-50 py-12">
+      <CourtesyShell>
         <div className="max-w-lg mx-auto px-4">
           <Card>
             <CardHeader className="text-center">
@@ -251,13 +275,13 @@ export default function CourtesyRedeemPage() {
             </CardContent>
           </Card>
         </div>
-      </div>
+      </CourtesyShell>
     );
   }
 
   if (isSuccess) {
     return (
-      <div className="min-h-screen bg-gray-50 py-12">
+      <CourtesyShell>
         <div className="max-w-lg mx-auto px-4">
           <Card>
             <CardHeader className="text-center">
@@ -291,12 +315,12 @@ export default function CourtesyRedeemPage() {
             </CardContent>
           </Card>
         </div>
-      </div>
+      </CourtesyShell>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12">
+    <CourtesyShell>
       <div className="max-w-2xl mx-auto px-4">
         <Card>
           <CardHeader>
@@ -473,9 +497,10 @@ export default function CourtesyRedeemPage() {
         </Card>
 
         <div className="mt-6 text-center text-sm text-gray-600">
-          <p>Dúvidas? Entre em contato pelos telefones: <strong>{SITE_CONTACT_PHONES.join(" ou ")}</strong></p>
+          <p className="mb-2">Dúvidas? Fale conosco:</p>
+          <ContactChannels variant="inline" />
         </div>
       </div>
-    </div>
+    </CourtesyShell>
   );
 }

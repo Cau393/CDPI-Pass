@@ -1,3 +1,4 @@
+import { EMAIL_CONTACT_FOOTER_HTML } from "@shared/contact";
 import { renderTemplate } from "./templateRenderer";
 
 const CANCELLATION_EMAIL_HTML = `
@@ -12,6 +13,7 @@ const CANCELLATION_EMAIL_HTML = `
     Em caso de pagamento confirmado, eventuais estornos devem ser tratados diretamente com o financeiro / Asaas, conforme as regras do evento.
   </p>
   <p style="margin-top: 1.5rem;">Atenciosamente,<br />Equipe CDPI Pass</p>
+  ${EMAIL_CONTACT_FOOTER_HTML}
 </body>
 </html>
 `.trim();

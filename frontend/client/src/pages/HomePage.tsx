@@ -1,15 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { MapPin, Calendar, ChevronDown, ChevronUp, Facebook, Instagram, Twitter, Linkedin, Youtube } from "lucide-react";
+import { MapPin, Calendar, ChevronDown, ChevronUp } from "lucide-react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
 import type { Event, Order } from "@shared/schema";
-import { SITE_CONTACT_PHONES } from "@shared/contact";
 import { apiRequest } from "@/lib/queryClient";
 import EventCoverImage from "@/components/EventCoverImage";
+import SiteFooter from "@/components/SiteFooter";
 import { eventDescriptionPlainText } from "@/lib/eventDescriptionHtml";
 
 const MAIN_EVENT_DESCRIPTION_MAX_LENGTH = 90;
@@ -428,60 +428,7 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Footer */}
-      <footer className="bg-primary text-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {/* Logo and Info */}
-            <div>
-              <div className="flex items-center mb-4">
-                <img 
-              src="/LOGO-FACULDADE-CDPI-BRANCA.png" 
-              alt="CDPI Faculdade Logo" 
-              className="h-14 w-auto" 
-                />
-              </div>
-              <p className="text-white/80 text-sm">
-                CDPI Faculdade. Todos os direitos<br/>
-                reservados ©️ 2025 CNPJ: 40.082.785/0001-03<br/>
-                Rua 115, Setor Sul, Golania-GO
-              </p>
-            </div>
-
-            {/* Contact */}
-            <div className="text-center">
-              <h3 className="font-bold mb-4">Telefone</h3>
-              {SITE_CONTACT_PHONES.map((phone) => (
-                <p key={phone} className="text-2xl font-bold mb-2">
-                  {phone}
-                </p>
-              ))}
-              <p className="text-sm text-white/80">
-                Entre em contato conosco<br/>
-                e tire suas dúvidas
-              </p>
-            </div>
-
-            {/* Social Links */}
-            <div className="text-center md:text-right">
-              <div className="flex justify-center md:justify-end space-x-3 mb-4">
-                <a href="https://www.facebook.com/cdpipharma/" target="_blank" className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition-colors">
-                  <Facebook className="h-5 w-5" />
-                </a>
-                <a href="https://www.instagram.com/cdpipharma/" target="_blank" className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition-colors">
-                  <Instagram className="h-5 w-5" />
-                </a>
-                <a href="https://www.linkedin.com/company/cdpi-pharma/" target="_blank" className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition-colors">
-                  <Linkedin className="h-5 w-5" />
-                </a>
-                <a href="https://www.youtube.com/@cdpimoving" target="_blank" className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition-colors">
-                  <Youtube className="h-5 w-5" />
-                </a>
-              </div>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter />
 
       {/* Payment Modal */}
       {selectedEvent && (

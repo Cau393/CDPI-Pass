@@ -308,9 +308,11 @@ describe("EventDetailsPage — Peptídeos poster and long description", () => {
   });
 
   it("keeps the line breaks inside the date and venue paragraph", async () => {
-    const { container } = renderPage();
+    renderPage();
     await screen.findByText(/encontro internacional/);
 
-    expect(container.querySelectorAll("br")).toHaveLength(2);
+    const description = document.querySelector("div.prose");
+    expect(description).not.toBeNull();
+    expect(description!.querySelectorAll("br")).toHaveLength(2);
   });
 });

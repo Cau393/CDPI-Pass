@@ -12,6 +12,7 @@ import type { Event, Order } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
+import SiteFooter from "@/components/SiteFooter";
 
 // ✅ Extend Event to include promoCode
 interface EventWithPromo extends Event {
@@ -178,34 +179,40 @@ export default function EventDetailsPage() {
   // Loading skeleton
   if (isLoading) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <Card className="animate-pulse">
-          <div className="h-64 bg-gray-300 rounded-t-lg"></div>
-          <CardContent className="p-8">
-            <div className="h-8 bg-gray-300 rounded mb-4"></div>
-            <div className="h-4 bg-gray-300 rounded mb-2"></div>
-            <div className="h-4 bg-gray-300 rounded mb-2"></div>
-            <div className="h-4 bg-gray-300 rounded"></div>
-          </CardContent>
-        </Card>
-      </div>
+      <>
+        <div className="max-w-4xl mx-auto px-4 py-8">
+          <Card className="animate-pulse">
+            <div className="h-64 bg-gray-300 rounded-t-lg"></div>
+            <CardContent className="p-8">
+              <div className="h-8 bg-gray-300 rounded mb-4"></div>
+              <div className="h-4 bg-gray-300 rounded mb-2"></div>
+              <div className="h-4 bg-gray-300 rounded mb-2"></div>
+              <div className="h-4 bg-gray-300 rounded"></div>
+            </CardContent>
+          </Card>
+        </div>
+        <SiteFooter />
+      </>
     );
   }
 
   // Error or missing event
   if (error || !event) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <Card>
-          <CardContent className="p-8 text-center">
-            <p className="text-red-600 text-lg mb-4">Evento não encontrado</p>
-            <Button onClick={() => setLocation("/")} variant="outline">
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Voltar aos eventos
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+      <>
+        <div className="max-w-4xl mx-auto px-4 py-8">
+          <Card>
+            <CardContent className="p-8 text-center">
+              <p className="text-red-600 text-lg mb-4">Evento não encontrado</p>
+              <Button onClick={() => setLocation("/")} variant="outline">
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Voltar aos eventos
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+        <SiteFooter />
+      </>
     );
   }
 
@@ -214,6 +221,7 @@ export default function EventDetailsPage() {
     : null;
 
   return (
+    <>
     <div className="max-w-4xl mx-auto px-4 py-8">
       {/* Back button */}
       <Button
@@ -382,5 +390,7 @@ export default function EventDetailsPage() {
         />
       )}
     </div>
+      <SiteFooter />
+    </>
   );
 }

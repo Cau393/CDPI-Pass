@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Calendar, MapPin, Search } from "lucide-react";
 import type { Event } from "@shared/schema";
 import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
+import SiteFooter from "@/components/SiteFooter";
 import { eventDescriptionPlainText } from "@/lib/eventDescriptionHtml";
 
 export default function EventsPage() {
@@ -149,6 +150,7 @@ export default function EventsPage() {
           </div>
         )}
       </div>
+      <SiteFooter />
     </div>
   );
 }

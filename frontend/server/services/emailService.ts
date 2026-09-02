@@ -1,7 +1,7 @@
 import { MailService } from '@sendgrid/mail';
 import jwt from 'jsonwebtoken';
 import { storage } from '../storage';
-import { EMAIL_CONTACT_LINE } from '@shared/contact';
+import { EMAIL_CONTACT_FOOTER_HTML, EMAIL_CONTACT_LINE } from '@shared/contact';
 import { buildTicketQrAttachment } from '../utils/ticketQrAttachment';
 import {
   buildTicketEmailHtml,
@@ -122,8 +122,11 @@ class EmailService {
       <p>Seu código de verificação é:</p>
       <h2><b>${verificationCode}</b></h2>
       <p>Este código expira em 15 minutos.</p>
+      ${EMAIL_CONTACT_FOOTER_HTML}
     `;
-    const text = `Seu código de verificação para o CDPI Pass é: ${verificationCode}`;
+    const text = `Seu código de verificação para o CDPI Pass é: ${verificationCode}
+
+${EMAIL_CONTACT_LINE}`;
 
     return this.sendEmail(email, "Seu Código de Verificação - CDPI Pass", html, text);
     }
@@ -167,8 +170,11 @@ class EmailService {
       <p><a href="${data.paymentUrl}">${data.paymentUrl}</a></p>
       <p>Após a confirmação do pagamento, você receberá o QR Code do ingresso por e-mail.</p>
       <p style="color:#666;font-size:12px;">CDPI Pass</p>
+      ${EMAIL_CONTACT_FOOTER_HTML}
     `;
-    const text = `Olá, ${data.userName}. Link para pagamento com cartão (${data.eventTitle}): ${data.paymentUrl}`;
+    const text = `Olá, ${data.userName}. Link para pagamento com cartão (${data.eventTitle}): ${data.paymentUrl}
+
+${EMAIL_CONTACT_LINE}`;
     return this.sendEmail(
       email,
       `Link de pagamento — ${data.eventTitle} — CDPI Pass`,
@@ -219,8 +225,11 @@ class EmailService {
         <p>Você solicitou a redefinição de sua senha. Clique no link abaixo para criar uma nova:</p>
         <a href="${resetLink}">Redefinir Senha</a>
         <p>Este link expirará em 30 minutos.</p>
+        ${EMAIL_CONTACT_FOOTER_HTML}
     `;
-    const text = `Acesse este link para redefinir sua senha: ${resetLink}`;
+    const text = `Acesse este link para redefinir sua senha: ${resetLink}
+
+${EMAIL_CONTACT_LINE}`;
 
     return this.sendEmail(email, "Redefinição de Senha - CDPI Pass", html, text);
   }
@@ -323,7 +332,7 @@ class EmailService {
           </div>
           <div class="footer">
             <p>Atenciosamente,<br>Equipe CDPI Pass</p>
-            <p>${EMAIL_CONTACT_LINE}</p>
+            ${EMAIL_CONTACT_FOOTER_HTML}
           </div>
         </div>
       </body>
@@ -355,6 +364,8 @@ Código: ${courtesyCode}
 
 Atenciosamente,
 Equipe CDPI Pass
+
+${EMAIL_CONTACT_LINE}
 `.trim();
 
     return this.sendEmail(email, subject, html, text, attachments);
@@ -403,7 +414,7 @@ Equipe CDPI Pass
           </div>
           <div class="footer">
             <p>Atenciosamente,<br>Equipe CDPI Pass</p>
-            <p>${EMAIL_CONTACT_LINE}</p>
+            ${EMAIL_CONTACT_FOOTER_HTML}
           </div>
         </div>
       </body>
@@ -414,6 +425,8 @@ ${courtesyMessageHtmlToPlainText(messageInner)}
 
 Atenciosamente,
 Equipe CDPI Pass
+
+${EMAIL_CONTACT_LINE}
 `.trim();
     return this.sendEmail(email, subject, html, text, attachments);
   }

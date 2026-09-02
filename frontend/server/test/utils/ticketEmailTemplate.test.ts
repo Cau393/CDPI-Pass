@@ -65,15 +65,33 @@ describe("buildTicketEmailHtml", () => {
   });
 
   it("shows the current support phone in the footer", () => {
-    expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).toContain("+55 (62) 99865-5500");
+    expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).toContain("(62) 99865-5500");
   });
 
-  it("keeps the existing landline alongside the new number", () => {
+  it("shows the landline in the footer", () => {
     expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).toContain("3636-9909");
   });
 
-  it("keeps the existing mobile alongside the new number", () => {
+  it("shows the second WhatsApp number in the footer", () => {
     expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).toContain("99610-1694");
+  });
+
+  it("links the support inbox with mailto", () => {
+    expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).toContain(
+      'href="mailto:relacionamento.mkt@cdpipharma.com.br"',
+    );
+  });
+
+  it("links WhatsApp with wa.me", () => {
+    expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).toContain(
+      'href="https://wa.me/5562998655500"',
+    );
+  });
+
+  it("does not keep the retired site number", () => {
+    expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).not.toContain(
+      "99860-6833",
+    );
   });
 });
 
@@ -87,6 +105,12 @@ describe("buildTicketEmailText", () => {
   it("lists the arrival instruction in the plain-text body", () => {
     expect(buildTicketEmailText({ ...base, confirmationKind: "paid" })).toContain(
       "Chegue com 30 minutos de antecedência.",
+    );
+  });
+
+  it("includes the support contact line in the plain-text body", () => {
+    expect(buildTicketEmailText({ ...base, confirmationKind: "paid" })).toContain(
+      "relacionamento.mkt@cdpipharma.com.br | +55 (62) 3636-9909 / (62) 99865-5500 / (62) 99610-1694",
     );
   });
 });

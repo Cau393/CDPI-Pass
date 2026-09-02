@@ -1,4 +1,4 @@
-import { EMAIL_CONTACT_LINE } from "@shared/contact";
+import { EMAIL_CONTACT_FOOTER_HTML, EMAIL_CONTACT_LINE } from "@shared/contact";
 
 /** Match EventDetailsPage / Brazil wall-clock display regardless of server TZ. */
 const EVENT_TZ = "America/Sao_Paulo";
@@ -29,8 +29,6 @@ export const TICKET_INSTRUCTIONS = [
   "A apresentação do QRCode do Ingresso (digital ou impresso) é indispensável para ter acesso ao evento.",
   "Em caso de dúvidas, entre em contato conosco.",
 ] as const;
-
-const SUPPORT_LINE = EMAIL_CONTACT_LINE;
 
 export function confirmationKindForPaymentMethod(
   paymentMethod: string | null | undefined,
@@ -125,7 +123,7 @@ export function buildTicketEmailHtml(data: TicketEmailData): string {
           </div>
           <div class="footer">
             <p>CDPI Pass</p>
-            <p>${SUPPORT_LINE}</p>
+            ${EMAIL_CONTACT_FOOTER_HTML}
           </div>
         </div>
       </body>
@@ -154,5 +152,8 @@ export function buildTicketEmailText(data: TicketEmailData): string {
       
       Instruções Importantes:
 ${instructions}
+
+      Fale conosco:
+      ${EMAIL_CONTACT_LINE}
     `;
 }
