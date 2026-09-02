@@ -1,6 +1,7 @@
 import { MailService } from '@sendgrid/mail';
 import jwt from 'jsonwebtoken';
 import { storage } from '../storage';
+import { buildTicketQrAttachment } from '../utils/ticketQrAttachment';
 
 if (!process.env.SENDGRID_API_KEY) {
   console.warn("SENDGRID_API_KEY environment variable not set");
@@ -31,6 +32,22 @@ function courtesyMessageHtmlToPlainText(html: string): string {
 /** Outer HTML shell for courtesy transactional mail: invite (mass-send) vs pending-redemption reminder. */
 export type CourtesyMassEmailLayout = "courtesy_invite" | "courtesy_reminder";
 
+/**
+ * A SendGrid attachment.
+ *
+ * `disposition: "inline"` plus `content_id` makes the file render inside the
+ * HTML body via <img src="cid:<content_id>"> instead of appearing as a
+ * download. The ticket email uses this to embed the QR code, so it no longer
+ * depends on the S3 object being publicly readable.
+ */
+export interface EmailAttachment {
+  filename: string;
+  content: string;
+  type: string;
+  disposition?: string;
+  content_id?: string;
+}
+
 interface TicketEmailData {
   userName: string;
   eventTitle: string;
@@ -47,7 +64,7 @@ class EmailService {
     subject: string,
     html: string,
     text?: string,
-    attachments?: Array<{ filename: string; content: string; type: string }>
+    attachments?: EmailAttachment[]
   ): Promise<boolean> {
     if (!to?.trim?.()) {
       console.warn("EmailService.sendEmail: skipped — missing or empty recipient (to)");
@@ -179,7 +196,7 @@ class EmailService {
               
               <div class="qr-code">
                 <p><strong>QR Code do Ingresso:</strong></p>
-                <img src="${data.qrCodeS3Url}" alt="QR Code do Ingresso" style="max-width: 256px; height: auto; display: block; margin: 10px auto;">
+                <img src="cid:qrcode" alt="QR Code do Ingresso" style="max-width: 256px; height: auto; display: block; margin: 10px auto;">
                 <p style="font-size: 12px; color: #666;">
                   Apresente este QR Code na entrada do evento
                 </p>
@@ -222,7 +239,25 @@ class EmailService {
       Chegue com 30 minutos de antecedência e traga um documento com foto.
     `;
 
-    return this.sendEmail(email, `Seu ingresso para ${data.eventTitle} - CDPI Pass`, html, text);
+    // The QR is attached inline (cid:qrcode) rather than hot-linked from S3.
+    // See buildTicketQrAttachment for why. The template above must keep
+    // referencing the same content_id.
+    const qrAttachment = buildTicketQrAttachment(data.qrCodeData);
+
+    if (!qrAttachment) {
+      // Never silently send a ticket with no QR: check-in would fail at the door.
+      console.error(
+        `sendTicketEmail: order ${data.orderId} has no qrCodeData; ticket email will have no QR image`,
+      );
+    }
+
+    return this.sendEmail(
+      email,
+      `Seu ingresso para ${data.eventTitle} - CDPI Pass`,
+      html,
+      text,
+      qrAttachment ? [qrAttachment] : undefined,
+    );
   }
 
   /**
@@ -310,7 +345,7 @@ class EmailService {
     eventName: string,
     courtesyCode: string,
     eventDate: Date,
-    attachments?: Array<{ filename: string; content: string; type: string }>,
+    attachments?: EmailAttachment[],
     customMessageBoxHtml?: string,
     layout: CourtesyMassEmailLayout = "courtesy_invite",
     renderedSubject?: string | null,
@@ -439,7 +474,7 @@ Equipe CDPI Pass
     email: string,
     messageBoxHtml: string,
     renderedSubject: string | null | undefined,
-    attachments?: Array<{ filename: string; content: string; type: string }>,
+    attachments?: EmailAttachment[],
   ): Promise<boolean> {
     const subject =
       renderedSubject != null && String(renderedSubject).trim() !== ""
@@ -495,7 +530,7 @@ Equipe CDPI Pass
     subject: string,
     html: string,
     text?: string,
-    attachments?: Array<{ filename: string; content: string; type: string }>
+    attachments?: EmailAttachment[]
   ): Promise<boolean> {
     if (!process.env.SENDGRID_API_KEY) {
       console.warn("SendGrid not configured, email worker cannot send email:", { to, subject });
