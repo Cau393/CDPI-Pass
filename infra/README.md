@@ -155,15 +155,96 @@ deliberately not done yet. Neon PITR status is also unconfirmed.
 GuardDuty ~USD 3-10/mo after the 30-day trial, snapshots ~USD 0.50-1/mo,
 CloudTrail first trail free (S3 storage is cents). Nothing else added cost.
 
-## Known drift (not yet resolved)
+## Asaas webhook
 
-Production is served by the **PM2 process**, not the Docker container.
-`docker ps` shows `cdpi-pass` running, but it has no active port binding and
-receives no traffic. This was proven with a canary request that appeared only in
-the PM2 log. The CI/CD pipeline in `.github/workflows/deploy.yml` deploys the
-Docker container, so **CI deploys do not currently update production**.
-The PM2 build on disk dates from 2026-04-30; the container image from 2026-05-20.
-This needs to be reconciled. Track in the security/reliability follow-up.
+`ASAAS_WEBHOOK_TOKEN` **is set in production** and validation works. Verified
+2026-09-02 from the PM2 logs: 10 deliveries reached the app and were accepted
+("Asaas webhook received and validated": PAYMENT_CREATED, PAYMENT_DELETED,
+PAYMENT_OVERDUE, PAYMENT_CHECKOUT_VIEWED). The only 401s in the log are probes
+sent deliberately while auditing.
+
+So the queue stalling was **not** a token mismatch on our side. The endpoint
+answers correctly on both hosts:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  https://www.cdpipass.com.br/api/webhooks/asaas \
+  -H 'Content-Type: application/json' -d '{"event":"PING"}'   # -> 401, correct
+```
+
+Order state is healthy: 551 paid, 22 cancelled, **0 pending**, so no customer
+paid without being confirmed. There have been no orders in 30 days and no
+upcoming events, so the queue can be re-enabled from the Asaas dashboard
+without backfill. If deliveries stall again, check the dashboard's own
+delivery log first: the app side is proven working.
+
+Note the app currently accepts webhooks on both the apex and `www`. The apex
+must keep proxying `/api/` rather than redirecting, since Asaas has
+historically posted there and a 301 on POST drops the body.
+
+## Known drift (RESOLVED 2026-09-02)
+
+Production is served by the **PM2 process** `cdpi-pass`, from a git checkout at
+`~/CDPI-Pass`, built in place:
+
+```
+~/CDPI-Pass/frontend/dist/index.js   <- PM2 runs this, cwd ~/CDPI-Pass/frontend
+~/CDPI-Pass/frontend/.env            <- the live env file
+```
+
+Three separate faults meant CI deploys never reached production, so the site
+ran the build from 2026-04-30 (commit `872f12a`) for four months, 19 commits
+behind, including two security fixes:
+
+1. **Nothing was pushed.** The last 7 commits existed only on the developer's
+   laptop. CI triggers on push, so it never ran for them.
+2. **CI targeted the wrong path.** The workflow deployed a Docker container
+   using `~/app/frontend/.env`. `~/app/frontend/` contains *only* an `.env`
+   file; it is not where production runs. There is no code there.
+3. **The container never worked.** `docker inspect` showed `ports=map[]`, so
+   the `-p 5003:5003` binding never applied, and its logs showed
+   `EAI_AGAIN` failing to resolve the Neon host. It could not have served
+   traffic even if nginx had pointed at it.
+
+The net effect was a green CI pipeline deploying a broken container that
+nothing routed to, while PM2 quietly served stale code.
+
+Fixed by rewriting `.github/workflows/deploy.yml` to deploy the way
+production actually runs: `git pull` into `~/CDPI-Pass`, `pnpm install
+--frozen-lockfile`, build in place, smoke-test the new build on port 5195,
+and only then `pm2 restart`. If the smoke test fails the live app is left
+untouched; if the post-restart check fails it restores the previous `dist/`
+and restarts. Five rollback points are kept in `~/dist-rollback-*`.
+
+The idle container and its 1.77 GB image have been removed.
+
+### Deploying manually
+
+```bash
+ssh -i ~/AWS/Cdpi_pass.pem ubuntu@56.125.241.168
+cd ~/CDPI-Pass
+cp -r frontend/dist ~/dist-rollback-$(date +%Y%m%d-%H%M%S)   # rollback point
+git checkout -- frontend/dist ecosystem.config.cjs           # dist/ is committed
+git pull --ff-only origin hotfix-frontend-update
+cd frontend
+export PATH="$HOME/.local/share/pnpm:$PATH"
+pnpm install --frozen-lockfile
+NODE_OPTIONS="--max-old-space-size=1536" pnpm run build      # 954MB box, cap the heap
+pm2 restart cdpi-pass --update-env
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5003/api/events
+```
+
+Rollback:
+
+```bash
+cd ~/CDPI-Pass/frontend
+rm -rf dist && cp -r ~/dist-rollback-<TIMESTAMP> dist
+pm2 restart cdpi-pass --update-env
+```
+
+Note `frontend/dist/` is committed to the repo, so a local build always dirties
+the working tree and must be checked out before pulling. Removing `dist/` from
+version control would make this cleaner.
 
 ## Files
 

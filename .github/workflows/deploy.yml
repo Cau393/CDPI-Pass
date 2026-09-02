@@ -14,7 +14,7 @@ jobs:
         uses: actions/checkout@v4
 
       # Installs the pnpm version pinned by "packageManager" in
-      # frontend/package.json, so CI cannot drift from local/Docker.
+      # frontend/package.json, so CI cannot drift from local/prod.
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
@@ -31,48 +31,23 @@ jobs:
         working-directory: frontend
         run: pnpm install --frozen-lockfile
 
+      - name: Typecheck
+        working-directory: frontend
+        run: pnpm run check
+
       - name: Run Tests
         working-directory: frontend
         run: pnpm run test
 
-  build-and-push:
-    name: Build and Push Docker Image
-    needs: test
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and Push Image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: frontend/Dockerfile
-          push: true
-          # Fully lowercase to satisfy Docker
-          tags: ghcr.io/cau393/cdpi-pass:latest
-
   deploy:
     name: Deploy to EC2
-    needs: build-and-push
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Get GitHub Runner IP
         id: ip
-        # Bulletproof way to get the runner's IP
         run: echo "ipv4=$(curl -s https://checkip.amazonaws.com)" >> $GITHUB_OUTPUT
-        
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -88,29 +63,78 @@ jobs:
             --port 22 \
             --cidr ${{ steps.ip.outputs.ipv4 }}/32
 
+      # Deploys the way production actually runs: a git checkout at
+      # ~/CDPI-Pass built in place and served by PM2.
+      #
+      # This previously built a Docker image and ran it with -p 5003:5003
+      # against ~/app/frontend/.env. That never reached production:
+      #   - production is PM2 from ~/CDPI-Pass/frontend, not a container
+      #   - the container came up with no port bindings at all and could not
+      #     resolve the Neon host, so it was a no-op that "succeeded"
+      # Result: CI was green for months while production stayed on the build
+      # from 2026-04-30, 19 commits behind, including two security fixes.
       - name: Execute Remote SSH Commands
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 20m
           script: |
-            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            
-            # Fully lowercase to satisfy Docker
-            docker pull ghcr.io/cau393/cdpi-pass:latest
-            
-            docker stop cdpi-pass || true
-            docker rm cdpi-pass || true
-            
-            docker run -d \
-              --name cdpi-pass \
-              --restart unless-stopped \
-              -p 5003:5003 \
-              --env-file /home/${{ secrets.EC2_USERNAME }}/app/frontend/.env \
-              ghcr.io/cau393/cdpi-pass:latest
-              
-            docker image prune -f
+            set -e
+            cd ~/CDPI-Pass
+
+            # Keep a rollback point. dist/ is the only artifact that matters,
+            # since the box builds in place.
+            TS=$(date +%Y%m%d-%H%M%S)
+            cp -r frontend/dist ~/dist-rollback-$TS || true
+            git rev-parse HEAD > ~/rollback-commit-$TS.txt || true
+            # Keep only the 5 most recent rollback points.
+            ls -dt ~/dist-rollback-* 2>/dev/null | tail -n +6 | xargs -r rm -rf
+            ls -t ~/rollback-commit-*.txt 2>/dev/null | tail -n +6 | xargs -r rm -f
+
+            # dist/ is committed to the repo, so a build would otherwise
+            # conflict with the pull.
+            git checkout -- frontend/dist ecosystem.config.cjs 2>/dev/null || true
+            git pull --ff-only origin hotfix-frontend-update
+
+            cd frontend
+            export PATH="$HOME/.local/share/pnpm:$PATH"
+            corepack enable || true
+            corepack prepare pnpm@11.5.2 --activate
+
+            pnpm install --frozen-lockfile
+
+            # t2.micro has 954MB. Cap the heap so the build cannot OOM-kill
+            # the running app; there is a 2GB swapfile as a further backstop.
+            NODE_OPTIONS="--max-old-space-size=1536" pnpm run build
+
+            # Smoke-test the new build on a spare port BEFORE cutting over,
+            # so a broken build never replaces a working one.
+            PORT=5195 NODE_ENV=production nohup node dist/index.js > /tmp/deploy-smoke.log 2>&1 &
+            SMOKE_PID=$!
+            sleep 12
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5195/api/events --max-time 15 || echo 000)
+            kill $SMOKE_PID 2>/dev/null || true
+            if [ "$CODE" != "200" ]; then
+              echo "SMOKE TEST FAILED (/api/events -> $CODE). Not restarting the live app."
+              tail -30 /tmp/deploy-smoke.log
+              exit 1
+            fi
+            echo "Smoke test OK."
+
+            pm2 restart cdpi-pass --update-env
+            sleep 8
+
+            LIVE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5003/api/events --max-time 15 || echo 000)
+            if [ "$LIVE" != "200" ]; then
+              echo "LIVE CHECK FAILED (/api/events -> $LIVE). Rolling back."
+              rm -rf dist && cp -r ~/dist-rollback-$TS dist
+              pm2 restart cdpi-pass --update-env
+              exit 1
+            fi
+            echo "Deploy OK. Live /api/events -> $LIVE"
+            pm2 save
 
       - name: Remove GitHub IP from Security Group
         if: always()
