@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
@@ -23,7 +24,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Download, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, Shield, AlertTriangle, RefreshCw, Mail, ChevronLeft, ChevronRight, Award } from "lucide-react";
+import { downloadDataUrl } from "@/lib/downloadDataUrl";
+import { Download, Eye, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, Shield, AlertTriangle, RefreshCw, Mail, ChevronLeft, ChevronRight, Award } from "lucide-react";
 import { CertificatesTab } from "@/components/CertificatesTab";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 import type { User, Order, CourtesyLink } from "@shared/schema";
@@ -33,6 +35,11 @@ import {
   PaginationItem,
 } from "@/components/ui/pagination";
 
+
+/** Below `sm` the four tabs sit in a 2x2 grid, long labels wrap and each tab keeps a 44px
+ *  touch target; from `sm` they collapse back to one row of four. */
+const PROFILE_TAB_CLASS =
+  "flex min-h-11 items-center justify-center gap-2 whitespace-normal py-2 text-center leading-tight sm:min-h-0 sm:whitespace-nowrap";
 
 export default function ProfilePage() {
   const [, setLocation] = useLocation();
@@ -45,6 +52,9 @@ export default function ProfilePage() {
   const [hasChangedSensitiveFields, setHasChangedSensitiveFields] = useState(false);
   const [cooldownTime, setCooldownTime] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
+  const [qrPreview, setQrPreview] = useState<
+    { orderId: string; title: string; dataUrl: string } | null
+  >(null);
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -378,21 +388,21 @@ const handleCancelOrder = (orderId: string) => {
         {/* Profile Content */}
         <div className="lg:col-span-3">
           <Tabs defaultValue="orders" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="orders" className="flex items-center gap-2" data-testid="tab-orders">
-                <Ticket className="h-4 w-4" />
+            <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
+              <TabsTrigger value="orders" className={PROFILE_TAB_CLASS} data-testid="tab-orders">
+                <Ticket className="h-4 w-4 shrink-0" />
                 Meus Ingressos
               </TabsTrigger>
-              <TabsTrigger value="certificates" className="flex items-center gap-2" data-testid="tab-certificates">
-                <Award className="h-4 w-4" />
+              <TabsTrigger value="certificates" className={PROFILE_TAB_CLASS} data-testid="tab-certificates">
+                <Award className="h-4 w-4 shrink-0" />
                 Certificados
               </TabsTrigger>
-              <TabsTrigger value="profile" className="flex items-center gap-2" data-testid="tab-profile">
-                <UserIcon className="h-4 w-4" />
+              <TabsTrigger value="profile" className={PROFILE_TAB_CLASS} data-testid="tab-profile">
+                <UserIcon className="h-4 w-4 shrink-0" />
                 Informações Pessoais
               </TabsTrigger>
-              <TabsTrigger value="security" className="flex items-center gap-2" data-testid="tab-security">
-                <Shield className="h-4 w-4" />
+              <TabsTrigger value="security" className={PROFILE_TAB_CLASS} data-testid="tab-security">
+                <Shield className="h-4 w-4 shrink-0" />
                 Segurança
               </TabsTrigger>
             </TabsList>
@@ -460,17 +470,28 @@ const handleCancelOrder = (orderId: string) => {
                                   </div>
                                 </div>
                                 {isPaidLikeOrderStatus(order.status) && order.qrCodeData ? (
-                                  <div className="flex gap-2">
+                                  <div className="flex flex-wrap gap-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() =>
+                                        setQrPreview({
+                                          orderId: order.id,
+                                          title: order.event?.title || "Evento",
+                                          dataUrl: order.qrCodeData,
+                                        })
+                                      }
+                                      data-testid={`button-view-qr-${order.id}`}
+                                    >
+                                      <Eye className="h-4 w-4 mr-2" />
+                                      Ver QR Code
+                                    </Button>
                                     <Button
                                       className="bg-primary hover:bg-secondary"
                                       size="sm"
-                                      onClick={() => {
-                                        // Create download link for QR code
-                                        const link = document.createElement('a');
-                                        link.href = order.qrCodeData;
-                                        link.download = `ingresso-${order.id}.png`;
-                                        link.click();
-                                      }}
+                                      onClick={() =>
+                                        downloadDataUrl(order.qrCodeData, `ingresso-${order.id}.png`)
+                                      }
                                       data-testid={`button-download-${order.id}`}
                                     >
                                       <Download className="h-4 w-4 mr-2" />
@@ -859,6 +880,32 @@ const handleCancelOrder = (orderId: string) => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* In-app browsers (WhatsApp/Instagram) block downloads and new tabs, so the QR
+          must also be viewable without leaving the page. */}
+      <Dialog
+        open={qrPreview !== null}
+        onOpenChange={(open) => {
+          if (!open) setQrPreview(null);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{qrPreview?.title}</DialogTitle>
+          </DialogHeader>
+          {qrPreview && (
+            <img
+              src={qrPreview.dataUrl}
+              alt={`QR Code do ingresso ${qrPreview.orderId}`}
+              className="mx-auto h-auto w-full max-w-[280px]"
+              data-testid="img-qr-preview"
+            />
+          )}
+          <p className="text-center text-sm text-muted-foreground">
+            Apresente este QR Code na entrada do evento.
+          </p>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

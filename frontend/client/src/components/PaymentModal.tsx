@@ -311,11 +311,17 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
                       <p className="text-sm text-gray-600">
                         Clique no botão abaixo para visualizar e imprimir o boleto
                       </p>
-                      <Button
-                        onClick={() => window.open(paymentData.payment.boletoUrl, '_blank')}
-                        className="w-full bg-primary hover:bg-secondary"
-                      >
-                        Abrir Boleto
+                      <Button asChild className="w-full bg-primary hover:bg-secondary">
+                        {/* A real link, not window.open: in-app browsers and iOS with
+                            pop-ups blocked silently ignore programmatic window.open. */}
+                        <a
+                          href={paymentData.payment.boletoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          data-testid="link-boleto"
+                        >
+                          Abrir Boleto
+                        </a>
                       </Button>
                       <p className="text-xs text-gray-500">
                         Vencimento: {new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR')}

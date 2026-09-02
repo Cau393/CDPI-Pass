@@ -97,15 +97,17 @@ export function CertificatesTab() {
                   </div>
                   <div className="shrink-0">
                     {item.certificateUrl ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => {
-                          const u = item.certificateUrl;
-                          if (u) window.open(u, "_blank");
-                        }}
-                      >
-                        Baixar certificado
+                      // A real link, not window.open: in-app browsers and iOS with
+                      // pop-ups blocked silently ignore programmatic window.open.
+                      <Button asChild variant="outline">
+                        <a
+                          href={item.certificateUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          data-testid={`link-certificate-${item.eventId}`}
+                        >
+                          Baixar certificado
+                        </a>
                       </Button>
                     ) : (
                       <Button

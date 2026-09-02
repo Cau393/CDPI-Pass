@@ -222,3 +222,95 @@ describe("EventDetailsPage — 'Encerrar Vendas'", () => {
     expect(screen.getByText("São Paulo")).toBeInTheDocument();
   });
 });
+
+describe("EventDetailsPage — cover image", () => {
+  const COVER_URL = "https://cdn.example.com/covers/poster-1408x768.jpeg";
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", mockApi({ ...baseEvent, imageUrl: COVER_URL }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the whole poster with object-contain instead of cropping it", async () => {
+    renderPage();
+
+    const cover = await screen.findByRole("img", { name: baseEvent.title });
+    expect(cover).toHaveClass("object-contain");
+  });
+
+  it("never uses object-cover on the poster", async () => {
+    renderPage();
+
+    const cover = await screen.findByRole("img", { name: baseEvent.title });
+    expect(cover).not.toHaveClass("object-cover");
+  });
+
+  it("keeps the poster in a 16:9 frame like the home card", async () => {
+    renderPage();
+
+    const cover = await screen.findByRole("img", { name: baseEvent.title });
+    expect(cover.parentElement).toHaveClass("aspect-video");
+  });
+
+  it("loads the poster eagerly because it is the page's largest element", async () => {
+    renderPage();
+
+    const cover = await screen.findByRole("img", { name: baseEvent.title });
+    expect(cover).toHaveAttribute("loading", "eager");
+  });
+});
+
+// The real event the bug was reported against: a 1408x768 landscape poster whose
+// sponsor row was cut off, plus a long description whose blank lines vanished.
+describe("EventDetailsPage — Peptídeos poster and long description", () => {
+  const PEPTIDEOS_COVER =
+    "https://cdpi-pass-qr-codes.s3.sa-east-1.amazonaws.com/events/covers/90fab41c-22db-4660-8598-c9e32fdf9986.jpeg";
+  const LONG_DESCRIPTION =
+    "<p>No dia <strong>20 de outubro de 2026</strong>, o Auditório do Conselho Federal de Farmácia (CFF), em Brasília/DF, receberá um encontro internacional dedicado aos avanços científicos.<br /></p>" +
+    "<p>O workshop reunirá especialistas para discutir <strong>diretrizes regulatórias do FDA, CMC, escalonamento industrial e validação de métodos</strong>.<br /></p>" +
+    "<p>📅 <strong>20 de outubro de 2026</strong><br />📍 <strong>Auditório do CFF | Brasília/DF</strong><br />🎧 <strong>Tradução simultânea</strong></p>";
+
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      mockApi({
+        ...baseEvent,
+        title: "Workshop - Peptídeos: Biológicos e Sintéticos",
+        imageUrl: PEPTIDEOS_COVER,
+        description: LONG_DESCRIPTION,
+        isFree: true,
+        price: "0.00",
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the whole poster so the sponsor row is not cut off", async () => {
+    renderPage();
+
+    const cover = await screen.findByRole("img", {
+      name: "Workshop - Peptídeos: Biológicos e Sintéticos",
+    });
+    expect(cover).toHaveClass("object-contain");
+  });
+
+  it("renders the blank line the admin typed after the opening paragraph", async () => {
+    const { container } = renderPage();
+    await screen.findByText(/encontro internacional/);
+
+    expect(container.querySelectorAll("p:empty")).toHaveLength(2);
+  });
+
+  it("keeps the line breaks inside the date and venue paragraph", async () => {
+    const { container } = renderPage();
+    await screen.findByText(/encontro internacional/);
+
+    expect(container.querySelectorAll("br")).toHaveLength(2);
+  });
+});

@@ -174,3 +174,23 @@ describe("HomePage — main event cover image", () => {
     expect(screen.getByText("CDPI")).toBeInTheDocument();
   });
 });
+
+describe("HomePage — contact", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the new support phone in the footer", async () => {
+    vi.stubGlobal("fetch", mockApi(baseEvent));
+    renderPage();
+
+    expect(await screen.findByText("+55 (62) 99865-5500")).toBeInTheDocument();
+  });
+
+  it("keeps the existing support phone in the footer", async () => {
+    vi.stubGlobal("fetch", mockApi(baseEvent));
+    renderPage();
+
+    expect(await screen.findByText("+55 (62) 99860-6833")).toBeInTheDocument();
+  });
+});

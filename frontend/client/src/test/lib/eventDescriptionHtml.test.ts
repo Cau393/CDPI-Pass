@@ -3,6 +3,7 @@ import {
   eventDescriptionPlainText,
   hasMeaningfulEventDescription,
   normalizeDescriptionForEditor,
+  prepareDescriptionHtmlForDisplay,
   sanitizeEventDescriptionHtml,
 } from "../../lib/eventDescriptionHtml";
 
@@ -24,5 +25,75 @@ describe("eventDescriptionHtml", () => {
   it("detects empty rich content", () => {
     expect(hasMeaningfulEventDescription("<p></p>")).toBe(false);
     expect(hasMeaningfulEventDescription("<p>x</p>")).toBe(true);
+  });
+});
+
+describe("prepareDescriptionHtmlForDisplay", () => {
+  it("turns a trailing line break into a blank paragraph, as the editor shows it", () => {
+    expect(prepareDescriptionHtmlForDisplay("<p>A<br /></p><p>B</p>")).toBe("<p>A</p><p></p><p>B</p>");
+  });
+
+  it("keeps a line break in the middle of a paragraph", () => {
+    expect(prepareDescriptionHtmlForDisplay("<p>A<br />B</p>")).toBe("<p>A<br />B</p>");
+  });
+
+  it("adds one blank paragraph per trailing line break", () => {
+    expect(prepareDescriptionHtmlForDisplay("<p>A<br /><br /></p>")).toBe("<p>A</p><p></p><p></p>");
+  });
+
+  it("accepts the non-self-closing <br> the editor emits", () => {
+    expect(prepareDescriptionHtmlForDisplay("<p>A<br></p>")).toBe("<p>A</p><p></p>");
+  });
+
+  it("still strips unsafe markup before normalising", () => {
+    expect(prepareDescriptionHtmlForDisplay("<p>A<script>x()</script><br /></p>")).toBe("<p>A</p><p></p>");
+  });
+
+  it("leaves legacy plain text with newlines untouched", () => {
+    expect(prepareDescriptionHtmlForDisplay("linha 1\nlinha 2")).toBe("linha 1\nlinha 2");
+  });
+});
+
+describe("prepareDescriptionHtmlForDisplay — paragraphs that are only a break", () => {
+  it("keeps a legacy blank line as one blank paragraph, not two", () => {
+    // normalizeDescriptionForEditor emits exactly this for a blank plain-text line.
+    expect(prepareDescriptionHtmlForDisplay("<p><br /></p>")).toBe("<p></p>");
+  });
+
+  it("keeps a blank line between two lines of text", () => {
+    expect(prepareDescriptionHtmlForDisplay("<p>A</p><p><br /></p><p>B</p>")).toBe(
+      "<p>A</p><p></p><p>B</p>",
+    );
+  });
+});
+
+describe("prepareDescriptionHtmlForDisplay — breaks inside formatting", () => {
+  it("converts a trailing break that the editor wrapped in bold", () => {
+    expect(prepareDescriptionHtmlForDisplay("<p><strong>A<br /></strong></p>")).toBe(
+      "<p><strong>A</strong></p><p></p>",
+    );
+  });
+
+  it("converts a trailing break wrapped in nested formatting", () => {
+    expect(prepareDescriptionHtmlForDisplay("<p><em><u>A<br /></u></em></p>")).toBe(
+      "<p><em><u>A</u></em></p><p></p>",
+    );
+  });
+
+  it("keeps a break that is followed by more formatted text", () => {
+    expect(prepareDescriptionHtmlForDisplay("<p><strong>A<br />B</strong></p>")).toBe(
+      "<p><strong>A<br />B</strong></p>",
+    );
+  });
+});
+
+describe("prepareDescriptionHtmlForDisplay — performance", () => {
+  it("handles a paragraph padded with thousands of breaks without hanging the page", () => {
+    const padded = `<p>${"<br />".repeat(20000)}texto</p>`;
+
+    const started = Date.now();
+    prepareDescriptionHtmlForDisplay(padded);
+
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 });
