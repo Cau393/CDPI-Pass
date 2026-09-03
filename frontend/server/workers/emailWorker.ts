@@ -3,6 +3,7 @@ import { emailService } from '../services/emailService';
 import { storage } from '../storage';
 import { parse } from 'csv-parse/sync';
 import { renderTemplate } from '../utils/templateRenderer';
+import { migrateTemplateContactInfo } from '../utils/migrateTemplateContactInfo';
 import {
   filterEligibleReminderLinks,
   deduplicateReminderLinksByEmail,
@@ -227,11 +228,14 @@ class EmailWorker {
             link: redeemUrl,
           };
           const renderedSubject = event.courtesyEmailSubject?.trim()
-            ? renderTemplate(event.courtesyEmailSubject, variables)
+            ? renderTemplate(migrateTemplateContactInfo(event.courtesyEmailSubject), variables)
             : undefined;
 
           if (event.courtesyTemplate?.trim()) {
-            const customMessageBoxHtml = renderTemplate(event.courtesyTemplate, variables);
+            const customMessageBoxHtml = renderTemplate(
+              migrateTemplateContactInfo(event.courtesyTemplate),
+              variables,
+            );
 
             await emailService.sendCourtesyMassEmail(
               email,
@@ -325,10 +329,10 @@ class EmailWorker {
         };
 
         const customMessageBoxHtml = templateBody
-          ? renderTemplate(templateBody, variables)
+          ? renderTemplate(migrateTemplateContactInfo(templateBody), variables)
           : undefined;
         const renderedReminderSubject = templateSubject
-          ? renderTemplate(templateSubject, variables)
+          ? renderTemplate(migrateTemplateContactInfo(templateSubject), variables)
           : undefined;
 
         await emailService.sendCourtesyMassEmail(
@@ -409,9 +413,12 @@ class EmailWorker {
           evento: event.title,
           data: formattedDate,
         };
-        const customMessageBoxHtml = renderTemplate(templateBody, variables);
+        const customMessageBoxHtml = renderTemplate(
+          migrateTemplateContactInfo(templateBody),
+          variables,
+        );
         const renderedSubject = templateSubject
-          ? renderTemplate(templateSubject, variables)
+          ? renderTemplate(migrateTemplateContactInfo(templateSubject), variables)
           : null;
 
         await emailService.sendCommunicateEmail(
