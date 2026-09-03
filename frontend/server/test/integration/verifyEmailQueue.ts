@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Check email_queue for any rows still carrying old contact info.
  * Run: npx tsx server/test/integration/verifyEmailQueue.ts

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Verify that DB-stored email templates no longer contain retired contact info.
  * Run: npx tsx server/test/integration/verifyContactMigration.ts
