@@ -9,6 +9,27 @@ jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-latest
+
+    # Service container: throwaway PostgreSQL for integration tests.
+    # The integration suite (server/test/integration) boots the real Express
+    # app and writes/deletes rows, so it must never touch Neon.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: verify
+          POSTGRES_DB: cdpi
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      VERIFY_DATABASE_URL: postgresql://postgres:verify@localhost:5432/cdpi
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -39,9 +60,23 @@ jobs:
         working-directory: frontend
         run: pnpm run check
 
-      - name: Run Tests
+      # Push the Drizzle schema to the CI service container so the
+      # integration tests have tables to write to.
+      - name: Push schema to integration DB
         working-directory: frontend
-        run: pnpm run test
+        env:
+          DATABASE_URL: ${{ env.VERIFY_DATABASE_URL }}
+        run: pnpm run db:push
+
+      - name: Run Unit Tests
+        working-directory: frontend
+        run: pnpm run test:frontend && pnpm run test:backend
+
+      - name: Run Integration Tests
+        working-directory: frontend
+        env:
+          VERIFY_DATABASE_URL: ${{ env.VERIFY_DATABASE_URL }}
+        run: pnpm run test:integration
 
   deploy:
     name: Deploy to EC2
