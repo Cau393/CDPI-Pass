@@ -141,7 +141,8 @@ export default function CertificateTemplateAdminPage({
             Enviar template de certificado
           </CardTitle>
           <CardDescription>
-            Escolha o evento, envie um arquivo .docx (placeholder {"{nome}"}) e salve no servidor.
+            Escolha o evento, envie um arquivo .docx e salve no servidor. Use o placeholder{" "}
+            {"{{ nome }}"} (ou {"{nome}"}) onde o nome do participante deve aparecer.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">

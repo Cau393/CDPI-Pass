@@ -3461,7 +3461,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ message: "Configuração de armazenamento ausente" });
       }
 
-      const payload = buildNpsInsertPayload(userId, eventId, npsType, answers);
+      // normalizePhoneE164 throws on an invalid phone; surface it as 400, not 500.
+      // Verified live 2026-09-04: "+5500000000002" used to yield a bare 500.
+      let payload: ReturnType<typeof buildNpsInsertPayload>;
+      try {
+        payload = buildNpsInsertPayload(userId, eventId, npsType, answers);
+      } catch (normErr: unknown) {
+        const msg = normErr instanceof Error ? normErr.message : "Dados inválidos";
+        return res.status(400).json({ message: msg });
+      }
       const displayName = payload.row.name;
 
       let certificateUrl: string;
