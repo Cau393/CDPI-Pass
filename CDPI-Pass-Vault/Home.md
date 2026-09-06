@@ -12,7 +12,7 @@ Event management + ticketing platform for CDPI Pharma. Prod: https://cdpipass.co
 - [[50-Infrastructure/Deployment|Deployment (EC2/Docker/PM2)]] · [[50-Infrastructure/AWS-Services|AWS Services]] · [[50-Infrastructure/Neon-Database|Neon Database]] · [[50-Infrastructure/Environment-Variables|Env Vars]]
 - [[60-Decisions/README|Decisions (ADRs)]]
 - [[70-Operations/Operator-Guides|Operator Guides Index]]
-- [[70-Operations/Verifying-UI-Fixes|Verifying UI Fixes]]
+- [[70-Operations/Verifying-UI-Fixes|Verifying UI Fixes]] · [[70-Operations/Security-Backlog|Security Backlog (prioritized, evidence-backed)]]
 
 ## Fast access (obsidian-cli)
 ```bash
