@@ -25,7 +25,7 @@ Derived from the `frontend/sql/` files (each was run manually on Neon). This is 
 - `add_print_jobs_company_line.sql` — `company_line` column for badge second line.
 - `email_template_subjects.sql` — per-event courtesy/reminder subject columns + widened queue subject.
 - `event_modality.sql` — `events.modality` (`presencial`\|`online`, existing rows default presencial) + `events.meeting_url` (required when online; confirmation e-mail and confirmed Meus Ingressos). **Applied to Neon staging on 2026-09-14.** Prod still pending before the matching app deploy. See [[20-Backend/Event-Modality]].
-- `event_online_access_extras.sql` — `events.whatsapp_group_url` (optional online WhatsApp group invite; public APIs omit it) + `events.confirmation_email_html` (optional TipTap HTML injected into the purchase confirmation e-mail; empty = default template).
+- `event_online_access_extras.sql` — `events.whatsapp_group_url` (optional online WhatsApp group invite; public APIs omit it; confirmed Meus Ingressos) + `events.confirmation_email_html` (optional TipTap HTML injected into the purchase confirmation e-mail; empty = default template).
 
 ## Conventions observed in every SQL file
 - Header comment: "Run manually in PostgreSQL (no drizzle-kit push)".

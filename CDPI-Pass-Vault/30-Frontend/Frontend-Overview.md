@@ -62,4 +62,4 @@ Stored as a sanitised HTML subset (`p, br, strong, b, em, i, u`; `client/src/lib
 - **Language**: UI text in Brazilian Portuguese; validation messages PT-BR.
 - **Contact**: `shared/contact.ts` is the only source of the support e-mail and phones. Public ticket pages (`/`, `/eventos`, `/event/:id`, `/cortesia`) render `SiteFooter`; courtesy help text uses `ContactChannels`. See [[60-Decisions/ADR-009-canonical-contact]].
 - **Auth**: JWT stored client-side; `authenticateToken`-protected calls attach Bearer header via lib helper.
-- **Downloads / file viewing**: see [[60-Decisions/ADR-008-mobile-downloads]] — never `window.open` and never a detached data-URL anchor; most customers arrive from a WhatsApp in-app browser.
+- **Downloads / file viewing**: see [[60-Decisions/ADR-008-mobile-downloads]] — never `window.open` and never a detached data-URL anchor for QR/certificates; most customers arrive from a WhatsApp in-app browser. Exception: after **free subscribe**, `EventDetailsPage` tries `window.open` on the WhatsApp group URL (user just clicked Confirm); if the popup is blocked, Meus Ingressos still has a real `<a target="_blank">`.
