@@ -69,6 +69,30 @@ export const events = pgTable("events", {
    * courtesy redemption must keep working after sales close.
    */
   salesClosed: boolean("sales_closed").notNull().default(false),
+  /**
+   * Event format: in-person (`presencial`) keeps the QR ticket flow;
+   * `online` skips QR generation and sends the meeting URL by e-mail instead.
+   * Existing rows default to presencial.
+   */
+  modality: text("modality", { enum: ["presencial", "online"] })
+    .notNull()
+    .default("presencial"),
+  /**
+   * Meeting URL for online events. Secret on public event APIs; sent in the
+   * confirmation e-mail and shown to confirmed ticket holders on Meus Ingressos.
+   * Null for presencial.
+   */
+  meetingUrl: varchar("meeting_url", { length: 500 }),
+  /**
+   * Optional WhatsApp group invite URL for online events. Secret on public
+   * event APIs; confirmed attendees only. Null when presencial or unset.
+   */
+  whatsappGroupUrl: varchar("whatsapp_group_url", { length: 500 }),
+  /**
+   * Optional TipTap HTML injected into the purchase confirmation e-mail.
+   * Null/empty = default template. Stripped from public event APIs.
+   */
+  confirmationEmailHtml: text("confirmation_email_html"),
 });
 
 /** NPS responses for "Evento CDPI" certificate flow. */
