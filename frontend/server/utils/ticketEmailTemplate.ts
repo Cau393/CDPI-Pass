@@ -1,4 +1,8 @@
 import { EMAIL_CONTACT_FOOTER_HTML, EMAIL_CONTACT_LINE } from "@shared/contact";
+import {
+  confirmationEmailCustomBlockHtml,
+  confirmationEmailCustomBlockText,
+} from "./confirmationEmailHtml";
 
 /** Match EventDetailsPage / Brazil wall-clock display regardless of server TZ. */
 const EVENT_TZ = "America/Sao_Paulo";
@@ -15,6 +19,8 @@ export interface TicketEmailData {
   qrCodeS3Url: string;
   /** Paid orders confirm the payment; free and courtesy tickets confirm the seat. */
   confirmationKind: TicketConfirmationKind;
+  /** Optional TipTap HTML injected after the greeting. */
+  customHtml?: string | null;
 }
 
 export const TICKET_CONFIRMATION_LINE: Record<TicketConfirmationKind, string> = {
@@ -56,6 +62,7 @@ export function buildTicketEmailHtml(data: TicketEmailData): string {
   const instructions = TICKET_INSTRUCTIONS.map((line) => `<li>${line}</li>`).join(
     "\n                ",
   );
+  const customBlock = confirmationEmailCustomBlockHtml(data.customHtml);
 
   return `
       <!DOCTYPE html>
@@ -96,6 +103,7 @@ export function buildTicketEmailHtml(data: TicketEmailData): string {
           <div class="content">
             <p>Olá, <strong>${data.userName}</strong>!</p>
             <p>${confirmation} Aqui está seu ingresso para o evento:</p>
+            ${customBlock}
             
             <div class="ticket">
               <h3>${data.eventTitle}</h3>
@@ -135,6 +143,7 @@ export function buildTicketEmailText(data: TicketEmailData): string {
   const eventDate = formatTicketEventDate(data.eventDate);
   const confirmation = TICKET_CONFIRMATION_LINE[data.confirmationKind];
   const instructions = TICKET_INSTRUCTIONS.map((line) => `      - ${line}`).join("\n");
+  const customText = confirmationEmailCustomBlockText(data.customHtml);
 
   return `
       CDPI Pass - Seu Ingresso
@@ -142,7 +151,7 @@ export function buildTicketEmailText(data: TicketEmailData): string {
       Olá, ${data.userName}!
       
       ${confirmation} Detalhes do evento:
-      
+${customText}
       Evento: ${data.eventTitle}
       Data: ${eventDate}
       Local: ${data.eventLocation}

@@ -17,3 +17,21 @@ export function normalizeConfirmationEmailHtml(html: unknown): string | null {
   if (!confirmationEmailPlainText(sanitized)) return null;
   return sanitized;
 }
+
+/** HTML block injected after the greeting; empty string when there is no copy. */
+export function confirmationEmailCustomBlockHtml(
+  customHtml?: string | null,
+): string {
+  const normalized = normalizeConfirmationEmailHtml(customHtml);
+  if (!normalized) return "";
+  return `<div class="custom-message" style="background: white; padding: 15px; border-radius: 5px; margin: 20px 0; text-align: left;">${normalized}</div>`;
+}
+
+/** Plain-text equivalent of the custom block. */
+export function confirmationEmailCustomBlockText(
+  customHtml?: string | null,
+): string {
+  const normalized = normalizeConfirmationEmailHtml(customHtml);
+  if (!normalized) return "";
+  return `\n      ${confirmationEmailPlainText(normalized)}\n`;
+}

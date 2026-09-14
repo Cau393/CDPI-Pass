@@ -64,6 +64,28 @@ describe("buildTicketEmailHtml", () => {
     expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).toContain("Workshop Peptídeos");
   });
 
+  it("injects custom confirmation HTML before the ticket card", () => {
+    const html = buildTicketEmailHtml({
+      ...base,
+      confirmationKind: "paid",
+      customHtml: "<p>Traga o material</p>",
+    });
+    expect(html).toContain("Traga o material");
+    expect(html).toContain('src="cid:qrcode"');
+    expect(html.indexOf("Traga o material")).toBeLessThan(html.indexOf("cid:qrcode"));
+  });
+
+  it("does not keep script tags from custom HTML", () => {
+    const html = buildTicketEmailHtml({
+      ...base,
+      confirmationKind: "paid",
+      customHtml: "<script>alert(1)</script><p>Oi</p>",
+    });
+    expect(html).toContain("Oi");
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain("alert(1)");
+  });
+
   it("shows the current support phone in the footer", () => {
     expect(buildTicketEmailHtml({ ...base, confirmationKind: "paid" })).toContain("(62) 99865-5500");
   });

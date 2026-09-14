@@ -27,6 +27,7 @@ vi.mock("../../storage", () => ({
 vi.mock("../../services/emailService", () => ({
   emailService: {
     sendTicketEmail: vi.fn().mockResolvedValue(undefined),
+    sendOnlineEventEmail: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -41,6 +42,7 @@ vi.mock("axios", () => ({
 }));
 
 import { finalizeOrderPaidLikeWebhook } from "../../utils/finalizeOrderPaidLikeWebhook";
+import { emailService } from "../../services/emailService";
 
 function baseOrder(overrides: Partial<Order> = {}): Order {
   return {
@@ -182,5 +184,36 @@ describe("finalizeOrderPaidLikeWebhook", () => {
     expect(cancelPayment).not.toHaveBeenCalled();
     expect(discardPendingOrder).not.toHaveBeenCalled();
     expect(updateOrder).not.toHaveBeenCalled();
+  });
+
+  it("sends the ticket email for a presencial event", async () => {
+    const o = baseOrder({});
+    await finalizeOrderPaidLikeWebhook(o, { billingType: "CREDIT_CARD" });
+    expect(emailService.sendTicketEmail).toHaveBeenCalled();
+    expect(emailService.sendOnlineEventEmail).not.toHaveBeenCalled();
+  });
+
+  it("sends the meeting-link email for an online event", async () => {
+    getEvent.mockResolvedValue({
+      id: "evt-1",
+      title: "E",
+      date: new Date(),
+      location: "L",
+      currentAttendees: 1,
+      modality: "online",
+      meetingUrl: "https://zoom.us/j/1",
+      confirmationEmailHtml: "<p>Traga o material</p>",
+    });
+    const o = baseOrder({ qrCodeData: null });
+    await finalizeOrderPaidLikeWebhook(o, { billingType: "CREDIT_CARD" });
+    expect(emailService.sendOnlineEventEmail).toHaveBeenCalledWith(
+      "u@test.com",
+      expect.objectContaining({
+        meetingUrl: "https://zoom.us/j/1",
+        eventTitle: "E",
+        customHtml: "<p>Traga o material</p>",
+      }),
+    );
+    expect(emailService.sendTicketEmail).not.toHaveBeenCalled();
   });
 });
