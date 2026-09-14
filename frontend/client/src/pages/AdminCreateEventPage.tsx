@@ -54,6 +54,10 @@ export default function AdminCreateEventPage({
       price: "",
       npsType: "cdpi_event",
       isFree: false,
+      modality: "presencial",
+      meetingUrl: "",
+      whatsappGroupUrl: "",
+      confirmationEmailHtml: "",
     },
   });
 
@@ -78,6 +82,17 @@ export default function AdminCreateEventPage({
     formData.append("price", brazilianPriceToApiString(values.price));
     formData.append("nps_type", values.npsType);
     formData.append("is_free", String(values.isFree));
+    formData.append("modality", values.modality);
+    if (values.meetingUrl?.trim()) {
+      formData.append("meeting_url", values.meetingUrl.trim());
+    }
+    if (values.whatsappGroupUrl?.trim()) {
+      formData.append("whatsapp_group_url", values.whatsappGroupUrl.trim());
+    }
+    formData.append(
+      "confirmation_email_html",
+      values.confirmationEmailHtml?.trim() ?? "",
+    );
     if (values.coverImage?.[0]) {
       formData.append("coverImage", values.coverImage[0]);
     }

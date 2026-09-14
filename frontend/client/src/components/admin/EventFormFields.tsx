@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import EventDescriptionEditor from "@/components/admin/EventDescriptionEditor";
+import ConfirmationEmailEditor from "@/components/admin/ConfirmationEmailEditor";
 import {
   dateToApiLocalString,
   HOUR_OPTIONS,
@@ -46,6 +47,10 @@ type EventFormShape = {
   price: string;
   npsType: "cdpi_event" | "cdpi_apoiando";
   isFree: boolean;
+  modality: "presencial" | "online";
+  meetingUrl?: string;
+  whatsappGroupUrl?: string;
+  confirmationEmailHtml?: string;
   coverImage?: FileList;
 };
 
@@ -71,6 +76,8 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
   // A free event has no price to set, so the field is faded out and forced to 0.
   // This is presentation only: the server recomputes free-vs-paid from the DB.
   const isFree = Boolean(form.watch("isFree" as Path<T>));
+  const modality = (form.watch("modality" as Path<T>) as string) || "presencial";
+  const isOnline = modality === "online";
 
   return (
     <>
@@ -243,18 +250,152 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
         />
         <FormField
           control={control}
-          name={"location" as Path<T>}
+          name={"modality" as Path<T>}
           render={({ field }) => (
             <FormItem className="md:col-span-2">
-              <FormLabel>Local</FormLabel>
+              <FormLabel>Formato do evento</FormLabel>
+              <FormDescription>
+                Eventos presenciais enviam o QR Code do ingresso. Eventos online
+                enviam o link da reunião por e-mail e não geram ingresso.
+              </FormDescription>
               <FormControl>
-                <Input placeholder="Local ou endereço" {...field} value={field.value ?? ""} />
+                <RadioGroup
+                  onValueChange={(value) => {
+                    field.onChange(value);
+                    if (value === "presencial") {
+                      form.setValue("meetingUrl" as Path<T>, "" as never, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                      form.setValue("whatsappGroupUrl" as Path<T>, "" as never, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                    }
+                  }}
+                  value={field.value ?? "presencial"}
+                  className="grid gap-3 pt-2 sm:grid-cols-2"
+                >
+                  <div className="flex items-center space-x-2 rounded-lg border p-3">
+                    <RadioGroupItem value="presencial" id="modality-presencial" />
+                    <Label
+                      htmlFor="modality-presencial"
+                      className="cursor-pointer font-normal leading-snug"
+                    >
+                      Presencial
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2 rounded-lg border p-3">
+                    <RadioGroupItem value="online" id="modality-online" />
+                    <Label
+                      htmlFor="modality-online"
+                      className="cursor-pointer font-normal leading-snug"
+                    >
+                      Online
+                    </Label>
+                  </div>
+                </RadioGroup>
               </FormControl>
               <FormMessage />
             </FormItem>
           )}
         />
+        <FormField
+          control={control}
+          name={"location" as Path<T>}
+          render={({ field }) => (
+            <FormItem className="md:col-span-2">
+              <FormLabel>Local</FormLabel>
+              <FormControl>
+                <Input
+                  placeholder={
+                    isOnline
+                      ? "Plataforma (ex.: Zoom, Google Meet)"
+                      : "Local ou endereço"
+                  }
+                  {...field}
+                  value={field.value ?? ""}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        {isOnline ? (
+          <>
+          <FormField
+            control={control}
+            name={"meetingUrl" as Path<T>}
+            render={({ field }) => (
+              <FormItem className="md:col-span-2">
+                <FormLabel>Link da reunião</FormLabel>
+                <FormControl>
+                  <Input
+                    type="url"
+                    inputMode="url"
+                    placeholder="https://..."
+                    data-testid="input-meeting-url"
+                    {...field}
+                    value={field.value ?? ""}
+                  />
+                </FormControl>
+                <FormDescription>
+                  Enviado no e-mail de confirmação e mostrado em Meus Ingressos
+                  após a inscrição. Não aparece na página pública do evento.
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={control}
+            name={"whatsappGroupUrl" as Path<T>}
+            render={({ field }) => (
+              <FormItem className="md:col-span-2">
+                <FormLabel>Link do grupo no WhatsApp</FormLabel>
+                <FormControl>
+                  <Input
+                    type="url"
+                    inputMode="url"
+                    placeholder="https://chat.whatsapp.com/..."
+                    data-testid="input-whatsapp-group-url"
+                    {...field}
+                    value={field.value ?? ""}
+                  />
+                </FormControl>
+                <FormDescription>
+                  Opcional. Abre em nova aba após inscrição gratuita; no perfil
+                  após pagamento. Não aparece na página pública.
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </>
+        ) : null}
       </div>
+
+      <FormField
+        control={control}
+        name={"confirmationEmailHtml" as Path<T>}
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Mensagem extra no e-mail de confirmação</FormLabel>
+            <FormControl>
+              <ConfirmationEmailEditor
+                value={field.value ?? ""}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+              />
+            </FormControl>
+            <FormDescription>
+              Opcional. Se preenchida, entra no e-mail de confirmação. Vazia
+              mantém o modelo padrão.
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
 
       <FormField
         control={control}
@@ -267,7 +408,8 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
               </FormLabel>
               <FormDescription>
                 Inscrição gratuita: sem preço, sem taxa de conveniência de R$ 5,00 e sem
-                etapa de pagamento. O participante confirma e recebe o QR por e-mail.
+                etapa de pagamento. O participante confirma e recebe o QR (presencial)
+                ou o link de acesso (online) por e-mail.
               </FormDescription>
             </div>
             <FormControl>

@@ -48,6 +48,10 @@ function Harness({
       price: "100,00",
       npsType: "cdpi_event",
       isFree: false,
+      modality: "presencial",
+      meetingUrl: "",
+      whatsappGroupUrl: "",
+      confirmationEmailHtml: "",
       ...defaults,
     },
   });
@@ -147,5 +151,53 @@ describe("EventFormFields — 'Evento Grátis' switch", () => {
       "true",
     );
     expect(screen.getByTestId("input-event-price")).toBeDisabled();
+  });
+});
+
+describe("EventFormFields — modality selector", () => {
+  it("defaults to Presencial and hides the meeting URL field", () => {
+    render(<Harness />);
+    expect(screen.getByLabelText("Presencial")).toBeChecked();
+    expect(screen.queryByTestId("input-meeting-url")).not.toBeInTheDocument();
+  });
+
+  it("shows the meeting URL field when Online is selected", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByLabelText("Online"));
+    expect(screen.getByLabelText("Online")).toBeChecked();
+    expect(screen.getByTestId("input-meeting-url")).toBeInTheDocument();
+  });
+
+  it("starts with the meeting URL visible for an existing online event", () => {
+    render(
+      <Harness
+        defaults={{
+          modality: "online",
+          meetingUrl: "https://zoom.us/j/123",
+        }}
+      />,
+    );
+    expect(screen.getByLabelText("Online")).toBeChecked();
+    expect(screen.getByTestId("input-meeting-url")).toHaveValue(
+      "https://zoom.us/j/123",
+    );
+  });
+
+  it("hides the WhatsApp field for presencial events", () => {
+    render(<Harness />);
+    expect(screen.queryByTestId("input-whatsapp-group-url")).not.toBeInTheDocument();
+  });
+
+  it("shows the WhatsApp field when Online is selected", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByLabelText("Online"));
+    expect(screen.getByTestId("input-whatsapp-group-url")).toBeInTheDocument();
+  });
+
+  it("shows the confirmation email editor for presencial and online events", () => {
+    render(<Harness />);
+    expect(screen.getByTestId("editor-confirmation-email")).toBeInTheDocument();
   });
 });

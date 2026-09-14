@@ -69,6 +69,19 @@ function buildPatchFormData(
   if (dirty.price) fd.append("price", brazilianPriceToApiString(values.price));
   if (dirty.npsType) fd.append("nps_type", values.npsType);
   if (dirty.isFree) fd.append("is_free", String(values.isFree));
+  if (dirty.modality) fd.append("modality", values.modality);
+  if (dirty.meetingUrl || dirty.modality) {
+    fd.append("meeting_url", values.meetingUrl?.trim() ?? "");
+  }
+  if (dirty.whatsappGroupUrl || dirty.modality) {
+    fd.append("whatsapp_group_url", values.whatsappGroupUrl?.trim() ?? "");
+  }
+  if (dirty.confirmationEmailHtml) {
+    fd.append(
+      "confirmation_email_html",
+      values.confirmationEmailHtml?.trim() ?? "",
+    );
+  }
   if (dirty.coverImage && values.coverImage?.[0]) {
     fd.append("coverImage", values.coverImage[0]);
   }
@@ -174,6 +187,10 @@ export default function AdminEditEventPage() {
       price: "",
       npsType: "cdpi_event",
       isFree: false,
+      modality: "presencial",
+      meetingUrl: "",
+      whatsappGroupUrl: "",
+      confirmationEmailHtml: "",
     },
   });
 
@@ -190,6 +207,10 @@ export default function AdminEditEventPage() {
       price: apiPriceToBrazilianDisplay(event.price),
       npsType: event.npsType ?? "cdpi_event",
       isFree: event.isFree ?? false,
+      modality: event.modality ?? "presencial",
+      meetingUrl: event.meetingUrl ?? "",
+      whatsappGroupUrl: event.whatsappGroupUrl ?? "",
+      confirmationEmailHtml: event.confirmationEmailHtml ?? "",
     });
   }, [event, form]);
 
@@ -216,7 +237,11 @@ export default function AdminEditEventPage() {
       dirty.location ||
       dirty.price ||
       dirty.npsType ||
-      dirty.isFree;
+      dirty.isFree ||
+      dirty.modality ||
+      dirty.meetingUrl ||
+      dirty.whatsappGroupUrl ||
+      dirty.confirmationEmailHtml;
 
     if (!hasTextDirty && !hasNewCover) {
       toast({
@@ -243,6 +268,10 @@ export default function AdminEditEventPage() {
         price: apiPriceToBrazilianDisplay(updated.price),
         npsType: updated.npsType ?? "cdpi_event",
         isFree: updated.isFree ?? false,
+        modality: updated.modality ?? "presencial",
+        meetingUrl: updated.meetingUrl ?? "",
+        whatsappGroupUrl: updated.whatsappGroupUrl ?? "",
+        confirmationEmailHtml: updated.confirmationEmailHtml ?? "",
         coverImage: undefined,
       });
       if (fileInputRef.current) fileInputRef.current.value = "";

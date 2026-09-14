@@ -3,6 +3,56 @@ import { format, isValid, parse } from "date-fns";
 import { hasMeaningfulEventDescription } from "@/lib/eventDescriptionHtml";
 
 const npsTypeSchema = z.enum(["cdpi_event", "cdpi_apoiando"]);
+const modalitySchema = z.enum(["presencial", "online"]);
+
+function refineOnlineMeetingUrl(
+  data: { modality: "presencial" | "online"; meetingUrl?: string },
+  ctx: z.RefinementCtx,
+) {
+  if (data.modality !== "online") return;
+  const url = (data.meetingUrl ?? "").trim();
+  if (!url) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["meetingUrl"],
+      message: "Link da reunião é obrigatório para eventos online",
+    });
+    return;
+  }
+  const parsed = z
+    .string()
+    .url()
+    .refine((s) => /^https?:\/\//i.test(s))
+    .safeParse(url);
+  if (!parsed.success) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["meetingUrl"],
+      message: "Informe um URL válido (ex.: https://zoom.us/...)",
+    });
+  }
+}
+
+function refineOptionalWhatsappUrl(
+  data: { modality: "presencial" | "online"; whatsappGroupUrl?: string },
+  ctx: z.RefinementCtx,
+) {
+  if (data.modality !== "online") return;
+  const url = (data.whatsappGroupUrl ?? "").trim();
+  if (!url) return;
+  const parsed = z
+    .string()
+    .url()
+    .refine((s) => /^https?:\/\//i.test(s))
+    .safeParse(url);
+  if (!parsed.success) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["whatsappGroupUrl"],
+      message: "Informe um URL válido (ex.: https://chat.whatsapp.com/...)",
+    });
+  }
+}
 
 /** Stored in the form and sent to the API: local `yyyy-MM-dd'T'HH:mm` (no timezone suffix). */
 export const API_LOCAL_DATETIME_FMT = "yyyy-MM-dd'T'HH:mm" as const;
@@ -90,6 +140,10 @@ export const createEventSchema = z.object({
     }, "Digite um valor válido (ex.: 0,00 ou 1234,56)"),
   npsType: npsTypeSchema.default("cdpi_event"),
   isFree: z.boolean().default(false),
+  modality: modalitySchema.default("presencial"),
+  meetingUrl: z.string().optional().default(""),
+  whatsappGroupUrl: z.string().optional().default(""),
+  confirmationEmailHtml: z.string().optional().default(""),
   coverImage: z
     .custom<FileList | undefined>((v) => v === undefined || v instanceof FileList)
     .refine(
@@ -109,7 +163,7 @@ export const createEventSchema = z.object({
         (v[0]?.size ?? 0) <= 5 * 1024 * 1024,
       "Image must be smaller than 5MB.",
     ),
-});
+}).superRefine(refineOnlineMeetingUrl).superRefine(refineOptionalWhatsappUrl);
 
 export const editEventSchema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -130,8 +184,12 @@ export const editEventSchema = z.object({
     }, "Digite um valor válido (ex.: 0,00 ou 1.234,56)"),
   npsType: npsTypeSchema,
   isFree: z.boolean().default(false),
+  modality: modalitySchema.default("presencial"),
+  meetingUrl: z.string().optional().default(""),
+  whatsappGroupUrl: z.string().optional().default(""),
+  confirmationEmailHtml: z.string().optional().default(""),
   coverImage: coverFileListSchema,
-});
+}).superRefine(refineOnlineMeetingUrl).superRefine(refineOptionalWhatsappUrl);
 
 export type CreateEventFormValues = z.infer<typeof createEventSchema>;
 export type EditEventFormValues = z.infer<typeof editEventSchema>;
