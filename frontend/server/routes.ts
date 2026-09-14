@@ -66,6 +66,13 @@ import {
 import { toPresignedUrl } from "./utils/presignedUrl";
 import { finalizeOrderPaidLikeWebhook } from "./utils/finalizeOrderPaidLikeWebhook";
 import { enqueueEventPrintIfEnabled } from "./utils/enqueueEventPrintIfEnabled";
+import {
+  isOnlineEvent,
+  resolveCreateModality,
+  resolvePatchModality,
+  toPublicEvent,
+} from "./utils/eventModality";
+import { sendPurchaseConfirmationEmail } from "./utils/sendPurchaseConfirmationEmail";
 import { emailService } from "./services/emailService";
 import { asaasService } from "./services/asaasService";
 import { qrCodeService } from "./services/qrCodeService";
@@ -470,7 +477,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/events", async (req, res) => {
     try {
       const events = await storage.getEvents();
-      res.json(events);
+      res.json(events.map(toPublicEvent));
     } catch (error) {
       console.error("Get events error:", error);
       res.status(500).json({ message: "Erro interno do servidor" });
@@ -486,7 +493,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Evento não encontrado" });
       }
 
-      res.json(event);
+      res.json(toPublicEvent(event));
     } catch (error) {
       console.error("Get event error:", error);
       res.status(500).json({ message: "Erro interno do servidor" });
@@ -562,6 +569,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           (req.body as Record<string, unknown>).sales_closed,
         );
 
+        const modalityResolved = resolveCreateModality(
+          req.body as Record<string, unknown>,
+        );
+        if (!modalityResolved.ok) {
+          return res.status(400).json({ error: modalityResolved.error });
+        }
+
         const textFields = { title, description, date, location, price } as const;
         for (const key of Object.keys(textFields) as (keyof typeof textFields)[]) {
           const v = textFields[key];
@@ -617,6 +631,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             npsType,
             isFree,
             salesClosed,
+            modality: modalityResolved.modality,
+            meetingUrl: modalityResolved.meetingUrl,
+            whatsappGroupUrl: modalityResolved.whatsappGroupUrl,
+            confirmationEmailHtml: modalityResolved.confirmationEmailHtml,
           })
           .returning();
 
@@ -1063,6 +1081,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           npsType: "cdpi_event" | "cdpi_apoiando";
           isFree: boolean;
           salesClosed: boolean;
+          modality: "presencial" | "online";
+          meetingUrl: string | null;
+          whatsappGroupUrl: string | null;
+          confirmationEmailHtml: string | null;
         }> = {};
 
         if (Object.prototype.hasOwnProperty.call(body, "title")) {
@@ -1158,6 +1180,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (parsedNps.data !== existing.npsType) {
             payload.npsType = parsedNps.data;
           }
+        }
+
+        const modalityPatch = resolvePatchModality({
+          body: body as Record<string, unknown>,
+          existing: {
+            modality: existing.modality,
+            meetingUrl: existing.meetingUrl,
+            whatsappGroupUrl: existing.whatsappGroupUrl,
+            confirmationEmailHtml: existing.confirmationEmailHtml,
+          },
+        });
+        if (!modalityPatch.ok) {
+          return res.status(400).json({ error: modalityPatch.error });
+        }
+        if (modalityPatch.updates.modality !== undefined) {
+          payload.modality = modalityPatch.updates.modality;
+        }
+        if (modalityPatch.updates.meetingUrl !== undefined) {
+          payload.meetingUrl = modalityPatch.updates.meetingUrl;
+        }
+        if (modalityPatch.updates.whatsappGroupUrl !== undefined) {
+          payload.whatsappGroupUrl = modalityPatch.updates.whatsappGroupUrl;
+        }
+        if (modalityPatch.updates.confirmationEmailHtml !== undefined) {
+          payload.confirmationEmailHtml =
+            modalityPatch.updates.confirmationEmailHtml;
         }
 
         const file = req.file as { buffer: Buffer; mimetype: string } | undefined;
@@ -2261,18 +2309,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           asaasPaymentId: paymentData.id,
         });
 
-        // Generate QR code for the ticket
-        const qrCodeData = await qrCodeService.generateQRCode({
-          orderId: order.id,
-          eventId: event.id,
-          userId: userId,
-        });
+        let updatedOrder = await storage.getOrder(order.id);
 
-        // Update order with QR code
-        const updatedOrder = await storage.updateOrder(order.id, {
-          qrCodeData,
-          
-        });
+        if (!isOnlineEvent(event)) {
+          const qrCodeData = await qrCodeService.generateQRCode({
+            orderId: order.id,
+            eventId: event.id,
+            userId: userId,
+          });
+
+          updatedOrder = await storage.updateOrder(order.id, {
+            qrCodeData,
+          });
+        }
 
         // Prepare response with payment details
         const response: any = {
@@ -2292,6 +2341,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               userName: req.user.name,
               eventTitle: event.title,
               paymentUrl: paymentData.paymentLink,
+              isOnline: isOnlineEvent(event),
             });
           } catch (emailErr) {
             console.error("Erro ao enviar e-mail com link de pagamento:", emailErr);
@@ -2376,28 +2426,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: "paid",
       });
 
-      const qrCodeData = await qrCodeService.generateQRCode({
-        orderId: order.id,
-        eventId: event.id,
-        userId,
-      });
-
-      const updatedOrder = await storage.updateOrder(order.id, { qrCodeData });
+      let qrCodeData = "";
+      let updatedOrder = order;
+      if (!isOnlineEvent(event)) {
+        qrCodeData = await qrCodeService.generateQRCode({
+          orderId: order.id,
+          eventId: event.id,
+          userId,
+        });
+        updatedOrder = (await storage.updateOrder(order.id, { qrCodeData })) ?? order;
+      }
 
       await storage.updateEvent(event.id, {
         currentAttendees: (event.currentAttendees || 0) + 1,
       });
 
-      // The QR is attached inline from qrCodeData, so we do not need to wait
-      // for the S3 upload to land before sending.
       try {
-        await emailService.sendTicketEmail(req.user.email, {
+        await sendPurchaseConfirmationEmail({
+          to: req.user.email,
           userName: req.user.name,
-          eventTitle: event.title,
-          eventDate: event.date,
-          eventLocation: event.location,
-          qrCodeData,
+          event,
           orderId: order.id,
+          qrCodeData,
           qrCodeS3Url: updatedOrder?.qr_code_s3_url || "",
           confirmationKind: "free",
         });
@@ -2409,7 +2459,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(201).json({
         message: "Inscrição confirmada!",
         order: updatedOrder ?? order,
-        qrCode: qrCodeData,
+        qrCode: qrCodeData || undefined,
       });
     } catch (error) {
       console.error("POST /api/events/:id/subscribe:", error);
@@ -3114,17 +3164,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         courtesyAttendeeId: newAttendee.id, // Link to the new attendee record
       });
 
-      // Generate QR code for the ticket
-      const qrCodeData = await qrCodeService.generateQRCode({
-        orderId: order.id,
-        eventId: event.id,
-        userId: userId,
-      });
-
-      // Update order with QR code
-      const updatedOrder = await storage.updateOrder(order.id, {
-        qrCodeData,
-      });
+      let qrCodeData = "";
+      let updatedOrder = order;
+      if (!isOnlineEvent(event)) {
+        qrCodeData = await qrCodeService.generateQRCode({
+          orderId: order.id,
+          eventId: event.id,
+          userId: userId,
+        });
+        updatedOrder = (await storage.updateOrder(order.id, {
+          qrCodeData,
+        })) ?? order;
+      }
 
       // Increment courtesy link usage
       await storage.incrementCourtesyLinkUsage(link.id);
@@ -3134,51 +3185,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
         currentAttendees: (event.currentAttendees || 0) + 1
       });
 
-      // Wait for S3 URL to be available with retry logic
-      let finalOrderDetails = null;
-      let retries = 0;
-      const maxRetries = 100;
-      
-      while (retries < maxRetries) {
-        finalOrderDetails = await storage.getOrder(order.id);
-        
-        if (finalOrderDetails?.qr_code_s3_url) {
-          break; // S3 URL is available
+      let qrCodeS3Url = "";
+      if (!isOnlineEvent(event)) {
+        // Wait for S3 URL to be available with retry logic
+        let finalOrderDetails = null;
+        let retries = 0;
+        const maxRetries = 100;
+
+        while (retries < maxRetries) {
+          finalOrderDetails = await storage.getOrder(order.id);
+
+          if (finalOrderDetails?.qr_code_s3_url) {
+            break;
+          }
+
+          await new Promise(resolve => setTimeout(resolve, 200 * Math.pow(1.5, retries)));
+          retries++;
         }
-        
-        // Wait before retrying (exponential backoff)
-        await new Promise(resolve => setTimeout(resolve, 200 * Math.pow(1.5, retries)));
-        retries++;
+
+        if (!finalOrderDetails) {
+          console.error("Could not retrieve final order details for courtesy redemption:", order.id);
+          return res.status(201).json({
+            message: "Cortesia resgatada com sucesso! Ocorreu um erro ao enviar o email do ingresso.",
+            order: order,
+            qrCode: qrCodeData
+          });
+        }
+        qrCodeS3Url = finalOrderDetails.qr_code_s3_url || "";
       }
 
-      // Check if the order was fetched successfully before proceeding
-      if (!finalOrderDetails) {
-        console.error("Could not retrieve final order details for courtesy redemption:", order.id);
-        // It's better to still send the response to the user even if the email fails.
-        // The main redemption logic was successful.
-        return res.status(201).json({
-          message: "Cortesia resgatada com sucesso! Ocorreu um erro ao enviar o email do ingresso.",
-          order: order, // Send back the initial order object
-          qrCode: qrCodeData
+      try {
+        await sendPurchaseConfirmationEmail({
+          to: userData.email,
+          userName: newAttendee.name,
+          event,
+          orderId: order.id,
+          qrCodeData,
+          qrCodeS3Url,
+          confirmationKind: "courtesy",
         });
+      } catch (emailErr) {
+        console.error("Erro ao enviar e-mail de cortesia:", emailErr);
       }
-
-      // Send confirmation email with ticket
-      await emailService.sendTicketEmail(userData.email, {
-        userName: newAttendee.name,
-        eventTitle: event.title,
-        eventDate: event.date,
-        eventLocation: event.location,
-        qrCodeData: qrCodeData,
-        orderId: order.id,
-        qrCodeS3Url: finalOrderDetails.qr_code_s3_url || '',
-        confirmationKind: "courtesy",
-      });
 
       res.status(201).json({
         message: "Cortesia resgatada com sucesso!",
         order: updatedOrder,
-        qrCode: qrCodeData
+        qrCode: qrCodeData || undefined,
       });
     } catch (error) {
       console.error("Redeem courtesy error:", error);

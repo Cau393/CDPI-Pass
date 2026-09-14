@@ -13,6 +13,8 @@ describe("resolveCreateModality", () => {
       ok: true,
       modality: "presencial",
       meetingUrl: null,
+      whatsappGroupUrl: null,
+      confirmationEmailHtml: null,
     });
   });
 
@@ -52,6 +54,8 @@ describe("resolveCreateModality", () => {
       ok: true,
       modality: "online",
       meetingUrl: "https://zoom.us/j/123",
+      whatsappGroupUrl: null,
+      confirmationEmailHtml: null,
     });
   });
 
@@ -65,6 +69,38 @@ describe("resolveCreateModality", () => {
       ok: true,
       modality: "presencial",
       meetingUrl: null,
+      whatsappGroupUrl: null,
+      confirmationEmailHtml: null,
+    });
+  });
+
+  it("accepts online with WhatsApp and confirmation HTML", () => {
+    expect(
+      resolveCreateModality({
+        modality: "online",
+        meeting_url: "https://zoom.us/j/123",
+        whatsapp_group_url: "https://chat.whatsapp.com/AbC",
+        confirmation_email_html: "<p>Traga o material</p>",
+      }),
+    ).toEqual({
+      ok: true,
+      modality: "online",
+      meetingUrl: "https://zoom.us/j/123",
+      whatsappGroupUrl: "https://chat.whatsapp.com/AbC",
+      confirmationEmailHtml: "<p>Traga o material</p>",
+    });
+  });
+
+  it("rejects online with an invalid WhatsApp URL", () => {
+    expect(
+      resolveCreateModality({
+        modality: "online",
+        meeting_url: "https://zoom.us/j/123",
+        whatsapp_group_url: "not-a-url",
+      }),
+    ).toEqual({
+      ok: false,
+      error: "whatsapp_group_url must be a valid URL",
     });
   });
 });
@@ -118,6 +154,73 @@ describe("resolvePatchModality", () => {
     ).toEqual({
       ok: true,
       updates: { modality: "presencial", meetingUrl: null },
+    });
+  });
+
+  it("adds a WhatsApp URL later on an online event", () => {
+    expect(
+      resolvePatchModality({
+        body: { whatsapp_group_url: "https://chat.whatsapp.com/AbC" },
+        existing: {
+          modality: "online",
+          meetingUrl: "https://zoom.us/j/123",
+          whatsappGroupUrl: null,
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      updates: { whatsappGroupUrl: "https://chat.whatsapp.com/AbC" },
+    });
+  });
+
+  it("clears WhatsApp when switching back to presencial", () => {
+    expect(
+      resolvePatchModality({
+        body: { modality: "presencial" },
+        existing: {
+          modality: "online",
+          meetingUrl: "https://zoom.us/j/123",
+          whatsappGroupUrl: "https://chat.whatsapp.com/AbC",
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      updates: {
+        modality: "presencial",
+        meetingUrl: null,
+        whatsappGroupUrl: null,
+      },
+    });
+  });
+
+  it("rejects an invalid WhatsApp URL on patch", () => {
+    expect(
+      resolvePatchModality({
+        body: { whatsapp_group_url: "not-a-url" },
+        existing: {
+          modality: "online",
+          meetingUrl: "https://zoom.us/j/123",
+          whatsappGroupUrl: null,
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: "whatsapp_group_url must be a valid URL",
+    });
+  });
+
+  it("stores confirmation HTML on patch", () => {
+    expect(
+      resolvePatchModality({
+        body: { confirmation_email_html: "<p>Traga o material</p>" },
+        existing: {
+          modality: "presencial",
+          meetingUrl: null,
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      updates: { confirmationEmailHtml: "<p>Traga o material</p>" },
     });
   });
 });

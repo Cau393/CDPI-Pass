@@ -19,16 +19,17 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 ## Events (public)
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| GET | `/api/events` | 🔓 | List active events |
-| GET | `/api/events/:id` | 🔓 | Event details |
+| GET | `/api/events` | 🔓 | List active events (`meeting_url`, `whatsapp_group_url`, `confirmation_email_html` omitted) |
+| GET | `/api/events/:id` | 🔓 | Event details (same secrets omitted) |
+| POST | `/api/events/:id/subscribe` | 🔑 | Free inscription (no Asaas). QR if presencial; meeting-link e-mail if online |
 
 ## Admin: events
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/api/admin/events` | 👑 | List all events (incl. inactive) |
-| POST | `/api/admin/events` | 👑 | Create event (multipart, image upload → S3) |
-| GET | `/api/admin/events/:eventId` | 👑 | Event detail (admin view) |
-| PATCH | `/api/admin/events/:eventId` | 👑 | Update event |
+| POST | `/api/admin/events` | 👑 | Create event (multipart, image upload → S3). Fields include `modality` (`presencial`\|`online`), `meeting_url` (required when online), optional `whatsapp_group_url` (online only), optional `confirmation_email_html` (TipTap; empty = default confirmation e-mail) |
+| GET | `/api/admin/events/:eventId` | 👑 | Event detail (admin view; includes `meetingUrl`, `whatsappGroupUrl`, `confirmationEmailHtml`) |
+| PATCH | `/api/admin/events/:eventId` | 👑 | Update event (same `modality` / `meeting_url` / `whatsapp_group_url` rules; presencial clears meeting + WhatsApp URLs; `confirmation_email_html` optional on any modality) |
 | DELETE | `/api/admin/events/:eventId` | 👑 | Delete event |
 | GET | `/api/admin/events/:eventId/participants` | 👑 | Participant list (orders joined users) |
 | GET | `/api/admin/events/:eventId/commercial-sales` | 👑 | Sales report |
@@ -83,8 +84,8 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 ## Orders & payments (user)
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/orders` | 🔑 | Create order → Asaas payment (PIX/Boleto/Card) |
-| GET | `/api/orders` | ✉️ | My orders |
+| POST | `/api/orders` | 🔑 | Create order → Asaas payment (PIX/Boleto/Card). QR generated only if the event is presencial |
+| GET | `/api/orders` | ✉️ | My orders (nested event includes `modality`, not `meetingUrl`) |
 | GET | `/api/orders/:id` | 🔑 | Order detail |
 | POST | `/api/orders/:id/check-status` | 🔑 | Poll Asaas payment status |
 | DELETE | `/api/orders/:id/cancel` | 🔑 | Cancel own pending order |
@@ -103,7 +104,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 | POST | `/api/courtesy-links` | 👑 | Create courtesy link |
 | GET | `/api/courtesy-links` | 👑 | List own created links |
 | GET | `/api/courtesy-links/:code` | 🔓 | Resolve link for redeem page |
-| POST | `/api/courtesy/redeem` | 🔑 | Redeem courtesy → paid order |
+| POST | `/api/courtesy/redeem` | 🔑 | Redeem courtesy → paid order (same QR vs meeting-link split as purchase) |
 
 ## Certificates & NPS (user)
 | Method | Path | Auth | Purpose |
@@ -112,6 +113,8 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 | POST | NPS submit routes (~line 3044, 3102) | 🔑 | Submit NPS answers (event / apoiando) |
 | GET | `/api/users/me/certificates` | 🔑 | My certificates (presigned URLs, 900s) |
 | POST | `/api/certificates/generate` | 🔑 | NPS answers + Lambda → PDF cert; 201/400/409/502/503, see [[20-Backend/Certificates]] |
+
+Event format (presencial vs online, secret meeting URL, confirmation e-mails): [[20-Backend/Event-Modality]].
 
 Eligibility rules, Lambda contract and the full status-code table: [[20-Backend/Certificates]].
 

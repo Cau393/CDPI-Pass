@@ -3,6 +3,7 @@ import {
   EVENT_MODALITIES,
   type EventModality,
 } from "@shared/eventModality";
+import { normalizeConfirmationEmailHtml } from "./confirmationEmailHtml";
 
 export { isOnlineEvent } from "@shared/eventModality";
 export type { EventModality };
@@ -58,7 +59,13 @@ export function parseModalityField(raw: unknown): EventModality | null {
 }
 
 export function resolveCreateModality(body: Record<string, unknown>):
-  | { ok: true; modality: EventModality; meetingUrl: string | null }
+  | {
+      ok: true;
+      modality: EventModality;
+      meetingUrl: string | null;
+      whatsappGroupUrl: string | null;
+      confirmationEmailHtml: string | null;
+    }
   | { ok: false; error: string } {
   const modalityRaw = body.modality;
   let modality: EventModality = "presencial";
@@ -74,6 +81,7 @@ export function resolveCreateModality(body: Record<string, unknown>):
     modality = parsed;
   }
 
+  let meetingUrl: string | null = null;
   if (modality === "online") {
     const meetingRaw = body.meeting_url;
     if (typeof meetingRaw !== "string" || !meetingRaw.trim()) {
@@ -83,26 +91,58 @@ export function resolveCreateModality(body: Record<string, unknown>):
     if (!parsed.success) {
       return { ok: false, error: "meeting_url must be a valid URL" };
     }
-    return { ok: true, modality, meetingUrl: parsed.data };
+    meetingUrl = parsed.data;
   }
 
-  return { ok: true, modality, meetingUrl: null };
+  const whatsapp = resolveCreateWhatsappGroupUrl({
+    modality,
+    raw: body.whatsapp_group_url,
+  });
+  if (!whatsapp.ok) return whatsapp;
+
+  return {
+    ok: true,
+    modality,
+    meetingUrl,
+    whatsappGroupUrl: whatsapp.whatsappGroupUrl,
+    confirmationEmailHtml: normalizeConfirmationEmailHtml(
+      body.confirmation_email_html,
+    ),
+  };
 }
+
+type PatchAccessUpdates = {
+  modality?: EventModality;
+  meetingUrl?: string | null;
+  whatsappGroupUrl?: string | null;
+  confirmationEmailHtml?: string | null;
+};
 
 export function resolvePatchModality(opts: {
   body: Record<string, unknown>;
-  existing: { modality?: string | null; meetingUrl?: string | null };
-}):
-  | { ok: true; updates: { modality?: EventModality; meetingUrl?: string | null } }
-  | { ok: false; error: string } {
+  existing: {
+    modality?: string | null;
+    meetingUrl?: string | null;
+    whatsappGroupUrl?: string | null;
+    confirmationEmailHtml?: string | null;
+  };
+}): { ok: true; updates: PatchAccessUpdates } | { ok: false; error: string } {
   const { body, existing } = opts;
   const hasModality = Object.prototype.hasOwnProperty.call(body, "modality");
   const hasUrl = Object.prototype.hasOwnProperty.call(body, "meeting_url");
-  if (!hasModality && !hasUrl) {
+  const hasWhatsapp = Object.prototype.hasOwnProperty.call(
+    body,
+    "whatsapp_group_url",
+  );
+  const hasHtml = Object.prototype.hasOwnProperty.call(
+    body,
+    "confirmation_email_html",
+  );
+  if (!hasModality && !hasUrl && !hasWhatsapp && !hasHtml) {
     return { ok: true, updates: {} };
   }
 
-  const updates: { modality?: EventModality; meetingUrl?: string | null } = {};
+  const updates: PatchAccessUpdates = {};
   const existingModality: EventModality =
     parseModalityField(existing.modality) ?? "presencial";
 
@@ -122,6 +162,19 @@ export function resolvePatchModality(opts: {
     if (hasUrl || existing.meetingUrl) {
       if (existing.meetingUrl !== null) {
         updates.meetingUrl = null;
+      }
+    }
+    if (hasWhatsapp || existing.whatsappGroupUrl) {
+      if (existing.whatsappGroupUrl) {
+        updates.whatsappGroupUrl = null;
+      }
+    }
+    if (hasHtml) {
+      const nextHtml = normalizeConfirmationEmailHtml(
+        body.confirmation_email_html,
+      );
+      if (nextHtml !== (existing.confirmationEmailHtml ?? null)) {
+        updates.confirmationEmailHtml = nextHtml;
       }
     }
     return { ok: true, updates };
@@ -145,6 +198,26 @@ export function resolvePatchModality(opts: {
 
   if (!nextUrl || !nextUrl.trim()) {
     return { ok: false, error: "meeting_url is required for online events" };
+  }
+
+  if (hasWhatsapp) {
+    const whatsapp = parseOptionalHttpUrl(
+      body.whatsapp_group_url,
+      "whatsapp_group_url",
+    );
+    if (!whatsapp.ok) return whatsapp;
+    if (whatsapp.url !== (existing.whatsappGroupUrl ?? null)) {
+      updates.whatsappGroupUrl = whatsapp.url;
+    }
+  }
+
+  if (hasHtml) {
+    const nextHtml = normalizeConfirmationEmailHtml(
+      body.confirmation_email_html,
+    );
+    if (nextHtml !== (existing.confirmationEmailHtml ?? null)) {
+      updates.confirmationEmailHtml = nextHtml;
+    }
   }
 
   return { ok: true, updates };
