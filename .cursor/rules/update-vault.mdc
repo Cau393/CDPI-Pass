@@ -1,0 +1,31 @@
+---
+description: Keep CDPI-Pass-Vault in the same commit as schema, API, email, and UI changes
+alwaysApply: true
+---
+
+# Always update the vault
+
+`CDPI-Pass-Vault/` is the project knowledge base. After any change to schema, SQL, API contracts, email templates, or user-visible flows, update the matching vault note in the **same commit** as the code.
+
+Work is incomplete if the vault still describes the previous system. Search for stale claims and fix them; do not only append.
+
+## Which note
+
+- Schema / SQL → `40-Database/Schema-Overview.md`, `40-Database/Normalization-History.md`
+- Routes / request-response → `20-Backend/API-Endpoints.md`
+- Email / workers / send paths → `20-Backend/Services-Overview.md`
+- Pages, forms, profile → `30-Frontend/Frontend-Overview.md`
+- Non-obvious technical choice → new ADR in `60-Decisions/` plus the index in `60-Decisions/README.md`
+- Infra / CI → `50-Infrastructure/Deployment.md`
+
+Never copy secrets or `.env` values into the vault.
+
+```
+# ❌ BAD — code lands, vault still says "meeting URL is email-only"
+git add frontend/server/routes.ts
+git commit -m "ADD: show meeting link on Meus Ingressos"
+
+# ✅ GOOD — vault updated in the same commit
+git add frontend/server/routes.ts CDPI-Pass-Vault/30-Frontend/Frontend-Overview.md CDPI-Pass-Vault/60-Decisions/ADR-010-online-vs-presencial.md
+git commit -m "ADD: meeting link on Meus Ingressos"
+```
