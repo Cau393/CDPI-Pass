@@ -29,6 +29,7 @@ import { Download, Eye, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, 
 import { CertificatesTab } from "@/components/CertificatesTab";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 import type { User, Order, CourtesyLink } from "@shared/schema";
+import { isOnlineEvent, publicEventLocationLabel } from "@shared/eventModality";
 import {
   Pagination,
   PaginationContent,
@@ -452,7 +453,7 @@ const handleCancelOrder = (orderId: string) => {
                                   </span>
                                   <MapPin className="h-4 w-4 ml-4 mr-2" />
                                   <span data-testid={`text-event-location-${order.id}`}>
-                                    {order.event?.location || "Local não disponível"}
+                                    {publicEventLocationLabel(order.event)}
                                   </span>
                                 </div>
                                 <div className="flex items-center mb-2">
@@ -525,6 +526,34 @@ const handleCancelOrder = (orderId: string) => {
                                         Desmarcar presença
                                       </Button>
                                     )}
+                                  </div>
+                                ) : isPaidLikeOrderStatus(order.status) &&
+                                  isOnlineEvent(order.event) ? (
+                                  <div className="flex flex-wrap gap-2">
+                                    {order.event?.meetingUrl ? (
+                                      <Button asChild className="bg-primary hover:bg-secondary" size="sm">
+                                        <a
+                                          href={order.event.meetingUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          data-testid={`button-meeting-${order.id}`}
+                                        >
+                                          Acessar reunião
+                                        </a>
+                                      </Button>
+                                    ) : null}
+                                    {order.event?.whatsappGroupUrl ? (
+                                      <Button asChild variant="outline" size="sm">
+                                        <a
+                                          href={order.event.whatsappGroupUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          data-testid={`button-whatsapp-${order.id}`}
+                                        >
+                                          Entrar no grupo
+                                        </a>
+                                      </Button>
+                                    ) : null}
                                   </div>
                                 ) : order.status === "pending" && order.asaasPaymentId ? (
                                   <div className="flex gap-2">

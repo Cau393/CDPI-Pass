@@ -3,12 +3,14 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import EventCoverImage from "@/components/EventCoverImage";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Calendar, MapPin, Users, Clock, ArrowLeft, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
 import type { Event, Order } from "@shared/schema";
+import { isOnlineEvent, publicEventLocationLabel } from "@shared/eventModality";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
@@ -83,14 +85,29 @@ export default function EventDetailsPage() {
   const subscribeMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/events/${id}/subscribe`);
-      return res.json() as Promise<{ message: string }>;
+      return res.json() as Promise<{
+        message: string;
+        whatsappGroupUrl?: string | null;
+      }>;
     },
-    onSuccess: async () => {
+    onSuccess: async (data) => {
       toast({
         title: "Inscrição confirmada!",
-        description:
-          "Enviamos seu ingresso com o QR Code por e-mail. Ele também fica no seu perfil.",
+        description: event && isOnlineEvent(event)
+          ? "Enviamos o link de acesso por e-mail."
+          : "Enviamos seu ingresso com o QR Code por e-mail. Ele também fica no seu perfil.",
       });
+      const groupUrl = data?.whatsappGroupUrl;
+      if (groupUrl) {
+        const opened = window.open(groupUrl, "_blank", "noopener,noreferrer");
+        if (opened == null) {
+          toast({
+            title: "Grupo do WhatsApp",
+            description:
+              "Não foi possível abrir o grupo automaticamente. Use o botão em Meus Ingressos.",
+          });
+        }
+      }
       await queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       await queryClient.invalidateQueries({ queryKey: [`/api/events/${id}`] });
       setLocation("/profile");
@@ -252,6 +269,11 @@ export default function EventDetailsPage() {
             <h1 className="text-3xl font-bold text-gray-900 mb-4">
               {event.title}
             </h1>
+            {isOnlineEvent(event) && (
+              <Badge className="mb-4 bg-sky-600 text-white hover:bg-sky-600">
+                Evento Online
+              </Badge>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-gray-600">
               <div className="flex items-center">
                 <Calendar className="h-5 w-5 mr-3 text-primary" />
@@ -263,7 +285,7 @@ export default function EventDetailsPage() {
               </div>
               <div className="flex items-center">
                 <MapPin className="h-5 w-5 mr-3 text-primary" />
-                <span>{event.location}</span>
+                <span>{publicEventLocationLabel(event)}</span>
               </div>
               {spotsLeft !== null && (
                 <div className="flex items-center">

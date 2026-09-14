@@ -316,3 +316,120 @@ describe("EventDetailsPage — Peptídeos poster and long description", () => {
     expect(description!.querySelectorAll("br")).toHaveLength(2);
   });
 });
+
+describe("EventDetailsPage — evento online", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      mockApi({
+        ...baseEvent,
+        modality: "online",
+        location: "Zoom",
+      }),
+    );
+    localStorage.setItem("token", "test-token");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("shows the Evento Online badge and hides the meeting URL", async () => {
+    renderPage();
+    expect(await screen.findByText("Evento Online")).toBeInTheDocument();
+    expect(screen.getByText("Online")).toBeInTheDocument();
+    expect(screen.queryByText("Zoom")).not.toBeInTheDocument();
+    expect(screen.queryByText(/zoom\.us/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("EventDetailsPage — free online subscribe WhatsApp", () => {
+  const WHATSAPP_URL = "https://chat.whatsapp.com/AbC";
+  const freeOnline = {
+    ...baseEvent,
+    price: "0.00",
+    isFree: true,
+    modality: "online",
+    location: "Zoom",
+  };
+
+  beforeEach(() => {
+    localStorage.setItem("token", "test-token");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("opens the WhatsApp group in a new tab after a successful subscribe", async () => {
+    const openSpy = vi.fn(() => ({ closed: false }));
+    vi.stubGlobal("open", openSpy);
+    vi.stubGlobal(
+      "fetch",
+      mockApi(freeOnline, {
+        status: 201,
+        body: { message: "Inscrição confirmada!", whatsappGroupUrl: WHATSAPP_URL },
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-event-cta"));
+
+    await waitFor(() => {
+      expect(openSpy).toHaveBeenCalledTimes(1);
+      expect(openSpy).toHaveBeenCalledWith(
+        WHATSAPP_URL,
+        "_blank",
+        "noopener,noreferrer",
+      );
+    });
+  });
+
+  it("toasts Meus Ingressos when the WhatsApp popup is blocked", async () => {
+    const openSpy = vi.fn(() => null);
+    vi.stubGlobal("open", openSpy);
+    vi.stubGlobal(
+      "fetch",
+      mockApi(freeOnline, {
+        status: 201,
+        body: { message: "Inscrição confirmada!", whatsappGroupUrl: WHATSAPP_URL },
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-event-cta"));
+
+    await waitFor(() => {
+      expect(toastSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: expect.stringMatching(/Meus Ingressos/i),
+        }),
+      );
+    });
+  });
+
+  it("does not open a tab when the event has no WhatsApp group", async () => {
+    const openSpy = vi.fn();
+    vi.stubGlobal("open", openSpy);
+    vi.stubGlobal(
+      "fetch",
+      mockApi(freeOnline, {
+        status: 201,
+        body: { message: "Inscrição confirmada!", whatsappGroupUrl: null },
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-event-cta"));
+
+    await waitFor(() => {
+      expect(setLocation).toHaveBeenCalledWith("/profile");
+    });
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+});

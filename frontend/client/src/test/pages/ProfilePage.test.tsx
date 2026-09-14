@@ -149,3 +149,104 @@ describe("ProfilePage — ticket QR on mobile", () => {
     expect(downloadDataUrl).toHaveBeenCalledWith(QR_DATA_URL, "ingresso-o1.png");
   });
 });
+
+const MEETING_URL = "https://meet.example.com/room-abc";
+const WHATSAPP_URL = "https://chat.whatsapp.com/AbC";
+
+function onlineEvent(extra: Record<string, unknown> = {}) {
+  return {
+    title: "Curso Online CDPI",
+    date: "2026-10-20T11:30:00.000Z",
+    location: "Zoom",
+    modality: "online",
+    ...extra,
+  };
+}
+
+function stubOrders(orders: unknown[]) {
+  apiRequest.mockImplementation(async (_method: string, url: string) => {
+    if (String(url).startsWith("/api/orders")) {
+      return jsonResponse({ orders, totalPages: 1 });
+    }
+    return jsonResponse({});
+  });
+}
+
+describe("ProfilePage — online access buttons", () => {
+  it("shows meeting and WhatsApp buttons for a confirmed online ticket with both URLs", async () => {
+    stubOrders([
+      {
+        id: "on1",
+        status: "paid",
+        paymentMethod: "pix",
+        amount: "100.00",
+        createdAt: "2026-09-01T12:00:00.000Z",
+        qrCodeData: null,
+        event: onlineEvent({
+          meetingUrl: MEETING_URL,
+          whatsappGroupUrl: WHATSAPP_URL,
+        }),
+      },
+    ]);
+    renderPage();
+
+    const meeting = await screen.findByTestId("button-meeting-on1");
+    const whatsapp = screen.getByTestId("button-whatsapp-on1");
+    expect(meeting).toHaveAttribute("href", MEETING_URL);
+    expect(meeting).toHaveAttribute("target", "_blank");
+    expect(meeting).toHaveAttribute("rel", "noopener noreferrer");
+    expect(whatsapp).toHaveAttribute("href", WHATSAPP_URL);
+    expect(whatsapp).toHaveAttribute("target", "_blank");
+    expect(
+      screen.queryByText(/o link de acesso foi enviado por e-mail/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows only Acessar reunião when the WhatsApp URL is missing", async () => {
+    stubOrders([
+      {
+        id: "on2",
+        status: "paid",
+        paymentMethod: "free",
+        amount: "0.00",
+        createdAt: "2026-09-01T12:00:00.000Z",
+        qrCodeData: null,
+        event: onlineEvent({ meetingUrl: MEETING_URL, whatsappGroupUrl: null }),
+      },
+    ]);
+    renderPage();
+
+    expect(await screen.findByTestId("button-meeting-on2")).toBeInTheDocument();
+    expect(screen.queryByTestId("button-whatsapp-on2")).not.toBeInTheDocument();
+  });
+
+  it("hides access buttons while an online paid order is still pending", async () => {
+    stubOrders([
+      {
+        id: "on3",
+        status: "pending",
+        paymentMethod: "pix",
+        amount: "100.00",
+        createdAt: "2026-09-01T12:00:00.000Z",
+        asaasPaymentId: "pay_pending",
+        qrCodeData: null,
+        event: onlineEvent({
+          meetingUrl: MEETING_URL,
+          whatsappGroupUrl: WHATSAPP_URL,
+        }),
+      },
+    ]);
+    renderPage();
+
+    expect(await screen.findByTestId("text-order-price-on3")).toBeInTheDocument();
+    expect(screen.queryByTestId("button-meeting-on3")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("button-whatsapp-on3")).not.toBeInTheDocument();
+  });
+
+  it("still shows the presencial QR actions for a confirmed in-person ticket", async () => {
+    renderPage();
+
+    expect(await screen.findByTestId("button-view-qr-o1")).toBeInTheDocument();
+    expect(screen.queryByTestId("button-meeting-o1")).not.toBeInTheDocument();
+  });
+});
