@@ -73,6 +73,10 @@ import {
   toPublicEvent,
 } from "./utils/eventModality";
 import { sendPurchaseConfirmationEmail } from "./utils/sendPurchaseConfirmationEmail";
+import {
+  accessLinksForOrder,
+  withOrderAccessLinks,
+} from "./utils/accessLinksForOrder";
 import { emailService } from "./services/emailService";
 import { asaasService } from "./services/asaasService";
 import { qrCodeService } from "./services/qrCodeService";
@@ -2456,10 +2460,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("Erro ao enviar e-mail de inscrição gratuita:", emailErr);
       }
 
+      const links = accessLinksForOrder({
+        orderStatus: (updatedOrder ?? order).status,
+        event,
+      });
+
       return res.status(201).json({
         message: "Inscrição confirmada!",
         order: updatedOrder ?? order,
         qrCode: qrCodeData || undefined,
+        whatsappGroupUrl: links?.whatsappGroupUrl ?? null,
       });
     } catch (error) {
       console.error("POST /api/events/:id/subscribe:", error);
@@ -2477,7 +2487,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { orders, total } = await storage.getOrdersByUser(userId, page, limit);
 
       res.json({
-        orders,
+        orders: orders.map(withOrderAccessLinks),
         totalPages: Math.ceil(total / limit),
         currentPage: page,
       });

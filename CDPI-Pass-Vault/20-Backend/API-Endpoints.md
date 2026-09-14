@@ -21,7 +21,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 |---|---|---|---|
 | GET | `/api/events` | 🔓 | List active events (`meeting_url`, `whatsapp_group_url`, `confirmation_email_html` omitted) |
 | GET | `/api/events/:id` | 🔓 | Event details (same secrets omitted) |
-| POST | `/api/events/:id/subscribe` | 🔑 | Free inscription (no Asaas). QR if presencial; meeting-link e-mail if online |
+| POST | `/api/events/:id/subscribe` | 🔑 | Free inscription (no Asaas). QR if presencial; meeting-link e-mail if online. Response includes `whatsappGroupUrl` (string or null) so the client can open the group tab |
 
 ## Admin: events
 | Method | Path | Auth | Purpose |
@@ -85,7 +85,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | POST | `/api/orders` | 🔑 | Create order → Asaas payment (PIX/Boleto/Card). QR generated only if the event is presencial |
-| GET | `/api/orders` | ✉️ | My orders (nested event includes `modality`, not `meetingUrl`) |
+| GET | `/api/orders` | ✉️ | My orders. Nested event includes `modality`. `meetingUrl` and `whatsappGroupUrl` only for `paid`/`courtesy` online orders; omitted otherwise. Never includes `confirmationEmailHtml` |
 | GET | `/api/orders/:id` | 🔑 | Order detail |
 | POST | `/api/orders/:id/check-status` | 🔑 | Poll Asaas payment status |
 | DELETE | `/api/orders/:id/cancel` | 🔑 | Cancel own pending order |

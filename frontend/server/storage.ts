@@ -306,6 +306,9 @@ export class DatabaseStorage implements IStorage {
           location: events.location,
           price: events.price,
           imageUrl: events.imageUrl,
+          modality: events.modality,
+          meetingUrl: events.meetingUrl,
+          whatsappGroupUrl: events.whatsappGroupUrl,
         },
       })
       .from(orders)
