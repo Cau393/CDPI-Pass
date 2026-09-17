@@ -30,6 +30,7 @@ import { CertificatesTab } from "@/components/CertificatesTab";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 import type { User, Order, CourtesyLink } from "@shared/schema";
 import { isOnlineEvent, publicEventLocationLabel } from "@shared/eventModality";
+import { isFreePaymentMethod } from "@/lib/eventCta";
 import {
   Pagination,
   PaginationContent,
@@ -464,10 +465,14 @@ const handleCancelOrder = (orderId: string) => {
                               <div className="flex items-center space-x-4 mt-4 sm:mt-0">
                                 <div className="text-right">
                                   <div className="text-lg font-semibold text-primary" data-testid={`text-order-price-${order.id}`}>
-                                    {formatCurrency(order.amount)}
+                                    {isFreePaymentMethod(order.paymentMethod)
+                                      ? "Grátis"
+                                      : formatCurrency(order.amount)}
                                   </div>
                                   <div className="text-xs text-gray-500" data-testid={`text-order-date-${order.id}`}>
-                                    Comprado em {new Date(order.createdAt).toLocaleDateString("pt-BR")}
+                                    {isFreePaymentMethod(order.paymentMethod)
+                                      ? `Inscrito em ${new Date(order.createdAt).toLocaleDateString("pt-BR")}`
+                                      : `Comprado em ${new Date(order.createdAt).toLocaleDateString("pt-BR")}`}
                                   </div>
                                 </div>
                                 {isPaidLikeOrderStatus(order.status) && order.qrCodeData ? (

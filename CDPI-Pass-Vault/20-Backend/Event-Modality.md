@@ -30,7 +30,7 @@ All confirmation paths go through `server/utils/sendPurchaseConfirmationEmail.ts
 
 The order row is still created (attendance / Make.com). Check-in via QR does not apply to online events.
 
-Paid finalization also POSTs to Make.com with `event.modality` and `event.meetingUrl` (internal webhook). Confirmed attendees also see meeting + optional WhatsApp on `GET /api/orders`. Free subscribe 201 includes `whatsappGroupUrl` so the client can `window.open` the group.
+Paid finalization also POSTs to Make.com with `event.modality` and `event.meetingUrl` (internal webhook). Confirmed attendees also see meeting + optional WhatsApp on `GET /api/orders`. Free subscribe 201 includes `whatsappGroupUrl` so the client can `window.open` the group. Home hero and Event Details both go through `useFreeSubscribe`.
 
 Pending paid orders must not include meeting or WhatsApp URLs.
 

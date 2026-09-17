@@ -1,16 +1,26 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { MapPin, Calendar, ChevronDown, ChevronUp } from "lucide-react";
+import { MapPin, Calendar, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
 import type { Event, Order } from "@shared/schema";
+import { publicEventLocationLabel } from "@shared/eventModality";
 import { apiRequest } from "@/lib/queryClient";
 import EventCoverImage from "@/components/EventCoverImage";
 import SiteFooter from "@/components/SiteFooter";
 import { eventDescriptionPlainText } from "@/lib/eventDescriptionHtml";
+import { useFreeSubscribe } from "@/hooks/useFreeSubscribe";
+import {
+  eventAcquisitionCtaLabel,
+  eventFeeLabel,
+  eventPriceLabel,
+  isEventSoldOut,
+  isFreeEvent,
+  loginRequiredDescription,
+} from "@/lib/eventCta";
 
 const MAIN_EVENT_DESCRIPTION_MAX_LENGTH = 90;
 
@@ -44,6 +54,7 @@ export default function HomePage() {
   const [, setLocation] = useLocation();
   const { isAuthenticated } = useAuth();
   const { toast } = useToast();
+  const { subscribe, isPending: isSubscribePending } = useFreeSubscribe();
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -96,15 +107,21 @@ export default function HomePage() {
     return parseFloat(String(ev.price));
   };
 
-  const handleBuyTicket = (event: Event) => {
+  const handlePrimaryCta = (event: Event) => {
+    const qs = promoCode ? `?promo=${encodeURIComponent(promoCode)}` : "";
+    const next = `/event/${event.id}${qs}`;
+
+    if (isFreeEvent(event)) {
+      subscribe(event, next);
+      return;
+    }
+
     if (!isAuthenticated) {
       toast({
         title: "Login necessário",
-        description: "Faça login ou cadastre-se para comprar ingressos",
+        description: loginRequiredDescription(false),
         variant: "destructive",
       });
-      const qs = promoCode ? `?promo=${encodeURIComponent(promoCode)}` : "";
-      const next = `/event/${event.id}${qs}`;
       setLocation(`/login?next=${encodeURIComponent(next)}`);
       return;
     }
@@ -122,6 +139,7 @@ export default function HomePage() {
 
   const mainEvent = sortedEvents?.[0];
   const upcomingEvents = sortedEvents?.slice(1, 2) || [];
+  const mainFeeLabel = mainEvent ? eventFeeLabel(mainEvent) : null;
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -189,7 +207,7 @@ export default function HomePage() {
                         <div className="flex min-w-0 items-center text-gray-600 md:items-start">
                           <MapPin className="mr-2 h-4 w-4 shrink-0 text-primary md:mt-0.5" />
                           <span className="truncate md:line-clamp-2 md:whitespace-normal">
-                            {mainEvent.location}
+                            {publicEventLocationLabel(mainEvent)}
                           </span>
                         </div>
                       </div>
@@ -197,30 +215,42 @@ export default function HomePage() {
                       <div className="flex items-center justify-between gap-3 md:mt-3">
                         <div className="min-w-0 shrink">
                           <p className="text-xl font-bold text-primary tabular-nums xl:text-2xl">
-                            {mainEvent.isFree
-                              ? "Grátis"
-                              : `R$ ${displayPriceForEvent(mainEvent).toFixed(2)}`}
+                            {eventPriceLabel(
+                              mainEvent,
+                              displayPriceForEvent(mainEvent),
+                            )}
                           </p>
-                          {!mainEvent.isFree && (
+                          {mainFeeLabel && (
                             <p className="text-xs text-gray-500">
-                              + taxa de conveniência
+                              {mainFeeLabel}
                             </p>
                           )}
                         </div>
                         <Button
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleBuyTicket(mainEvent);
+                            handlePrimaryCta(mainEvent);
                           }}
                           className="h-10 shrink-0 bg-green-500 px-4 text-sm text-white hover:bg-green-600"
                           data-testid="button-buy-main"
-                          disabled={paidEventIds.has(mainEvent.id)}
+                          disabled={
+                            paidEventIds.has(mainEvent.id) ||
+                            isEventSoldOut(mainEvent) ||
+                            mainEvent.salesClosed === true ||
+                            (isFreeEvent(mainEvent) && isSubscribePending)
+                          }
                         >
-                          {paidEventIds.has(mainEvent.id)
-                            ? "Ingresso confirmado"
-                            : mainEvent.isFree
-                              ? "Se Inscrever"
-                              : "Comprar Ingresso"}
+                          {isSubscribePending && isFreeEvent(mainEvent) && (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          )}
+                          {eventAcquisitionCtaLabel({
+                            isFree: isFreeEvent(mainEvent),
+                            confirmed: paidEventIds.has(mainEvent.id),
+                            soldOut: isEventSoldOut(mainEvent),
+                            salesClosed: mainEvent.salesClosed === true,
+                            pending:
+                              isSubscribePending && isFreeEvent(mainEvent),
+                          })}
                         </Button>
                       </div>
                     </div>
@@ -277,12 +307,15 @@ export default function HomePage() {
                           </div>
                           <div className="flex items-center">
                             <MapPin className="h-4 w-4 mr-1" />
-                            {event.location}
+                            {publicEventLocationLabel(event)}
                           </div>
                         </div>
                         <div className="mt-3 flex items-center justify-between">
                           <span className="font-bold text-primary">
-                            R$ {displayPriceForEvent(event).toFixed(2)}
+                            {eventPriceLabel(
+                              event,
+                              displayPriceForEvent(event),
+                            )}
                           </span>
                           <Button
                             size="sm"
@@ -402,7 +435,7 @@ export default function HomePage() {
               </button>
               {expandedFAQ === 'garantir' && (
                 <div className="px-6 pb-4 text-gray-600">
-                  <p>Para garantir seu ingresso, basta clicar no botão "Comprar Ingresso", fazer seu cadastro ou login, escolher a forma de pagamento e confirmar a compra. Você receberá o QR Code do ingresso por e-mail.</p>
+                  <p>Para eventos pagos, clique em "Comprar Ingresso", faça login ou cadastro, escolha a forma de pagamento e confirme a compra. Para eventos gratuitos, clique em "Confirmar inscrição" após o login — a inscrição é confirmada na hora, sem pagamento. Você receberá o QR Code do ingresso por e-mail.</p>
                 </div>
               )}
             </div>
@@ -430,8 +463,8 @@ export default function HomePage() {
 
       <SiteFooter />
 
-      {/* Payment Modal */}
-      {selectedEvent && (
+      {/* Payment Modal — paid events only. Free events subscribe in place. */}
+      {selectedEvent && !isFreeEvent(selectedEvent) && (
         <PaymentModal
           event={selectedEvent}
           promoCode={promoCode}

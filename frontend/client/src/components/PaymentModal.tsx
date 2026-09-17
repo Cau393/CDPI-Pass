@@ -8,6 +8,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Event } from "@shared/schema";
+import { publicEventLocationLabel } from "@shared/eventModality";
+import { isFreeEvent } from "@/lib/eventCta";
 
 interface EventForModal {
   id: string;
@@ -44,6 +46,7 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
   });
 
   const handlePayment = () => {
+    if (isFreeEvent(event)) return;
     const method = selectedMethod;
     createOrderMutation.mutate(method, {
       onSuccess: (data) => {
@@ -83,6 +86,24 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
     }).format(numValue);
   };
 
+  if (isFreeEvent(event)) {
+    return (
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Inscrição gratuita</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-gray-600">
+            Este evento é gratuito. Use a inscrição gratuita, não o pagamento.
+          </p>
+          <Button onClick={onClose} className="w-full" data-testid="button-close-free-payment">
+            Fechar
+          </Button>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -105,7 +126,7 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Local:</span>
-                  <span>{event?.location}</span>
+                  <span>{publicEventLocationLabel(event)}</span>
                 </div>
                 <div className="border-t pt-2 mt-2">
                   <div className="flex justify-between">

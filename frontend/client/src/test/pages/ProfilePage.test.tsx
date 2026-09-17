@@ -125,6 +125,18 @@ describe("ProfilePage — tabs on phones", () => {
 });
 
 describe("ProfilePage — ticket QR on mobile", () => {
+  it("shows Grátis and Inscrito em for a free-event order", async () => {
+    renderPage();
+
+    expect(await screen.findByTestId("text-order-price-o1")).toHaveTextContent(
+      "Grátis",
+    );
+    expect(screen.getByTestId("text-order-date-o1")).toHaveTextContent(
+      /^Inscrito em /,
+    );
+    expect(screen.queryByText(/Comprado em/)).not.toBeInTheDocument();
+  });
+
   it("shows a Ver QR Code button for a confirmed ticket", async () => {
     renderPage();
 

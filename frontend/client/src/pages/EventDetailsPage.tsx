@@ -1,5 +1,5 @@
 import { useParams, useLocation } from "wouter";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import EventCoverImage from "@/components/EventCoverImage";
 import { Button } from "@/components/ui/button";
@@ -11,10 +11,19 @@ import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
 import type { Event, Order } from "@shared/schema";
 import { isOnlineEvent, publicEventLocationLabel } from "@shared/eventModality";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
 import SiteFooter from "@/components/SiteFooter";
+import { useFreeSubscribe } from "@/hooks/useFreeSubscribe";
+import {
+  eventAcquisitionCtaLabel,
+  eventFeeLabel,
+  eventPriceLabel,
+  isEventSoldOut,
+  isFreeEvent,
+  loginRequiredDescription,
+} from "@/lib/eventCta";
 
 // ✅ Extend Event to include promoCode
 interface EventWithPromo extends Event {
@@ -70,69 +79,21 @@ export default function EventDetailsPage() {
     enabled: !!promoCode,
   });
 
+  const { subscribe, isPending: isSubscribePending } = useFreeSubscribe();
+
   const displayPrice = promoLink?.overridePrice 
     ? parseFloat(promoLink.overridePrice) 
     : (event ? parseFloat(event.price) : 0);
 
   // Both flags are authoritative on the server; these only drive the UI.
-  const isFree = event?.isFree === true;
+  const isFree = isFreeEvent(event ?? {});
   const salesClosed = event?.salesClosed === true;
-
-  /**
-   * Free inscription: one confirmation click, no payment step, no Asaas call.
-   * The server re-checks that the event really is free and that sales are open.
-   */
-  const subscribeMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/events/${id}/subscribe`);
-      return res.json() as Promise<{
-        message: string;
-        whatsappGroupUrl?: string | null;
-      }>;
-    },
-    onSuccess: async (data) => {
-      toast({
-        title: "Inscrição confirmada!",
-        description: event && isOnlineEvent(event)
-          ? "Enviamos o link de acesso por e-mail."
-          : "Enviamos seu ingresso com o QR Code por e-mail. Ele também fica no seu perfil.",
-      });
-      const groupUrl = data?.whatsappGroupUrl;
-      if (groupUrl) {
-        const opened = window.open(groupUrl, "_blank", "noopener,noreferrer");
-        if (opened == null) {
-          toast({
-            title: "Grupo do WhatsApp",
-            description:
-              "Não foi possível abrir o grupo automaticamente. Use o botão em Meus Ingressos.",
-          });
-        }
-      }
-      await queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
-      await queryClient.invalidateQueries({ queryKey: [`/api/events/${id}`] });
-      setLocation("/profile");
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Não foi possível confirmar",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
+  const soldOut = event ? isEventSoldOut(event) : false;
+  const feeLabel = event ? eventFeeLabel(event, "detailed") : null;
 
   const handleFreeSubscribe = () => {
-    if (!isAuthenticated) {
-      toast({
-        title: "Login necessário",
-        description: "Faça login ou cadastre-se para se inscrever",
-        variant: "destructive",
-      });
-      const next = `${window.location.pathname}${window.location.search}`;
-      setLocation(`/login?next=${encodeURIComponent(next)}`);
-      return;
-    }
-    subscribeMutation.mutate();
+    if (!event) return;
+    subscribe(event);
   };
 
   const [modalData, setModalData] = useState<{
@@ -146,7 +107,7 @@ export default function EventDetailsPage() {
     if (!isAuthenticated) {
       toast({
         title: "Login necessário",
-        description: "Faça login ou cadastre-se para comprar ingressos",
+        description: loginRequiredDescription(false),
         variant: "destructive",
       });
       const next = `${window.location.pathname}${window.location.search}`;
@@ -155,6 +116,7 @@ export default function EventDetailsPage() {
     }
 
     if (!event) return;
+    if (isFreeEvent(event)) return;
 
     setModalData({
       event: event,
@@ -184,14 +146,6 @@ export default function EventDetailsPage() {
       hour: "2-digit",
       minute: "2-digit",
     });
-
-  const formatCurrency = (value: number | string) => {
-    const numValue = typeof value === "string" ? parseFloat(value) : value;
-    return new Intl.NumberFormat("pt-BR", {
-      style: "currency",
-      currency: "BRL",
-    }).format(numValue);
-  };
 
   // Loading skeleton
   if (isLoading) {
@@ -321,22 +275,16 @@ export default function EventDetailsPage() {
                   {isFree ? "Inscrição" : "Valor do ingresso"}
                 </p>
                 <p className="text-3xl font-bold text-primary">
-                  {isFree ? "Grátis" : formatCurrency(displayPrice)}
+                  {eventPriceLabel(event, displayPrice)}
                 </p>
                 {promoLink && !isFree && (
                   <p className="text-sm text-green-600">
                     Promoção aplicada ({promoCode})
                   </p>
                 )}
-                {/* Free events skip the R$5 convenience fee entirely. */}
-                {!isFree && (
+                {feeLabel && (
                   <p className="text-xs text-gray-500 mt-1">
-                    + taxa de conveniência de R$ 5,00
-                  </p>
-                )}
-                {isFree && (
-                  <p className="text-xs text-gray-500 mt-1">
-                    Sem taxa de conveniência
+                    {feeLabel}
                   </p>
                 )}
               </div>
@@ -351,29 +299,23 @@ export default function EventDetailsPage() {
                 }}
                 className="bg-primary hover:bg-secondary text-white px-8 py-6 text-lg"
                 disabled={
-                  spotsLeft === 0 ||
+                  soldOut ||
                   hasPaidForEvent ||
                   salesClosed ||
-                  subscribeMutation.isPending
+                  isSubscribePending
                 }
                 data-testid="button-event-cta"
               >
-                {subscribeMutation.isPending && (
+                {isSubscribePending && (
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                 )}
-                {hasPaidForEvent
-                  ? isFree
-                    ? "Inscrição confirmada"
-                    : "Ingresso já confirmado"
-                  : spotsLeft === 0
-                    ? "Evento Esgotado"
-                    : salesClosed
-                      ? "Vendas encerradas"
-                      : subscribeMutation.isPending
-                        ? "Confirmando..."
-                        : isFree
-                          ? "Confirmar inscrição"
-                          : "Comprar Ingresso"}
+                {eventAcquisitionCtaLabel({
+                  isFree,
+                  confirmed: hasPaidForEvent,
+                  soldOut,
+                  salesClosed,
+                  pending: isSubscribePending,
+                })}
               </Button>
               {hasPaidForEvent && (
                 <p className="text-sm text-muted-foreground text-center sm:text-right w-full sm:w-auto">
@@ -393,7 +335,7 @@ export default function EventDetailsPage() {
         </CardContent>
       </Card>
 
-      {modalData && (
+      {modalData && !isFreeEvent(modalData.event) && (
         <PaymentModal
           event={modalData.event}
           promoCode={modalData.promoCode}

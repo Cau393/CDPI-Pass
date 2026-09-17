@@ -124,10 +124,7 @@ describe("EventDetailsPage — 'Evento Grátis'", () => {
     renderPage();
 
     expect(await screen.findByText("Grátis")).toBeInTheDocument();
-    expect(screen.getByText(/Sem taxa de conveniência/)).toBeInTheDocument();
-    expect(
-      screen.queryByText(/taxa de conveniência de R\$ 5,00/),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/taxa de conveniência/)).not.toBeInTheDocument();
   });
 
   it("offers a confirmation button instead of a purchase button", async () => {

@@ -3,7 +3,14 @@ import { Button } from "@/components/ui/button";
 import { Calendar, MapPin } from "lucide-react";
 import { useLocation } from "wouter";
 import type { Event } from "@shared/schema";
+import { publicEventLocationLabel } from "@shared/eventModality";
 import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
+import {
+  eventAcquisitionCtaLabel,
+  eventPriceLabel,
+  isEventSoldOut,
+  isFreeEvent,
+} from "@/lib/eventCta";
 
 interface EventCardProps {
   event: Event;
@@ -18,14 +25,6 @@ export default function EventCard({ event, onBuyTicket }: EventCardProps) {
       day: "numeric",
       month: "long",
       year: "numeric",
-    });
-  };
-
-  const formatCurrency = (price: string | number) => {
-    const value = typeof price === "string" ? parseFloat(price) : price;
-    return value.toLocaleString("pt-BR", {
-      style: "currency",
-      currency: "BRL",
     });
   };
 
@@ -47,7 +46,7 @@ export default function EventCard({ event, onBuyTicket }: EventCardProps) {
           </span>
           <MapPin className="h-4 w-4 ml-4 mr-2 text-primary" />
           <span data-testid={`text-event-location-${event.id}`}>
-            {event.location}
+            {publicEventLocationLabel(event)}
           </span>
         </div>
         
@@ -64,7 +63,7 @@ export default function EventCard({ event, onBuyTicket }: EventCardProps) {
         
         <div className="flex items-center justify-between">
           <div className="text-2xl font-bold text-primary" data-testid={`text-event-price-${event.id}`}>
-            {event.isFree ? "Grátis" : formatCurrency(event.price)}
+            {eventPriceLabel(event)}
           </div>
           <div className="flex space-x-2">
             <Button
@@ -78,14 +77,15 @@ export default function EventCard({ event, onBuyTicket }: EventCardProps) {
             <Button
               className="bg-primary hover:bg-secondary text-white"
               onClick={() => onBuyTicket(event)}
-              disabled={event.salesClosed === true}
+              disabled={event.salesClosed === true || isEventSoldOut(event)}
               data-testid={`button-buy-ticket-${event.id}`}
             >
-              {event.salesClosed
-                ? "Vendas encerradas"
-                : event.isFree
-                  ? "Inscrever-se"
-                  : "Comprar"}
+              {eventAcquisitionCtaLabel({
+                isFree: isFreeEvent(event),
+                confirmed: false,
+                soldOut: isEventSoldOut(event),
+                salesClosed: event.salesClosed === true,
+              })}
             </Button>
           </div>
         </div>

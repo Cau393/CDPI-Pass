@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const setLocation = vi.fn();
@@ -7,8 +8,9 @@ vi.mock("wouter", () => ({
   useLocation: () => ["/", setLocation],
 }));
 
+const authState = { isAuthenticated: false };
 vi.mock("../../hooks/useAuth", () => ({
-  useAuth: () => ({ isAuthenticated: false }),
+  useAuth: () => authState,
 }));
 
 vi.mock("../../hooks/use-toast", () => ({
@@ -55,11 +57,33 @@ function renderPage() {
   );
 }
 
-function mockApi(event: Record<string, unknown>) {
-  return vi.fn(async (input: RequestInfo | URL) => {
+function mockApi(
+  eventOrEvents: Record<string, unknown> | Record<string, unknown>[],
+  subscribe?: { status: number; body: unknown },
+) {
+  const events = Array.isArray(eventOrEvents) ? eventOrEvents : [eventOrEvents];
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
+    const method = init?.method ?? "GET";
+
+    if (url.includes("/subscribe") && method === "POST") {
+      const res = subscribe ?? {
+        status: 201,
+        body: { message: "Inscrição confirmada!" },
+      };
+      return new Response(JSON.stringify(res.body), {
+        status: res.status,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (url.includes("/api/events")) {
-      return new Response(JSON.stringify([event]), {
+      return new Response(JSON.stringify(events), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("/api/orders")) {
+      return new Response(JSON.stringify({ orders: [] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -72,6 +96,9 @@ function mockApi(event: Record<string, unknown>) {
 }
 
 describe("HomePage — main event cover image", () => {
+  beforeEach(() => {
+    authState.isAuthenticated = false;
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
@@ -143,7 +170,7 @@ describe("HomePage — main event cover image", () => {
 
     expect(await screen.findByText("Grátis")).toBeInTheDocument();
     expect(screen.getByTestId("button-buy-main")).toHaveTextContent(
-      "Se Inscrever",
+      "Confirmar inscrição",
     );
     expect(
       screen.queryByText("+ taxa de conveniência"),
@@ -157,11 +184,51 @@ describe("HomePage — main event cover image", () => {
     );
     renderPage();
 
-    expect(await screen.findByText("R$ 100.00")).toBeInTheDocument();
+    expect(await screen.findByText(/R\$\s*100[,.]00/)).toBeInTheDocument();
     expect(screen.getByTestId("button-buy-main")).toHaveTextContent(
       "Comprar Ingresso",
     );
     expect(screen.getByText("+ taxa de conveniência")).toBeInTheDocument();
+  });
+
+  it("subscribes in place for a free event and never opens the payment modal", async () => {
+    authState.isAuthenticated = true;
+    localStorage.setItem("token", "test-token");
+    const fetchMock = mockApi(baseEvent);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-buy-main"));
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map(
+        ([input, init]) =>
+          `${(init as RequestInit)?.method ?? "GET"} ${String(input)}`,
+      );
+      expect(
+        calls.some((c) => c === `POST /api/events/${EVENT_ID}/subscribe`),
+      ).toBe(true);
+      expect(calls.some((c) => c === "POST /api/orders")).toBe(false);
+    });
+
+    expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
+    localStorage.clear();
+  });
+
+  it("shows Grátis in the sidebar instead of R$ 0.00", async () => {
+    const sidebarEvent = {
+      ...baseEvent,
+      id: "33333333-3333-3333-3333-333333333333",
+      title: "Segundo evento gratuito",
+      date: "2027-11-20T11:30:00.000Z",
+    };
+    vi.stubGlobal("fetch", mockApi([baseEvent, sidebarEvent]));
+    renderPage();
+
+    expect(await screen.findByText("Segundo evento gratuito")).toBeInTheDocument();
+    expect(screen.queryByText(/R\$\s*0[,.]00/)).not.toBeInTheDocument();
+    expect(screen.getAllByText("Grátis").length).toBeGreaterThanOrEqual(2);
   });
 
   it("shows the gradient placeholder when the event has no cover", async () => {

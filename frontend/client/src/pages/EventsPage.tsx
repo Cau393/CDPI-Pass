@@ -6,9 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Calendar, MapPin, Search } from "lucide-react";
 import type { Event } from "@shared/schema";
+import { publicEventLocationLabel } from "@shared/eventModality";
 import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
 import SiteFooter from "@/components/SiteFooter";
 import { eventDescriptionPlainText } from "@/lib/eventDescriptionHtml";
+import { eventPriceLabel } from "@/lib/eventCta";
 
 export default function EventsPage() {
   const [, setLocation] = useLocation();
@@ -115,14 +117,12 @@ export default function EventsPage() {
                     </div>
                     <div className="flex items-center text-gray-500 text-sm">
                       <MapPin className="h-4 w-4 mr-2 text-primary" />
-                      <span className="line-clamp-1">{event.location}</span>
+                      <span className="line-clamp-1">{publicEventLocationLabel(event)}</span>
                     </div>
                   </div>
                   <div className="flex items-center justify-between">
                     <p className="text-2xl font-bold text-primary">
-                      {event.isFree
-                        ? "Grátis"
-                        : `R$ ${parseFloat(event.price).toFixed(2)}`}
+                      {eventPriceLabel(event)}
                     </p>
                     <Button
                       size="sm"
