@@ -27,9 +27,9 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/api/admin/events` | 👑 | List all events (incl. inactive) |
-| POST | `/api/admin/events` | 👑 | Create event (multipart, image upload → S3). Fields include `modality` (`presencial`\|`online`), `meeting_url` (required when online), optional `whatsapp_group_url` (online only), optional `confirmation_email_html` (TipTap; empty = default confirmation e-mail) |
+| POST | `/api/admin/events` | 👑 | Create event (multipart, image upload → S3). Fields include `modality` (`presencial`\|`online`), `meeting_url` (required when online), optional `whatsapp_group_url` (online only), optional `confirmation_email_html` (TipTap; empty = default confirmation e-mail), optional `courtesy_limit` (integer ≥ 1; omit or blank = no cap) |
 | GET | `/api/admin/events/:eventId` | 👑 | Event detail (admin view; includes `meetingUrl`, `whatsappGroupUrl`, `confirmationEmailHtml`) |
-| PATCH | `/api/admin/events/:eventId` | 👑 | Update event (same `modality` / `meeting_url` / `whatsapp_group_url` rules; presencial clears meeting + WhatsApp URLs; `confirmation_email_html` optional on any modality) |
+| PATCH | `/api/admin/events/:eventId` | 👑 | Update event (same `modality` / `meeting_url` / `whatsapp_group_url` rules; presencial clears meeting + WhatsApp URLs; `confirmation_email_html` optional on any modality). Optional `courtesy_limit`: blank stores NULL. If the saved cap is already ≤ paid courtesy orders, every courtesy link for the event is set inactive. Raising or clearing the cap does not turn links back on |
 | DELETE | `/api/admin/events/:eventId` | 👑 | Delete event |
 | GET | `/api/admin/events/:eventId/participants` | 👑 | Participant list (orders joined users) |
 | GET | `/api/admin/events/:eventId/commercial-sales` | 👑 | Sales report |
@@ -44,7 +44,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 | GET/PATCH | `/api/admin/events/:eventId/communicate-template` | 👑 | Communicate (announcement) template |
 | GET | `/api/admin/events/:eventId/communicate-recipient-counts` | 👑 | Recipient counts per mode |
 | POST | `/api/admin/events/:eventId/communicate-send` | 👑 | Enqueue communicate job |
-| GET/PATCH | `/api/admin/events/:eventId/mass-send-recipients` | 👑 | View/edit CSV recipients for mass send |
+| GET/PATCH | `/api/admin/events/:eventId/mass-send-recipients` | 👑 | View/edit CSV recipients for mass send. GET also returns `courtesyLimit` and `courtesyRedeemedCount`. PATCH `{ isActive: true }` returns 400 `Limite de cortesias do evento atingido` while redeemed ≥ cap |
 | POST | `/api/admin/events/:eventId/courtesy/mass-send` | 👑 | Enqueue courtesy mass-send for event |
 | POST | `/api/admin/courtesy/mass-send` | 👑 | Enqueue courtesy mass-send (CSV upload) |
 
@@ -67,8 +67,8 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 ## Admin: courtesy links & quotas
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| GET | `/api/admin/courtesy-links` | 👑 | All links w/ usage |
-| PATCH | `/api/admin/events/:eventId/courtesy-links/:linkId` | 👑 | Edit link (count, active, price) |
+| GET | `/api/admin/courtesy-links` | 👑 | Lookup one link by `code`. Includes `courtesyLimit` and `courtesyRedeemedCount` |
+| PATCH | `/api/admin/events/:eventId/courtesy-links/:linkId` | 👑 | Edit link (count, active). `isActive: true` returns 400 while the event courtesy cap is reached. Deactivating stays allowed |
 | GET | `/api/admin/events/:eventId/courtesy-links/:linkId/redemptions` | 👑 | Redemption list |
 
 ## Admin: orders & check-in
@@ -101,10 +101,10 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 ## Courtesy (user-facing)
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/courtesy-links` | 👑 | Create courtesy link |
+| POST | `/api/courtesy-links` | 👑 | Create courtesy link. 400 when the event courtesy cap is already reached |
 | GET | `/api/courtesy-links` | 👑 | List own created links |
 | GET | `/api/courtesy-links/:code` | 🔓 | Resolve link for redeem page |
-| POST | `/api/courtesy/redeem` | 🔑 | Redeem courtesy → paid order (same QR vs meeting-link split as purchase) |
+| POST | `/api/courtesy/redeem` | 🔑 | Redeem courtesy → paid order (same QR vs meeting-link split as purchase). Counts one paid courtesy order. The redeem that reaches `events.courtesy_limit` succeeds and then deactivates every courtesy link for the event. A later redeem returns 400 `Limite de cortesias do evento atingido`. NULL limit means no cap |
 
 ## Certificates & NPS (user)
 | Method | Path | Auth | Purpose |

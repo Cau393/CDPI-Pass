@@ -33,6 +33,7 @@ import { eq, ne, desc, sql, asc, count, and, isNull } from "drizzle-orm";
 import { s3Service } from "./services/s3Service";
 import { buildUndoCheckInPatch } from "./utils/undoCheckInUpdate";
 import { validateCourtesyTicketCountUpdate } from "./utils/courtesyTicketCountUpdate";
+import { isCourtesyLimitReached } from "./utils/courtesyRedeemLimit";
 import { MAX_PRINT_ATTEMPTS, nextStateAfterPrintFailure } from "./utils/printJobPolicy";
 import {
   filterEligibleReminderLinks,
@@ -98,6 +99,24 @@ export interface IStorage {
   /** Validates ticketCount vs usedCount and updates; throws if link missing or invalid. */
   updateCourtesyLinkTicketCount(id: string, ticketCount: number): Promise<CourtesyLink>;
   incrementCourtesyLinkUsage(id: string): Promise<void>;
+  /** Paid courtesy orders for the event. One row per successful redeem. */
+  countPaidCourtesyRedeems(eventId: string): Promise<number>;
+  /** Sets every courtesy link for the event to inactive. */
+  disableEventCourtesyLinks(eventId: string): Promise<void>;
+  /**
+   * Locks the event row, rejects when the courtesy cap is already hit,
+   * then inserts the attendee and paid courtesy order. Disables links
+   * when this redeem fills the cap.
+   */
+  claimCourtesyRedeem(params: {
+    eventId: string;
+    linkId: string;
+    userId: string;
+    attendee: InsertCourtesyAttendee;
+  }): Promise<
+    | { ok: false }
+    | { ok: true; order: Order; attendee: CourtesyAttendee }
+  >;
 
   /** Pending only: clears QR/S3 then sets status cancelled (no participant email — see executeOrderCancel). */
   discardPendingOrder(orderId: string): Promise<CancelOrderResult>;
@@ -534,6 +553,118 @@ export class DatabaseStorage implements IStorage {
         updatedAt: new Date()
       })
       .where(eq(courtesyLinks.id, id));
+  }
+
+  async countPaidCourtesyRedeems(eventId: string): Promise<number> {
+    const [row] = await db
+      .select({ value: count() })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.eventId, eventId),
+          eq(orders.paymentMethod, "courtesy"),
+          eq(orders.status, "paid"),
+        ),
+      );
+    return row?.value ?? 0;
+  }
+
+  async disableEventCourtesyLinks(eventId: string): Promise<void> {
+    await db
+      .update(courtesyLinks)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(
+        and(
+          eq(courtesyLinks.eventId, eventId),
+          sql`${courtesyLinks.isActive} IS DISTINCT FROM false`,
+        ),
+      );
+  }
+
+  async claimCourtesyRedeem(params: {
+    eventId: string;
+    linkId: string;
+    userId: string;
+    attendee: InsertCourtesyAttendee;
+  }): Promise<
+    | { ok: false }
+    | { ok: true; order: Order; attendee: CourtesyAttendee }
+  > {
+    return db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select({
+          courtesyLimit: events.courtesyLimit,
+          currentAttendees: events.currentAttendees,
+        })
+        .from(events)
+        .where(eq(events.id, params.eventId))
+        .for("update");
+      if (!locked) return { ok: false };
+
+      const [row] = await tx
+        .select({ value: count() })
+        .from(orders)
+        .where(
+          and(
+            eq(orders.eventId, params.eventId),
+            eq(orders.paymentMethod, "courtesy"),
+            eq(orders.status, "paid"),
+          ),
+        );
+      const redeemed = row?.value ?? 0;
+      if (isCourtesyLimitReached(redeemed, locked.courtesyLimit)) {
+        await tx
+          .update(courtesyLinks)
+          .set({ isActive: false, updatedAt: new Date() })
+          .where(eq(courtesyLinks.eventId, params.eventId));
+        return { ok: false };
+      }
+
+      const [attendee] = await tx
+        .insert(courtesyAttendees)
+        .values(params.attendee)
+        .returning();
+      const [order] = await tx
+        .insert(orders)
+        .values({
+          userId: params.userId,
+          eventId: params.eventId,
+          cpf: attendee.cpf,
+          paymentMethod: "courtesy",
+          amount: "0.00",
+          status: "paid",
+          courtesyLinkId: params.linkId,
+          courtesyAttendeeId: attendee.id,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .returning();
+
+      await tx
+        .update(courtesyLinks)
+        .set({
+          usedCount: sql`used_count + 1`,
+          updatedAt: new Date(),
+        })
+        .where(eq(courtesyLinks.id, params.linkId));
+
+      await tx
+        .update(events)
+        .set({
+          currentAttendees: (locked.currentAttendees || 0) + 1,
+          updatedAt: new Date(),
+        })
+        .where(eq(events.id, params.eventId));
+
+      if (isCourtesyLimitReached(redeemed + 1, locked.courtesyLimit)) {
+        await tx
+          .update(courtesyLinks)
+          .set({ isActive: false, updatedAt: new Date() })
+          .where(eq(courtesyLinks.eventId, params.eventId));
+      }
+
+      return { ok: true, order, attendee };
+    });
   }
 
   private async finalizeCancelOrderClearingQr(

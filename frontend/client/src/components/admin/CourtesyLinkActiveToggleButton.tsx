@@ -15,6 +15,8 @@ export type CourtesyLinkActiveToggleButtonProps = {
   eventId: string;
   linkId: string;
   isActive: boolean;
+  /** When true, an inactive link cannot be turned back on. */
+  activationBlocked?: boolean;
   disabled?: boolean;
   onSuccess?: (nextIsActive: boolean) => void;
   className?: string;
@@ -26,6 +28,7 @@ export function CourtesyLinkActiveToggleButton({
   eventId,
   linkId,
   isActive,
+  activationBlocked = false,
   disabled,
   onSuccess,
   className,
@@ -72,7 +75,7 @@ export function CourtesyLinkActiveToggleButton({
       type="button"
       size={size}
       variant={effectiveVariant}
-      disabled={disabled || mutation.isPending}
+      disabled={disabled || mutation.isPending || (!isActive && activationBlocked)}
       className={className}
       onClick={(e) => {
         e.stopPropagation();

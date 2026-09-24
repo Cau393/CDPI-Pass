@@ -51,6 +51,7 @@ type EventFormShape = {
   meetingUrl?: string;
   whatsappGroupUrl?: string;
   confirmationEmailHtml?: string;
+  courtesyLimit?: string;
   coverImage?: FileList;
 };
 
@@ -243,6 +244,33 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
                 {isFree
                   ? "Evento gratuito: o preço fica fixo em R$ 0,00."
                   : "Reais · vírgula nos centavos (ex.: 1.234,56)"}
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={control}
+          name={"courtesyLimit" as Path<T>}
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Limite total de cortesias</FormLabel>
+              <FormControl>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="Sem limite"
+                  autoComplete="off"
+                  className="tabular-nums"
+                  data-testid="input-courtesy-limit"
+                  {...field}
+                  value={field.value ?? ""}
+                />
+              </FormControl>
+              <FormDescription>
+                Opcional. Em branco não há teto. Ao atingir o número, todos os
+                links de cortesia são desativados e só podem ser religados
+                depois que o limite for aumentado.
               </FormDescription>
               <FormMessage />
             </FormItem>

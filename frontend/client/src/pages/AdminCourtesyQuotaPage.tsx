@@ -40,6 +40,8 @@ interface CourtesyLinkSummary {
 interface LookupResponse {
   link: CourtesyLinkSummary;
   eventTitle: string | null;
+  courtesyLimit?: number | null;
+  courtesyRedeemedCount?: number;
 }
 
 export default function AdminCourtesyQuotaPage({
@@ -330,6 +332,10 @@ export default function AdminCourtesyQuotaPage({
                   eventId={data.link.eventId}
                   linkId={data.link.id}
                   isActive={data.link.isActive ?? true}
+                  activationBlocked={
+                    data.courtesyLimit != null &&
+                    (data.courtesyRedeemedCount ?? 0) >= data.courtesyLimit
+                  }
                   className="w-full sm:ml-auto sm:w-auto"
                   onSuccess={(next) => {
                     queryClient.setQueryData<LookupResponse>(

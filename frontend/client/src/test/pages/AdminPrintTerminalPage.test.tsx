@@ -26,6 +26,11 @@ const mockEvent: Event = {
   npsType: "cdpi_event" as const,
   isFree: false,
   salesClosed: false,
+  modality: "presencial" as const,
+  meetingUrl: null,
+  whatsappGroupUrl: null,
+  confirmationEmailHtml: null,
+  courtesyLimit: null,
 };
 
 vi.mock("@/components/admin/EventSelector", () => ({

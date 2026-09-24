@@ -78,6 +78,16 @@ describe("editEventSchema — modality", () => {
     }
   });
 
+  it("accepts a blank courtesy limit and a positive integer", () => {
+    expect(editEventSchema.safeParse({ ...base, courtesyLimit: "" }).success).toBe(true);
+    expect(editEventSchema.safeParse({ ...base, courtesyLimit: "3" }).success).toBe(true);
+  });
+
+  it("rejects zero and non-integers for the courtesy limit", () => {
+    expect(editEventSchema.safeParse({ ...base, courtesyLimit: "0" }).success).toBe(false);
+    expect(editEventSchema.safeParse({ ...base, courtesyLimit: "1,5" }).success).toBe(false);
+  });
+
   it("accepts an online event with a WhatsApp group URL", () => {
     const result = editEventSchema.safeParse({
       ...base,

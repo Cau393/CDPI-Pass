@@ -201,3 +201,12 @@ describe("EventFormFields — modality selector", () => {
     expect(screen.getByTestId("editor-confirmation-email")).toBeInTheDocument();
   });
 });
+
+describe("EventFormFields — courtesy limit", () => {
+  it("renders an optional numeric courtesy limit", () => {
+    render(<Harness />);
+    const input = screen.getByLabelText("Limite total de cortesias");
+    expect(input).toHaveAttribute("inputmode", "numeric");
+    expect(input).toHaveValue("");
+  });
+});

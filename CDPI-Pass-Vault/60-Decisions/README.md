@@ -17,3 +17,4 @@ Architecture Decision Records. One file per decision: `ADR-NNN-short-title.md`. 
 - [[ADR-008-mobile-downloads|ADR-008: Mobile-safe downloads and file viewing]]
 - [[ADR-009-canonical-contact|ADR-009: Canonical contact list]]
 - [[60-Decisions/ADR-010-online-vs-presencial]]
+- [[60-Decisions/ADR-011-courtesy-redeem-limit]]

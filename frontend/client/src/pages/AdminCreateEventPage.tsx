@@ -58,6 +58,7 @@ export default function AdminCreateEventPage({
       meetingUrl: "",
       whatsappGroupUrl: "",
       confirmationEmailHtml: "",
+      courtesyLimit: "",
     },
   });
 
@@ -93,6 +94,9 @@ export default function AdminCreateEventPage({
       "confirmation_email_html",
       values.confirmationEmailHtml?.trim() ?? "",
     );
+    if (values.courtesyLimit?.trim()) {
+      formData.append("courtesy_limit", values.courtesyLimit.trim());
+    }
     if (values.coverImage?.[0]) {
       formData.append("coverImage", values.coverImage[0]);
     }

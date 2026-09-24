@@ -38,7 +38,12 @@ type MassSendRecipient = {
   createdAt: string;
 };
 
-type MassSendRecipientsRes = { data: MassSendRecipient[]; total: number };
+type MassSendRecipientsRes = {
+  data: MassSendRecipient[];
+  total: number;
+  courtesyLimit?: number | null;
+  courtesyRedeemedCount?: number;
+};
 
 const MAX_EXPORT_PAGES = 500;
 
@@ -450,7 +455,10 @@ export default function CourtesyMassSendingPage() {
                         disabled={
                           recipientsLoading ||
                           bulkSetMassSendActiveMutation.isPending ||
-                          (recipientsRes?.total ?? 0) === 0
+                          (recipientsRes?.total ?? 0) === 0 ||
+                          (recipientsRes?.courtesyLimit != null &&
+                            (recipientsRes.courtesyRedeemedCount ?? 0) >=
+                              recipientsRes.courtesyLimit)
                         }
                         onClick={() => bulkSetMassSendActiveMutation.mutate(true)}
                       >
@@ -570,6 +578,11 @@ export default function CourtesyMassSendingPage() {
                                   eventId={selectedEvent!.id}
                                   linkId={r.id}
                                   isActive={r.isActive}
+                                  activationBlocked={
+                                    recipientsRes?.courtesyLimit != null &&
+                                    (recipientsRes.courtesyRedeemedCount ?? 0) >=
+                                      recipientsRes.courtesyLimit
+                                  }
                                   onSuccess={() => {
                                     void queryClient.invalidateQueries({
                                       queryKey: ["mass-send-recipients"],

@@ -41,6 +41,12 @@ import {
 import { validateCpf, validateEmail, formatCpf } from "./utils/validation";
 import { parseBrazilEventLocalDateTime } from "./utils/eventDateTime";
 import { sanitizeCourtesyTemplateHtml } from "./utils/courtesyTemplateSanitize";
+import {
+  COURTESY_LIMIT_REACHED,
+  courtesyActivationBlocked,
+  isCourtesyLimitReached,
+  parseCourtesyLimit,
+} from "./utils/courtesyRedeemLimit";
 import { validateEmailSubjectTemplateInput } from "./utils/emailSubjectTemplate";
 import { mapCommercialSales } from "./utils/commercialSalesMapper";
 import {
@@ -148,6 +154,13 @@ const authenticateToken = async (req: any, res: any, next: any) => {
     return res.status(403).json({ message: "Token inválido" });
   }
 };
+
+async function courtesyCapBlocksActivation(eventId: string): Promise<boolean> {
+  const event = await storage.getEvent(eventId);
+  if (!event) return false;
+  const redeemed = await storage.countPaidCourtesyRedeems(eventId);
+  return courtesyActivationBlocked(redeemed, event.courtesyLimit ?? null);
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
 
@@ -572,6 +585,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const salesClosed = parseBooleanField(
           (req.body as Record<string, unknown>).sales_closed,
         );
+        const courtesyLimitParsed = parseCourtesyLimit(
+          (req.body as Record<string, unknown>).courtesy_limit,
+        );
+        if (!courtesyLimitParsed.ok) {
+          return res.status(400).json({ error: courtesyLimitParsed.error });
+        }
 
         const modalityResolved = resolveCreateModality(
           req.body as Record<string, unknown>,
@@ -639,6 +658,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             meetingUrl: modalityResolved.meetingUrl,
             whatsappGroupUrl: modalityResolved.whatsappGroupUrl,
             confirmationEmailHtml: modalityResolved.confirmationEmailHtml,
+            courtesyLimit: courtesyLimitParsed.value,
           })
           .returning();
 
@@ -1089,6 +1109,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           meetingUrl: string | null;
           whatsappGroupUrl: string | null;
           confirmationEmailHtml: string | null;
+          courtesyLimit: number | null;
         }> = {};
 
         if (Object.prototype.hasOwnProperty.call(body, "title")) {
@@ -1212,6 +1233,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             modalityPatch.updates.confirmationEmailHtml;
         }
 
+        if (Object.prototype.hasOwnProperty.call(body, "courtesy_limit")) {
+          const parsedLimit = parseCourtesyLimit(body.courtesy_limit);
+          if (!parsedLimit.ok) {
+            return res.status(400).json({ error: parsedLimit.error });
+          }
+          if (parsedLimit.value !== (existing.courtesyLimit ?? null)) {
+            payload.courtesyLimit = parsedLimit.value;
+          }
+        }
+
         const file = req.file as { buffer: Buffer; mimetype: string } | undefined;
         if (file?.buffer) {
           const mimeToExt: Record<string, string> = {
@@ -1240,12 +1271,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         if (Object.keys(payload).length === 0) {
+          if (
+            existing.courtesyLimit != null &&
+            Object.prototype.hasOwnProperty.call(body, "courtesy_limit") &&
+            isCourtesyLimitReached(
+              await storage.countPaidCourtesyRedeems(eventId),
+              existing.courtesyLimit,
+            )
+          ) {
+            await storage.disableEventCourtesyLinks(eventId);
+          }
           return res.status(200).json(existing);
         }
 
         const updated = await storage.updateEvent(eventId, payload as Partial<Event>);
         if (!updated) {
           return res.status(404).json({ error: "Event not found" });
+        }
+        if (
+          updated.courtesyLimit != null &&
+          isCourtesyLimitReached(
+            await storage.countPaidCourtesyRedeems(eventId),
+            updated.courtesyLimit,
+          )
+        ) {
+          await storage.disableEventCourtesyLinks(eventId);
         }
         return res.status(200).json(updated);
       } catch (error: any) {
@@ -1469,7 +1519,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .offset(offset);
 
         const data = links.map((link) => mapMassSendRecipientFromLink(link));
-        return res.json({ data, total });
+        const event = await storage.getEvent(eventId);
+        const courtesyRedeemedCount = await storage.countPaidCourtesyRedeems(eventId);
+        return res.json({
+          data,
+          total,
+          courtesyLimit: event?.courtesyLimit ?? null,
+          courtesyRedeemedCount,
+        });
       } catch (error) {
         console.error("GET /api/admin/events/:eventId/mass-send-recipients:", error);
         return res.status(500).json({
@@ -1505,6 +1562,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({
             success: false,
             message: "Body inválido: informe { isActive: boolean }",
+          });
+        }
+        if (
+          bodyParsed.data.isActive &&
+          (await courtesyCapBlocksActivation(eventId))
+        ) {
+          return res.status(400).json({
+            success: false,
+            error: COURTESY_LIMIT_REACHED,
           });
         }
         const massSendWhere = and(
@@ -1838,6 +1904,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const event = await storage.getEvent(link.eventId);
+      const courtesyRedeemedCount = await storage.countPaidCourtesyRedeems(link.eventId);
       res.json({
         link: {
           id: link.id,
@@ -1848,6 +1915,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           isActive: link.isActive,
         },
         eventTitle: event?.title ?? null,
+        courtesyLimit: event?.courtesyLimit ?? null,
+        courtesyRedeemedCount,
       });
     } catch (error) {
       console.error("GET /api/admin/courtesy-links:", error);
@@ -1895,6 +1964,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const ticketCountRaw = bodyParsed.data.ticketCount;
       const isActive = bodyParsed.data.isActive;
+
+      if (
+        isActive === true &&
+        (await courtesyCapBlocksActivation(eventId))
+      ) {
+        return res.status(400).json({ error: COURTESY_LIMIT_REACHED });
+      }
 
       if (ticketCountRaw === undefined && isActive === undefined) {
         return res.status(400).json({
@@ -2956,6 +3032,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Evento não encontrado" });
       }
 
+      if (await courtesyCapBlocksActivation(eventId)) {
+        return res.status(400).json({ message: COURTESY_LIMIT_REACHED });
+      }
+
       // Generate unique code
       const code = `CDPI${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
@@ -3131,17 +3211,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Telefone inválido" });
       }
 
-      const newAttendee = await storage.createCourtesyAttendee({
-      name: nameNorm,
-      email: userData.email,
-      cpf: userData.cpf,
-      phone: phoneNorm,
-      birthDate: birthDateObj,
-      address: userData.address,
-      partnerCompany: userData.partnerCompany,
-      occupation: userData.occupation,
-      eventTitle: event.title,
+      const claim = await storage.claimCourtesyRedeem({
+        eventId: link.eventId,
+        linkId: link.id,
+        userId,
+        attendee: {
+          name: nameNorm,
+          email: userData.email,
+          cpf: userData.cpf,
+          phone: phoneNorm,
+          birthDate: birthDateObj,
+          address: userData.address,
+          partnerCompany: userData.partnerCompany,
+          occupation: userData.occupation,
+          eventTitle: event.title,
+        },
       });
+      if (!claim.ok) {
+        return res.status(400).json({ message: COURTESY_LIMIT_REACHED });
+      }
+      const newAttendee = claim.attendee;
+      const order = claim.order;
 
       if (process.env.COURTESY_WEBHOOK_URL) {
         try {
@@ -3162,18 +3252,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Create courtesy order
-      const order = await storage.createOrder({
-        userId, // The user who performed the redemption
-        eventId: link.eventId,
-        cpf: newAttendee.cpf,
-        paymentMethod: "courtesy",
-        amount: "0.00",
-        status: "paid",
-        courtesyLinkId: link.id,
-        courtesyAttendeeId: newAttendee.id, // Link to the new attendee record
-      });
-
       let qrCodeData = "";
       let updatedOrder = order;
       if (!isOnlineEvent(event)) {
@@ -3186,14 +3264,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           qrCodeData,
         })) ?? order;
       }
-
-      // Increment courtesy link usage
-      await storage.incrementCourtesyLinkUsage(link.id);
-
-      // Update event attendees count
-      await storage.updateEvent(event.id, {
-        currentAttendees: (event.currentAttendees || 0) + 1
-      });
 
       let qrCodeS3Url = "";
       if (!isOnlineEvent(event)) {

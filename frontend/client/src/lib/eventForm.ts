@@ -121,6 +121,15 @@ const coverFileListSchema = z
     "Image must be smaller than 5MB.",
   );
 
+const courtesyLimitField = z
+  .string()
+  .optional()
+  .default("")
+  .refine(
+    (value) => value.trim() === "" || /^[1-9]\d*$/.test(value.trim()),
+    "O limite deve ser um número inteiro maior ou igual a 1.",
+  );
+
 export const createEventSchema = z.object({
   title: z.string().min(1, "Title is required"),
   description: z
@@ -144,6 +153,7 @@ export const createEventSchema = z.object({
   meetingUrl: z.string().optional().default(""),
   whatsappGroupUrl: z.string().optional().default(""),
   confirmationEmailHtml: z.string().optional().default(""),
+  courtesyLimit: courtesyLimitField,
   coverImage: z
     .custom<FileList | undefined>((v) => v === undefined || v instanceof FileList)
     .refine(
@@ -188,6 +198,7 @@ export const editEventSchema = z.object({
   meetingUrl: z.string().optional().default(""),
   whatsappGroupUrl: z.string().optional().default(""),
   confirmationEmailHtml: z.string().optional().default(""),
+  courtesyLimit: courtesyLimitField,
   coverImage: coverFileListSchema,
 }).superRefine(refineOnlineMeetingUrl).superRefine(refineOptionalWhatsappUrl);
 

@@ -93,6 +93,12 @@ export const events = pgTable("events", {
    * Null/empty = default template. Stripped from public event APIs.
    */
   confirmationEmailHtml: text("confirmation_email_html"),
+  /**
+   * Optional cap on successful courtesy redeems for this event.
+   * Null = unlimited. When paid courtesy orders reach this number, every
+   * courtesy link is deactivated until the cap is raised or cleared.
+   */
+  courtesyLimit: integer("courtesy_limit"),
 });
 
 /** NPS responses for "Evento CDPI" certificate flow. */

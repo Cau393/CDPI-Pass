@@ -8,6 +8,7 @@ import {
   filterEligibleReminderLinks,
   deduplicateReminderLinksByEmail,
 } from '../utils/reminderEligibility';
+import { courtesyActivationBlocked } from '../utils/courtesyRedeemLimit';
 
 interface EmailJob {
   id: string;
@@ -207,6 +208,13 @@ class EmailWorker {
 
         const event = await getCachedEvent(event_id);
         if (event) {
+          const redeemed = await storage.countPaidCourtesyRedeems(event.id);
+          if (courtesyActivationBlocked(redeemed, event.courtesyLimit ?? null)) {
+            console.warn(
+              `Job ${job.id}: courtesy cap reached for event ${event.id}; skipping ${email}`,
+            );
+            continue;
+          }
           const code = `CDPI${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
           const link = await storage.createCourtesyLink({
             code,

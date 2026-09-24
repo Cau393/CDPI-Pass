@@ -82,6 +82,9 @@ function buildPatchFormData(
       values.confirmationEmailHtml?.trim() ?? "",
     );
   }
+  if (dirty.courtesyLimit) {
+    fd.append("courtesy_limit", values.courtesyLimit?.trim() ?? "");
+  }
   if (dirty.coverImage && values.coverImage?.[0]) {
     fd.append("coverImage", values.coverImage[0]);
   }
@@ -191,6 +194,7 @@ export default function AdminEditEventPage() {
       meetingUrl: "",
       whatsappGroupUrl: "",
       confirmationEmailHtml: "",
+      courtesyLimit: "",
     },
   });
 
@@ -211,6 +215,8 @@ export default function AdminEditEventPage() {
       meetingUrl: event.meetingUrl ?? "",
       whatsappGroupUrl: event.whatsappGroupUrl ?? "",
       confirmationEmailHtml: event.confirmationEmailHtml ?? "",
+      courtesyLimit:
+        event.courtesyLimit == null ? "" : String(event.courtesyLimit),
     });
   }, [event, form]);
 
@@ -241,7 +247,8 @@ export default function AdminEditEventPage() {
       dirty.modality ||
       dirty.meetingUrl ||
       dirty.whatsappGroupUrl ||
-      dirty.confirmationEmailHtml;
+      dirty.confirmationEmailHtml ||
+      dirty.courtesyLimit;
 
     if (!hasTextDirty && !hasNewCover) {
       toast({
@@ -272,6 +279,8 @@ export default function AdminEditEventPage() {
         meetingUrl: updated.meetingUrl ?? "",
         whatsappGroupUrl: updated.whatsappGroupUrl ?? "",
         confirmationEmailHtml: updated.confirmationEmailHtml ?? "",
+        courtesyLimit:
+          updated.courtesyLimit == null ? "" : String(updated.courtesyLimit),
         coverImage: undefined,
       });
       if (fileInputRef.current) fileInputRef.current.value = "";
