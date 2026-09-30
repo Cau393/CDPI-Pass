@@ -43,6 +43,8 @@
 | `/admin/print-terminal` | AdminPrintTerminalPage (WebUSB Zebra + WebSocket) |
 | `/admin-test` | AdminTestPage |
 
+On `/admin/participants`, a row with `hasQrCode` shows **Baixar QR Code**. The click loads that ticket from the same participants route (`?ticketId=`) and saves the PNG with `downloadDataUrl` (`ingresso-<ticketId>.png`). The image is not kept in the participants query cache. Rows without a QR have no button.
+
 ## Event covers (`EventCoverImage`)
 Home-page main event poster (`HomePage` hero, `data-testid="img-main-event"`). One clean `object-contain` image in a 16:9 frame with no duplicate or blur. The card stacks on phones and switches to a compact 55/45 image-details layout from `md`; its description is converted to plain text, capped at 90 characters with `…`, and visually clamped to two lines because full details live at `/event/:id`. See [[60-Decisions/ADR-007-home-event-cover-contain]]. The `/event/:id` hero uses the same component and frame; only sidebar/listing thumbnails still crop with `object-cover`.
 

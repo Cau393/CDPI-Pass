@@ -1345,6 +1345,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const eventId = parsed.data;
 
+      const ticketIdQuery = req.query.ticketId;
+      if (ticketIdQuery != null && ticketIdQuery !== "") {
+        if (typeof ticketIdQuery !== "string") {
+          return res.status(400).json({ message: "ticketId inválido" });
+        }
+        const ticketParsed = z.string().uuid().safeParse(ticketIdQuery);
+        if (!ticketParsed.success) {
+          return res.status(400).json({ message: "ticketId inválido" });
+        }
+        const ticketId = ticketParsed.data;
+        const [row] = await db
+          .select({ qrCodeData: orders.qrCodeData })
+          .from(orders)
+          .where(
+            and(
+              eq(orders.id, ticketId),
+              eq(orders.eventId, eventId),
+              eq(orders.status, "paid"),
+            ),
+          )
+          .limit(1);
+
+        const qrCodeData = row?.qrCodeData ?? "";
+        const pngPrefix = "data:image/png;base64,";
+        if (!qrCodeData.startsWith(pngPrefix) || qrCodeData.length <= pngPrefix.length) {
+          return res.status(404).json({ message: "QR Code não encontrado" });
+        }
+        return res.json({ qrCodeData });
+      }
+
       const rows = await db
         .select({
           userId: users.id,
@@ -1362,6 +1392,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           maxUses: orders.maxUses,
           qrCodeUsed: orders.qrCodeUsed,
           qrCodeUsedAt: orders.qrCodeUsedAt,
+          hasQrCode: sql<boolean>`(${orders.qrCodeData} is not null and length(${orders.qrCodeData}) > 0)`,
         })
         .from(orders)
         .innerJoin(users, eq(orders.userId, users.id))
@@ -1399,6 +1430,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           maxUses: maxU,
           checkedIn: used > 0,
           qrCodeUsed: Boolean(r.qrCodeUsed),
+          hasQrCode: r.hasQrCode === true,
           checkedInAt: r.qrCodeUsedAt
             ? r.qrCodeUsedAt instanceof Date
               ? r.qrCodeUsedAt.toISOString()

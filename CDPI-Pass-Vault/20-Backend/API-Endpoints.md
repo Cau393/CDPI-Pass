@@ -31,7 +31,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 | GET | `/api/admin/events/:eventId` | 👑 | Event detail (admin view; includes `meetingUrl`, `whatsappGroupUrl`, `confirmationEmailHtml`) |
 | PATCH | `/api/admin/events/:eventId` | 👑 | Update event (same `modality` / `meeting_url` / `whatsapp_group_url` rules; presencial clears meeting + WhatsApp URLs; `confirmation_email_html` optional on any modality). Optional `courtesy_limit`: blank stores NULL. If the saved cap is already ≤ paid courtesy orders, every courtesy link for the event is set inactive. Raising or clearing the cap does not turn links back on |
 | DELETE | `/api/admin/events/:eventId` | 👑 | Delete event |
-| GET | `/api/admin/events/:eventId/participants` | 👑 | Participant list (orders joined users) |
+| GET | `/api/admin/events/:eventId/participants` | 👑 | Participant list (paid orders joined users). Each row has `hasQrCode` (boolean only; the PNG is not in the list). `?ticketId=<uuid>` returns `{ qrCodeData }` for that paid order on this event when the stored value is a non-empty `data:image/png;base64,` payload; otherwise 404. A non-UUID `ticketId` is 400 |
 | GET | `/api/admin/events/:eventId/commercial-sales` | 👑 | Sales report |
 
 ## Admin: email templates + mass sends (per event)

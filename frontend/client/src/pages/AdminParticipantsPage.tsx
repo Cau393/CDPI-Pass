@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileSpreadsheet, Loader2, Search, UserCheck, UserMinus, UserX } from "lucide-react";
+import { Download, FileSpreadsheet, Loader2, Search, UserCheck, UserMinus, UserX } from "lucide-react";
 import EventSelector from "@/components/admin/EventSelector";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { downloadDataUrl } from "@/lib/downloadDataUrl";
 import { exportParticipantsToXlsx } from "@/lib/exportParticipantsExcel";
 import type { Event } from "@shared/schema";
 
@@ -50,6 +51,7 @@ interface Participant {
   maxUses: number;
   checkedIn: boolean;
   qrCodeUsed: boolean;
+  hasQrCode: boolean;
   checkedInAt: string | null;
 }
 
@@ -92,6 +94,7 @@ export default function AdminParticipantsPage() {
   const [checkingTicketId, setCheckingTicketId] = useState<string | null>(null);
   const [undoingTicketId, setUndoingTicketId] = useState<string | null>(null);
   const [cancellingTicketId, setCancellingTicketId] = useState<string | null>(null);
+  const [downloadingTicketId, setDownloadingTicketId] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
@@ -341,6 +344,51 @@ export default function AdminParticipantsPage() {
     }
   };
 
+  const handleDownloadQr = async (ticketId: string) => {
+    if (!selectedEvent?.id) return;
+    setDownloadingTicketId(ticketId);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(
+        `/api/admin/events/${selectedEvent.id}/participants?ticketId=${encodeURIComponent(ticketId)}`,
+        {
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          credentials: "include",
+        },
+      );
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          res.status === 404
+            ? "Este participante não tem QR Code."
+            : typeof body.message === "string"
+              ? body.message
+              : "Não foi possível baixar o QR Code.",
+        );
+      }
+      const qrCodeData =
+        typeof body.qrCodeData === "string" ? body.qrCodeData : "";
+      const pngPrefix = "data:image/png;base64,";
+      if (!qrCodeData.startsWith(pngPrefix) || qrCodeData.length <= pngPrefix.length) {
+        throw new Error("Este participante não tem QR Code.");
+      }
+      downloadDataUrl(qrCodeData, `ingresso-${ticketId}.png`);
+    } catch (e) {
+      toast({
+        title: "Erro",
+        description:
+          e instanceof Error
+            ? e.message
+            : "Não foi possível baixar o QR Code.",
+        variant: "destructive",
+      });
+    } finally {
+      setDownloadingTicketId(null);
+    }
+  };
+
   const showCountBadge =
     selectedEvent &&
     !loading &&
@@ -504,6 +552,26 @@ export default function AdminParticipantsPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex flex-wrap justify-end gap-2">
+                          {p.hasQrCode && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={downloadingTicketId === p.ticketId}
+                              onClick={() => void handleDownloadQr(p.ticketId)}
+                            >
+                              {downloadingTicketId === p.ticketId ? (
+                                <>
+                                  <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                  Baixando...
+                                </>
+                              ) : (
+                                <>
+                                  <Download className="mr-2 h-3 w-3" />
+                                  Baixar QR Code
+                                </>
+                              )}
+                            </Button>
+                          )}
                           {p.orderStatus !== "cancelled" &&
                             p.amntUsed < p.maxUses && (
                               <Button
