@@ -8,6 +8,11 @@ import {
   buildTicketEmailText,
   type TicketEmailData,
 } from '../utils/ticketEmailTemplate';
+import {
+  buildOnlineEventEmailHtml,
+  buildOnlineEventEmailText,
+  type OnlineEventEmailData,
+} from '../utils/onlineEventEmailTemplate';
 
 if (!process.env.SENDGRID_API_KEY) {
   console.warn("SENDGRID_API_KEY environment variable not set");
@@ -156,19 +161,42 @@ ${EMAIL_CONTACT_LINE}`;
     );
   }
 
+  async sendOnlineEventEmail(
+    email: string,
+    data: OnlineEventEmailData,
+  ): Promise<boolean> {
+    const html = buildOnlineEventEmailHtml(data);
+    const text = buildOnlineEventEmailText(data);
+
+    return this.sendEmail(
+      email,
+      `Seu link de acesso - ${data.eventTitle} - CDPI Pass`,
+      html,
+      text,
+    );
+  }
+
   /**
    * E-mail simples com o link de checkout (cartão): sem template de cobrança Asaas;
    * apenas o link gerado pelo nosso fluxo.
    */
   async sendCardPaymentLinkEmail(
     email: string,
-    data: { userName: string; eventTitle: string; paymentUrl: string },
+    data: {
+      userName: string;
+      eventTitle: string;
+      paymentUrl: string;
+      isOnline?: boolean;
+    },
   ): Promise<boolean> {
+    const afterPay = data.isOnline
+      ? "Após a confirmação do pagamento, você receberá o link de acesso por e-mail."
+      : "Após a confirmação do pagamento, você receberá o QR Code do ingresso por e-mail.";
     const html = `
       <p>Olá, <strong>${data.userName}</strong>,</p>
       <p>Para pagar com cartão o ingresso <strong>${data.eventTitle}</strong>, use o link abaixo:</p>
       <p><a href="${data.paymentUrl}">${data.paymentUrl}</a></p>
-      <p>Após a confirmação do pagamento, você receberá o QR Code do ingresso por e-mail.</p>
+      <p>${afterPay}</p>
       <p style="color:#666;font-size:12px;">CDPI Pass</p>
       ${EMAIL_CONTACT_FOOTER_HTML}
     `;

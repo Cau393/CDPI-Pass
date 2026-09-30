@@ -2,8 +2,8 @@ import axios from "axios";
 import { confirmationKindForPaymentMethod } from "./ticketEmailTemplate";
 import type { Order } from "@shared/schema";
 import { storage } from "../storage";
-import { emailService } from "../services/emailService";
 import { asaasService } from "../services/asaasService";
+import { sendPurchaseConfirmationEmail } from "./sendPurchaseConfirmationEmail";
 
 const MAKE_WEBHOOK_URL =
   "https://hook.us2.make.com/wrlqnqumlmgvfjicglpdrc3gv8lkbqce";
@@ -119,6 +119,8 @@ export async function finalizeOrderPaidLikeWebhook(
             title: event.title,
             date: event.date,
             location: event.location,
+            modality: event.modality,
+            meetingUrl: event.meetingUrl,
           },
           order: {
             id: order.id,
@@ -133,13 +135,12 @@ export async function finalizeOrderPaidLikeWebhook(
       }
     })();
 
-    await emailService.sendTicketEmail(user.email, {
+    await sendPurchaseConfirmationEmail({
+      to: user.email,
       userName: user.name,
-      eventTitle: event.title,
-      eventDate: event.date,
-      eventLocation: event.location,
-      qrCodeData: order.qrCodeData || "",
+      event,
       orderId: order.id,
+      qrCodeData: order.qrCodeData || "",
       qrCodeS3Url: order.qr_code_s3_url || "",
       confirmationKind: confirmationKindForPaymentMethod(order.paymentMethod),
     });

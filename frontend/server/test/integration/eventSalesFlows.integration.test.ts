@@ -57,6 +57,7 @@ vi.mock("../../services/emailService", () => ({
       sentTicketEmails.push({ to, eventTitle: data.eventTitle });
       return true;
     }),
+    sendOnlineEventEmail: vi.fn(async () => true),
     sendCardPaymentLinkEmail: vi.fn(async () => true),
     sendEmail: vi.fn(async () => true),
   },
