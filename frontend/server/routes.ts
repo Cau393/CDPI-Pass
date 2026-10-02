@@ -156,6 +156,26 @@ const authenticateToken = async (req: any, res: any, next: any) => {
   }
 };
 
+function isUsersEmailUniqueViolation(error: unknown): boolean {
+  const err = error as {
+    code?: string;
+    constraint?: string;
+    message?: string;
+    cause?: { code?: string; constraint?: string; message?: string };
+  };
+  const code = err?.code ?? err?.cause?.code;
+  if (code !== "23505") return false;
+  const constraint = err?.constraint ?? err?.cause?.constraint ?? "";
+  if (
+    constraint === "users_email_unique" ||
+    constraint === "users_email_lower_unique"
+  ) {
+    return true;
+  }
+  const message = `${err?.message ?? ""} ${err?.cause?.message ?? ""}`;
+  return message.includes("users_email");
+}
+
 async function courtesyCapBlocksActivation(eventId: string): Promise<boolean> {
   const event = await storage.getEvent(eventId);
   if (!event) return false;
@@ -242,6 +262,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Registration error:", error);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: error.errors[0].message });
+      }
+      if (isUsersEmailUniqueViolation(error)) {
+        return res.status(400).json({ message: "Email já cadastrado" });
       }
       res.status(500).json({ message: "Erro interno do servidor" });
     }
@@ -2923,12 +2946,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const updates: Record<string, unknown> = { ...parsedUpdates.data };
+      const normalizedCurrentEmail =
+        typeof req.user.email === "string" ? req.user.email.trim().toLowerCase() : "";
 
-      // Define sensitive fields that require password verification
+      // Define sensitive fields that require password verification.
+      // Casing-only email edits are the same mailbox and do not ask for the password.
       const sensitiveFields = PROFILE_SENSITIVE_FIELDS;
-      const hasChangedSensitiveField = sensitiveFields.some(field => 
-        updates[field] !== undefined && updates[field] !== req.user[field]
-      );
+      const hasChangedSensitiveField = sensitiveFields.some((field) => {
+        if (updates[field] === undefined) return false;
+        if (field === "email") return updates.email !== normalizedCurrentEmail;
+        return updates[field] !== req.user[field];
+      });
       
       // Require password for sensitive field changes
       if (hasChangedSensitiveField) {
@@ -2957,6 +2985,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      if (
+        typeof updates.email === "string" &&
+        updates.email !== normalizedCurrentEmail
+      ) {
+        const existing = await storage.getUserByEmail(updates.email);
+        if (existing && existing.id !== userId) {
+          return res.status(400).json({ message: "Email já cadastrado" });
+        }
+      }
+
       if (typeof updates.name === "string" && updates.name.trim()) {
         updates.name = toTitleCaseName(updates.name);
       }
@@ -2978,6 +3016,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(userWithoutPassword);
     } catch (error) {
       console.error("Update profile error:", error);
+      if (isUsersEmailUniqueViolation(error)) {
+        return res.status(400).json({ message: "Email já cadastrado" });
+      }
       res.status(500).json({ message: "Erro interno do servidor" });
     }
   });

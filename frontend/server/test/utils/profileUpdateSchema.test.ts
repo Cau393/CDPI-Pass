@@ -103,6 +103,19 @@ describe("profileUpdateSchema", () => {
     expect(Object.keys(parsed)).toEqual(["address"]);
   });
 
+  it("trims and lowercases email", () => {
+    const parsed = profileUpdateSchema.parse({ email: " User@Example.COM " });
+    expect(parsed.email).toBe("user@example.com");
+  });
+
+  it("rejects an invalid email with Email inválido", () => {
+    const result = profileUpdateSchema.safeParse({ email: "not-an-email" });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toBe("Email inválido");
+    }
+  });
+
   it("rejects values that fail validation", () => {
     expect(profileUpdateSchema.safeParse({ email: "not-an-email" }).success).toBe(false);
     expect(profileUpdateSchema.safeParse({ name: "a" }).success).toBe(false);

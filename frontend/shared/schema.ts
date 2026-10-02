@@ -10,30 +10,47 @@ import {
   integer,
   serial,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+/**
+ * Account mailbox: trim and lowercase before format check.
+ * " User@Example.COM " and "user@example.com" are the same address.
+ */
+export const accountEmailSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .email("Email inválido");
+
 // Users table
-export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: varchar("email", { length: 255 }).notNull().unique(),
-  emailVerified: boolean("email_verified").default(false),
-  password: text("password").notNull(),
-  name: varchar("name", { length: 255 }).notNull(),
-  cpf: varchar("cpf", { length: 14 }).notNull().unique(),
-  phone: varchar("phone", { length: 20 }).notNull(),
-  birthDate: timestamp("birth_date").notNull(),
-  address: text("address").notNull(),
-  occupation: varchar("occupation", { length: 255 }).notNull().default("Nao aplicavel"),
-  partnerCompany: varchar("partner_company", { length: 255 }).notNull().default("Nao aplicavel"),
-  areaOfActivity: varchar("area_of_activity", { length: 255 }).notNull().default("Nao aplicavel"),
-  isAdmin: boolean("is_admin").default(false).notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-  emailVerificationCode: varchar("email_verification_code", { length: 6 }),
-  emailVerificationCodeExpiresAt: timestamp("email_verification_code_expires_at"),
-});
+export const users = pgTable(
+  "users",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    email: varchar("email", { length: 255 }).notNull().unique(),
+    emailVerified: boolean("email_verified").default(false),
+    password: text("password").notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    cpf: varchar("cpf", { length: 14 }).notNull().unique(),
+    phone: varchar("phone", { length: 20 }).notNull(),
+    birthDate: timestamp("birth_date").notNull(),
+    address: text("address").notNull(),
+    occupation: varchar("occupation", { length: 255 }).notNull().default("Nao aplicavel"),
+    partnerCompany: varchar("partner_company", { length: 255 }).notNull().default("Nao aplicavel"),
+    areaOfActivity: varchar("area_of_activity", { length: 255 }).notNull().default("Nao aplicavel"),
+    isAdmin: boolean("is_admin").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+    emailVerificationCode: varchar("email_verification_code", { length: 6 }),
+    emailVerificationCodeExpiresAt: timestamp("email_verification_code_expires_at"),
+  },
+  (table) => [
+    uniqueIndex("users_email_lower_unique").on(sql`lower(${table.email})`),
+  ],
+);
 
 // Events table
 export const events = pgTable("events", {
@@ -436,7 +453,7 @@ export const eventPrintSettingsRelations = relations(eventPrintSettings, ({ one 
 
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users, {
-  email: z.string().email("Email inválido"),
+  email: accountEmailSchema,
   cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
   phone: z
     .string()
@@ -531,7 +548,7 @@ export type CommunicateRecipientMode = (typeof communicateRecipientModes)[number
 
 // Login schema
 export const loginSchema = z.object({
-  email: z.string().email("Email inválido"),
+  email: accountEmailSchema,
   password: z.string().min(1, "Senha é obrigatória"),
 });
 
@@ -540,8 +557,8 @@ export type LoginRequest = z.infer<typeof loginSchema>;
 // Courtesy redemption schema
 export const courtesyRedemptionSchema = z.object({
   name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
-  email: z.string().email("Email inválido"),
-  emailConfirm: z.string().email("Email inválido"),
+  email: accountEmailSchema,
+  emailConfirm: accountEmailSchema,
   cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
   partnerCompany: z.string().min(2, "Empresa parceira é obrigatória"),
   occupation: z.string().min(2, "Cargo é obrigatório"),

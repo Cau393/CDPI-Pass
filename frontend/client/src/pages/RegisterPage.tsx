@@ -10,14 +10,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { insertUserSchema, type InsertUser } from "@shared/schema";
+import { accountEmailSchema, insertUserSchema, type InsertUser } from "@shared/schema";
 import { z } from "zod";
 import { useState, useMemo } from "react";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 
 const registerFormSchema = insertUserSchema.extend({
   birthDate: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, "Data deve estar no formato dd/mm/aaaa"),
-  emailConfirm: z.string().email("Email inválido"),
+  emailConfirm: accountEmailSchema,
   passwordConfirm: z.string().min(6, "Confirmação de senha é obrigatória"),
   acceptTerms: z.boolean().refine(val => val === true, "Você deve aceitar os termos"),
 }).refine((data) => data.email === data.emailConfirm, {

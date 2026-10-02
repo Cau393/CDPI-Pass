@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { accountEmailSchema } from "@shared/schema";
 
 /**
  * Fields a user may change on their own profile via PUT /api/profile.
@@ -27,7 +28,7 @@ import { z } from "zod";
 export const profileUpdateSchema = z
   .object({
     name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
-    email: z.string().email("Email inválido"),
+    email: accountEmailSchema,
     phone: z.string().min(1),
     address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),
     birthDate: z.union([z.string(), z.date()]),

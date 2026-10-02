@@ -5,10 +5,10 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 ## Auth
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/auth/register` | 🔓 | Create user (Zod `insertUserSchema`), send 6-digit verification code. `occupation`, `partnerCompany`, and `areaOfActivity` are required trimmed strings of 2–255 characters (`Cargo que ocupa é obrigatório` / `Empresa que trabalha é obrigatória` / `Área de Atuação é obrigatória`). Missing, blank, whitespace-only, or null is 400. Values are stored as entered (no title case) |
+| POST | `/api/auth/register` | 🔓 | Create user (Zod `insertUserSchema`), send 6-digit verification code. `email` is trimmed and stored lowercase; `User@Example.COM` and `user@example.com` are the same mailbox. Invalid address is 400 `Email inválido`. A mailbox that already exists in any casing is 400 `Email já cadastrado` (including a unique-constraint race). `occupation`, `partnerCompany`, and `areaOfActivity` are required trimmed strings of 2–255 characters (`Cargo que ocupa é obrigatório` / `Empresa que trabalha é obrigatória` / `Área de Atuação é obrigatória`). Missing, blank, whitespace-only, or null is 400. Those three values are stored as entered (no title case) |
 | POST | `/api/auth/verify-code` | 🔓 | Verify email with 6-digit code |
 | POST | `/api/auth/resend-code` | 🔓 | Resend verification code |
-| POST | `/api/auth/login` | 🔓 | Login, returns JWT |
+| POST | `/api/auth/login` | 🔓 | Login, returns JWT. Email is trimmed and lowercased before lookup, so mixed-case input still finds the account. `Email ou senha incorretos` means the mailbox or password is actually wrong |
 | GET | `/api/auth/me` | 🔑 | Current user profile |
 | GET | `/api/auth/verify-email` | 🔓 | Legacy link-based email verification |
 | POST | `/api/auth/forgot-password` | 🔓 | Send reset email |
@@ -94,7 +94,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 ## Profile
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| PUT | `/api/profile` | 🔑 | Update profile (allowlist: name, email, phone, address, birthDate, occupation, partnerCompany, areaOfActivity). When present, occupation, partnerCompany, and areaOfActivity are trimmed strings of 2–255 characters; null and blank are 400. Password is required only to change name, email, or phone. Unknown keys, including `isAdmin`, are stripped |
+| PUT | `/api/profile` | 🔑 | Update profile (allowlist: name, email, phone, address, birthDate, occupation, partnerCompany, areaOfActivity). When present, occupation, partnerCompany, and areaOfActivity are trimmed strings of 2–255 characters; null and blank are 400. `email` is trimmed and stored lowercase. Changing it to a mailbox another user already has, in any casing, is 400 `Email já cadastrado`. A save that only changes email casing is the same mailbox and does not require the current password. Password is required only to change name, email (a different mailbox), or phone. Unknown keys, including `isAdmin`, are stripped |
 | PUT | `/api/profile/password` | 🔑 | Change password |
 | DELETE | `/api/profile` | 🔑 | Delete account |
 

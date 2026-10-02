@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { insertUserSchema } from "@shared/schema";
+import { courtesyRedemptionSchema, insertUserSchema, loginSchema } from "@shared/schema";
 
 const validUser = {
   email: "maria@example.com",
@@ -47,5 +47,72 @@ describe("insertUserSchema registration", () => {
     expect(parsed.occupation).toBe("Medica");
     expect(parsed.partnerCompany).toBe("CDPI");
     expect(parsed.areaOfActivity).toBe("Dermatologia");
+  });
+
+  it("trims and lowercases the email", () => {
+    const parsed = insertUserSchema.parse({
+      ...validUser,
+      email: " User@Example.COM ",
+    });
+    expect(parsed.email).toBe("user@example.com");
+  });
+
+  it("rejects an invalid email with Email inválido", () => {
+    const result = insertUserSchema.safeParse({
+      ...validUser,
+      email: "not-an-email",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toBe("Email inválido");
+    }
+  });
+});
+
+describe("loginSchema email", () => {
+  it("trims and lowercases the email", () => {
+    const parsed = loginSchema.parse({
+      email: " User@Example.COM ",
+      password: "secret1",
+    });
+    expect(parsed.email).toBe("user@example.com");
+  });
+});
+
+describe("courtesyRedemptionSchema email confirm", () => {
+  const validCourtesy = {
+    name: "Maria Silva",
+    email: "maria@example.com",
+    emailConfirm: "maria@example.com",
+    cpf: "123.456.789-00",
+    partnerCompany: "CDPI",
+    occupation: "Medica",
+    birthDate: "1990-01-15",
+    address: "Rua das Flores 123, Sao Paulo SP",
+    phone: "5511999999999",
+  };
+
+  it("accepts a confirmation that differs only by case and spaces", () => {
+    const parsed = courtesyRedemptionSchema.parse({
+      ...validCourtesy,
+      email: " User@Example.COM ",
+      emailConfirm: "user@example.com",
+    });
+    expect(parsed.email).toBe("user@example.com");
+    expect(parsed.emailConfirm).toBe("user@example.com");
+  });
+
+  it("rejects a confirmation that is a different mailbox", () => {
+    const result = courtesyRedemptionSchema.safeParse({
+      ...validCourtesy,
+      email: "maria@example.com",
+      emailConfirm: "other@example.com",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.message === "Os emails não coincidem")).toBe(
+        true,
+      );
+    }
   });
 });
