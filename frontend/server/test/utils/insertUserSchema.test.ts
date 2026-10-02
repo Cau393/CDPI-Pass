@@ -11,33 +11,41 @@ const validUser = {
   address: "Rua das Flores 123, Sao Paulo SP",
   occupation: "Medica",
   partnerCompany: "CDPI",
+  areaOfActivity: "Dermatologia",
 };
 
 describe("insertUserSchema registration", () => {
-  it("requires occupation and partnerCompany", () => {
+  it("requires occupation, partnerCompany, and areaOfActivity", () => {
     const { occupation: _occupation, ...withoutOccupation } = validUser;
     const { partnerCompany: _partnerCompany, ...withoutCompany } = validUser;
+    const { areaOfActivity: _areaOfActivity, ...withoutArea } = validUser;
 
     expect(insertUserSchema.safeParse(withoutOccupation).success).toBe(false);
     expect(insertUserSchema.safeParse(withoutCompany).success).toBe(false);
+    expect(insertUserSchema.safeParse(withoutArea).success).toBe(false);
   });
 
-  it("rejects null, empty, and whitespace-only occupation and partnerCompany", () => {
+  it("rejects null, empty, and whitespace-only occupation, partnerCompany, and areaOfActivity", () => {
     for (const value of [null, "", "   "]) {
       expect(insertUserSchema.safeParse({ ...validUser, occupation: value }).success).toBe(false);
       expect(
         insertUserSchema.safeParse({ ...validUser, partnerCompany: value }).success,
       ).toBe(false);
+      expect(
+        insertUserSchema.safeParse({ ...validUser, areaOfActivity: value }).success,
+      ).toBe(false);
     }
   });
 
-  it("accepts trimmed occupation and partnerCompany of 2–255 characters", () => {
+  it("accepts trimmed occupation, partnerCompany, and areaOfActivity of 2–255 characters", () => {
     const parsed = insertUserSchema.parse({
       ...validUser,
       occupation: "  Medica  ",
       partnerCompany: "  CDPI  ",
+      areaOfActivity: "  Dermatologia  ",
     });
     expect(parsed.occupation).toBe("Medica");
     expect(parsed.partnerCompany).toBe("CDPI");
+    expect(parsed.areaOfActivity).toBe("Dermatologia");
   });
 });

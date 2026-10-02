@@ -33,6 +33,7 @@ export const profileUpdateSchema = z
     birthDate: z.union([z.string(), z.date()]),
     partnerCompany: z.string().trim().min(2, "Empresa que trabalha é obrigatória").max(255),
     occupation: z.string().trim().min(2, "Cargo que ocupa é obrigatório").max(255),
+    areaOfActivity: z.string().trim().min(2, "Área de Atuação é obrigatória").max(255),
   })
   .partial()
   .strip();

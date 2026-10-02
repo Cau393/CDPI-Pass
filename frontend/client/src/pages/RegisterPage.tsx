@@ -50,6 +50,7 @@ export default function RegisterPage() {
       address: "",
       occupation: "",
       partnerCompany: "",
+      areaOfActivity: "",
       password: "",
       passwordConfirm: "",
       acceptTerms: false,
@@ -290,6 +291,24 @@ export default function RegisterPage() {
                 {form.formState.errors.partnerCompany && (
                   <p className="text-red-600 text-sm mt-1" data-testid="text-partner-company-error">
                     {form.formState.errors.partnerCompany.message}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <Label htmlFor="areaOfActivity" className="block text-sm font-medium text-gray-700 mb-2">
+                  Área de Atuação
+                </Label>
+                <Input
+                  id="areaOfActivity"
+                  type="text"
+                  {...form.register("areaOfActivity")}
+                  className="w-full"
+                  data-testid="input-area-of-activity"
+                />
+                {form.formState.errors.areaOfActivity && (
+                  <p className="text-red-600 text-sm mt-1" data-testid="text-area-of-activity-error">
+                    {form.formState.errors.areaOfActivity.message}
                   </p>
                 )}
               </div>

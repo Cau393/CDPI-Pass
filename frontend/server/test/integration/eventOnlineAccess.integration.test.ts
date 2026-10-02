@@ -152,8 +152,8 @@ async function createUser(): Promise<{ id: string; token: string; cpf: string; e
   const cpf = `888.${String(n).padStart(3, "0")}.${String(n).padStart(3, "0")}-88`;
   const email = `online-${id.slice(0, 8)}@example.test`;
   await pool.query(
-    `INSERT INTO users (id, email, email_verified, password, name, cpf, phone, birth_date, address, occupation, partner_company, is_admin)
-     VALUES ($1,$2,true,'x',$3,$4,'5511988888888',$5,'Rua de teste, 123','Nao aplicavel','Nao aplicavel',false)`,
+    `INSERT INTO users (id, email, email_verified, password, name, cpf, phone, birth_date, address, occupation, partner_company, area_of_activity, is_admin)
+     VALUES ($1,$2,true,'x',$3,$4,'5511988888888',$5,'Rua de teste, 123','Nao aplicavel','Nao aplicavel','Nao aplicavel',false)`,
     [id, email, "Participante Online", cpf, new Date("1990-01-01")],
   );
   createdUserIds.push(id);

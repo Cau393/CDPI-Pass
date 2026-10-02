@@ -62,6 +62,7 @@ describe("profileUpdateSchema", () => {
       emailVerified: true,
       partnerCompany: "Nao aplicavel",
       occupation: "Nao aplicavel",
+      areaOfActivity: "Nao aplicavel",
     });
     expect(parsed).toEqual({
       name: "Maria Silva",
@@ -70,24 +71,28 @@ describe("profileUpdateSchema", () => {
       address: "Rua das Flores 123, Sao Paulo SP",
       partnerCompany: "Nao aplicavel",
       occupation: "Nao aplicavel",
+      areaOfActivity: "Nao aplicavel",
     });
   });
 
-  it("rejects null or blank occupation and partnerCompany", () => {
+  it("rejects null or blank occupation, partnerCompany, and areaOfActivity", () => {
     for (const value of [null, "", "   "]) {
       expect(profileUpdateSchema.safeParse({ partnerCompany: value }).success).toBe(false);
       expect(profileUpdateSchema.safeParse({ occupation: value }).success).toBe(false);
+      expect(profileUpdateSchema.safeParse({ areaOfActivity: value }).success).toBe(false);
     }
   });
 
-  it("trims occupation and partnerCompany when the value is 2–255 characters", () => {
+  it("trims occupation, partnerCompany, and areaOfActivity when the value is 2–255 characters", () => {
     const parsed = profileUpdateSchema.parse({
       occupation: "  Medica  ",
       partnerCompany: "  CDPI  ",
+      areaOfActivity: "  Dermatologia  ",
     });
     expect(parsed).toEqual({
       occupation: "Medica",
       partnerCompany: "CDPI",
+      areaOfActivity: "Dermatologia",
     });
   });
 

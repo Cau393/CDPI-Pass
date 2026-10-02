@@ -5,7 +5,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 ## Auth
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/auth/register` | 🔓 | Create user (Zod `insertUserSchema`), send 6-digit verification code. `occupation` and `partnerCompany` are required trimmed strings of 2–255 characters (`Cargo que ocupa é obrigatório` / `Empresa que trabalha é obrigatória`). Missing, blank, whitespace-only, or null is 400. Values are stored as entered (no title case) |
+| POST | `/api/auth/register` | 🔓 | Create user (Zod `insertUserSchema`), send 6-digit verification code. `occupation`, `partnerCompany`, and `areaOfActivity` are required trimmed strings of 2–255 characters (`Cargo que ocupa é obrigatório` / `Empresa que trabalha é obrigatória` / `Área de Atuação é obrigatória`). Missing, blank, whitespace-only, or null is 400. Values are stored as entered (no title case) |
 | POST | `/api/auth/verify-code` | 🔓 | Verify email with 6-digit code |
 | POST | `/api/auth/resend-code` | 🔓 | Resend verification code |
 | POST | `/api/auth/login` | 🔓 | Login, returns JWT |
@@ -94,7 +94,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 ## Profile
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| PUT | `/api/profile` | 🔑 | Update profile (allowlist: name, email, phone, address, birthDate, occupation, partnerCompany). When present, occupation and partnerCompany are trimmed strings of 2–255 characters; null and blank are 400. Password is required only to change name, email, or phone. Unknown keys, including `isAdmin`, are stripped |
+| PUT | `/api/profile` | 🔑 | Update profile (allowlist: name, email, phone, address, birthDate, occupation, partnerCompany, areaOfActivity). When present, occupation, partnerCompany, and areaOfActivity are trimmed strings of 2–255 characters; null and blank are 400. Password is required only to change name, email, or phone. Unknown keys, including `isAdmin`, are stripped |
 | PUT | `/api/profile/password` | 🔑 | Change password |
 | DELETE | `/api/profile` | 🔑 | Delete account |
 

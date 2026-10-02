@@ -17,7 +17,7 @@
 | `/` | HomePage |
 | `/eventos` | EventsPage |
 | `/event/:id` | EventDetailsPage (`?promo=` checkout, `?cortesia=` free redeem) |
-| `/login`, `/register` | Login / Register. Register requires **Cargo que ocupa** and **Empresa que trabalha** (after Endereço Completo, before Senha). Empty submit shows both field errors. Labels have no asterisk |
+| `/login`, `/register` | Login / Register. Register requires **Cargo que ocupa**, **Empresa que trabalha**, and **Área de Atuação** (after Endereço Completo, before Senha). Empty submit shows those field errors. Labels have no asterisk |
 | `/forgot-password`, `/reset-password` | Password recovery |
 | `/verify-email` | VerifyCodePage (6-digit code) |
 | `/cortesia` | CourtesyRedeemPage (manual code, or the attendee form after the guest chooses to redeem) |
@@ -25,7 +25,7 @@
 ### User
 | Route | Page |
 |---|---|
-| `/profile` | ProfilePage (orders, certificates, account). The profile tab shows **Cargo que ocupa** and **Empresa que trabalha** so a backfilled `Nao aplicavel` can be replaced. Those two fields are not password-gated |
+| `/profile` | ProfilePage (orders, certificates, account). The profile tab shows **Cargo que ocupa**, **Empresa que trabalha**, and **Área de Atuação** so a backfilled `Nao aplicavel` can be replaced. Those three fields are not password-gated |
 
 ### Admin (gated by isAdmin; wrapped routes in App.tsx)
 | Route | Page |

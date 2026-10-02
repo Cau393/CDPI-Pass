@@ -748,6 +748,16 @@ const handleCancelOrder = (orderId: string) => {
                           data-testid="input-profile-partner-company"
                         />
                       </div>
+                      <div>
+                        <Label htmlFor="areaOfActivity" className="block text-sm font-medium text-gray-700 mb-2">
+                          Área de Atuação
+                        </Label>
+                        <Input
+                          id="areaOfActivity"
+                          {...profileForm.register("areaOfActivity")}
+                          data-testid="input-profile-area-of-activity"
+                        />
+                      </div>
                     </div>
 
                     {hasChangedSensitiveFields && (
