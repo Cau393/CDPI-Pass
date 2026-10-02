@@ -17,6 +17,10 @@ import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
 import SiteFooter from "@/components/SiteFooter";
 import { useFreeSubscribe } from "@/hooks/useFreeSubscribe";
 import {
+  COURTESY_CODE_INVALID_COPY,
+  courtesyLoginRequiredDescription,
+  courtesyPriceLabel,
+  courtesyRedeemCtaLabel,
   eventAcquisitionCtaLabel,
   eventFeeLabel,
   eventPriceLabel,
@@ -38,13 +42,13 @@ export default function EventDetailsPage() {
 
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [promoCode, setPromoCode] = useState<string | null>(null);
+  const [courtesyCode, setCourtesyCode] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<EventWithPromo | null>(null);
 
-  // ✅ Extract ?promo=XXX from the URL
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const code = params.get("promo");
-    setPromoCode(code);
+    setPromoCode(params.get("promo"));
+    setCourtesyCode(params.get("cortesia"));
   }, []);
 
   // ✅ Fetch main event details
@@ -79,6 +83,45 @@ export default function EventDetailsPage() {
     enabled: !!promoCode,
   });
 
+  const {
+    data: courtesyLink,
+    error: courtesyQueryError,
+    isError: courtesyIsError,
+    isLoading: courtesyIsLoading,
+  } = useQuery({
+    queryKey: ["/api/courtesy-links", "cortesia-entry", courtesyCode],
+    queryFn: async () => {
+      const response = await fetch(
+        `/api/courtesy-links/${encodeURIComponent(courtesyCode!)}`,
+      );
+      if (!response.ok) {
+        let message = COURTESY_CODE_INVALID_COPY;
+        try {
+          const body = await response.json();
+          if (typeof body?.message === "string" && body.message.trim() !== "") {
+            message = body.message;
+          }
+        } catch {
+          // Keep the shared invalid-code sentence.
+        }
+        throw new Error(message);
+      }
+      return response.json() as Promise<{
+        overridePrice?: string | number | null;
+      }>;
+    },
+    enabled: !!courtesyCode,
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (!courtesyCode || !courtesyLink?.overridePrice || !id) return;
+    const code = courtesyCode;
+    setCourtesyCode(null);
+    setPromoCode(code);
+    setLocation(`/event/${id}?promo=${encodeURIComponent(code)}`);
+  }, [courtesyCode, courtesyLink, id, setLocation]);
+
   const { subscribe, isPending: isSubscribePending } = useFreeSubscribe();
 
   const displayPrice = promoLink?.overridePrice 
@@ -89,11 +132,39 @@ export default function EventDetailsPage() {
   const isFree = isFreeEvent(event ?? {});
   const salesClosed = event?.salesClosed === true;
   const soldOut = event ? isEventSoldOut(event) : false;
-  const feeLabel = event ? eventFeeLabel(event, "detailed") : null;
+  const courtesyEntryActive = !!courtesyCode;
+  const showCourtesyOffer =
+    courtesyEntryActive && !(courtesyLink && courtesyLink.overridePrice);
+  const courtesyBlocked =
+    courtesyEntryActive &&
+    (courtesyIsError || courtesyIsLoading || !courtesyLink);
+  const courtesyErrorMessage =
+    showCourtesyOffer && courtesyIsError
+      ? courtesyQueryError instanceof Error && courtesyQueryError.message.trim() !== ""
+        ? courtesyQueryError.message
+        : COURTESY_CODE_INVALID_COPY
+      : null;
+  const feeLabel =
+    event && !showCourtesyOffer ? eventFeeLabel(event, "detailed") : null;
 
   const handleFreeSubscribe = () => {
     if (!event) return;
     subscribe(event);
+  };
+
+  const handleRedeemCourtesy = () => {
+    if (!courtesyCode || courtesyBlocked) return;
+    if (!isAuthenticated) {
+      toast({
+        title: "Login necessário",
+        description: courtesyLoginRequiredDescription(),
+        variant: "destructive",
+      });
+      const next = `${window.location.pathname}${window.location.search}`;
+      setLocation(`/login?next=${encodeURIComponent(next)}`);
+      return;
+    }
+    setLocation(`/cortesia?code=${encodeURIComponent(courtesyCode)}`);
   };
 
   const [modalData, setModalData] = useState<{
@@ -275,7 +346,9 @@ export default function EventDetailsPage() {
                   {isFree ? "Inscrição" : "Valor do ingresso"}
                 </p>
                 <p className="text-3xl font-bold text-primary">
-                  {eventPriceLabel(event, displayPrice)}
+                  {showCourtesyOffer
+                    ? courtesyPriceLabel()
+                    : eventPriceLabel(event, displayPrice)}
                 </p>
                 {promoLink && !isFree && (
                   <p className="text-sm text-green-600">
@@ -291,6 +364,10 @@ export default function EventDetailsPage() {
 
               <Button
                 onClick={() => {
+                  if (showCourtesyOffer) {
+                    handleRedeemCourtesy();
+                    return;
+                  }
                   if (isFree) {
                     handleFreeSubscribe();
                     return;
@@ -299,30 +376,46 @@ export default function EventDetailsPage() {
                 }}
                 className="bg-primary hover:bg-secondary text-white px-8 py-6 text-lg"
                 disabled={
-                  soldOut ||
-                  hasPaidForEvent ||
-                  salesClosed ||
-                  isSubscribePending
+                  showCourtesyOffer
+                    ? soldOut || hasPaidForEvent || courtesyBlocked
+                    : soldOut ||
+                      hasPaidForEvent ||
+                      salesClosed ||
+                      isSubscribePending
                 }
                 data-testid="button-event-cta"
               >
-                {isSubscribePending && (
+                {isSubscribePending && !showCourtesyOffer && (
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                 )}
-                {eventAcquisitionCtaLabel({
-                  isFree,
-                  confirmed: hasPaidForEvent,
-                  soldOut,
-                  salesClosed,
-                  pending: isSubscribePending,
-                })}
+                {showCourtesyOffer
+                  ? courtesyRedeemCtaLabel({
+                      isFree,
+                      confirmed: hasPaidForEvent,
+                      soldOut,
+                    })
+                  : eventAcquisitionCtaLabel({
+                      isFree,
+                      confirmed: hasPaidForEvent,
+                      soldOut,
+                      salesClosed,
+                      pending: isSubscribePending,
+                    })}
               </Button>
               {hasPaidForEvent && (
                 <p className="text-sm text-muted-foreground text-center sm:text-right w-full sm:w-auto">
                   Você já possui inscrição confirmada para este evento.
                 </p>
               )}
-              {!hasPaidForEvent && salesClosed && (
+              {courtesyErrorMessage && (
+                <p
+                  className="text-sm text-red-600 text-center sm:text-right w-full sm:w-auto"
+                  data-testid="text-courtesy-error"
+                >
+                  {courtesyErrorMessage}
+                </p>
+              )}
+              {!hasPaidForEvent && salesClosed && !showCourtesyOffer && (
                 <p
                   className="text-sm text-muted-foreground text-center sm:text-right w-full sm:w-auto"
                   data-testid="text-sales-closed"

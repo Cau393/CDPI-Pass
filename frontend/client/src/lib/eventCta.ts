@@ -60,6 +60,36 @@ export function loginRequiredDescription(isFree: boolean): string {
     : "Faça login ou cadastre-se para comprar ingressos";
 }
 
+export const COURTESY_CODE_INVALID_COPY =
+  "Este código de cortesia não é válido ou já foi utilizado.";
+
+export function courtesyPriceLabel(): string {
+  return "Cortesia";
+}
+
+export function courtesyLoginRequiredDescription(): string {
+  return "Faça login ou cadastre-se para resgatar a cortesia.";
+}
+
+export type CourtesyCtaState = {
+  confirmed: boolean;
+  soldOut: boolean;
+  isFree: boolean;
+};
+
+/** Courtesy redeem ignores closed sales. Sold out and an existing order still win. */
+export function courtesyRedeemCtaLabel(state: CourtesyCtaState): string {
+  if (state.confirmed || state.soldOut) {
+    return eventAcquisitionCtaLabel({
+      isFree: state.isFree,
+      confirmed: state.confirmed,
+      soldOut: state.soldOut,
+      salesClosed: false,
+    });
+  }
+  return "Resgatar cortesia";
+}
+
 export function isFreePaymentMethod(
   paymentMethod?: string | null,
 ): boolean {

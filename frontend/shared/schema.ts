@@ -25,7 +25,8 @@ export const users = pgTable("users", {
   phone: varchar("phone", { length: 20 }).notNull(),
   birthDate: timestamp("birth_date").notNull(),
   address: text("address").notNull(),
-  partnerCompany: varchar("partner_company", { length: 255 }),
+  occupation: varchar("occupation", { length: 255 }).notNull().default("Nao aplicavel"),
+  partnerCompany: varchar("partner_company", { length: 255 }).notNull().default("Nao aplicavel"),
   isAdmin: boolean("is_admin").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -443,6 +444,8 @@ export const insertUserSchema = createInsertSchema(users, {
   name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
   address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),
   birthDate: z.date({ required_error: "Data de nascimento é obrigatória" }),
+  partnerCompany: z.string().trim().min(2, "Empresa que trabalha é obrigatória").max(255),
+  occupation: z.string().trim().min(2, "Cargo que ocupa é obrigatório").max(255),
 }).omit({
   id: true,
   createdAt: true,

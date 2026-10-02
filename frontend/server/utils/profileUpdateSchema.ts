@@ -31,7 +31,8 @@ export const profileUpdateSchema = z
     phone: z.string().min(1),
     address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),
     birthDate: z.union([z.string(), z.date()]),
-    partnerCompany: z.string().nullable(),
+    partnerCompany: z.string().trim().min(2, "Empresa que trabalha é obrigatória").max(255),
+    occupation: z.string().trim().min(2, "Cargo que ocupa é obrigatório").max(255),
   })
   .partial()
   .strip();

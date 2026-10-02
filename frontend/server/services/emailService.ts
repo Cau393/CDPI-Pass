@@ -1,4 +1,5 @@
 import { MailService } from '@sendgrid/mail';
+import { courtesyEntryUrl } from '../utils/courtesyEntryUrl';
 import jwt from 'jsonwebtoken';
 import { storage } from '../storage';
 import { EMAIL_CONTACT_FOOTER_HTML, EMAIL_CONTACT_LINE } from '@shared/contact';
@@ -13,6 +14,7 @@ import {
   buildOnlineEventEmailText,
   type OnlineEventEmailData,
 } from '../utils/onlineEventEmailTemplate';
+import { buildCalendarInviteAttachment } from '../utils/calendarInvite';
 
 if (!process.env.SENDGRID_API_KEY) {
   console.warn("SENDGRID_API_KEY environment variable not set");
@@ -167,12 +169,22 @@ ${EMAIL_CONTACT_LINE}`;
   ): Promise<boolean> {
     const html = buildOnlineEventEmailHtml(data);
     const text = buildOnlineEventEmailText(data);
+    const invite = buildCalendarInviteAttachment({
+      eventTitle: data.eventTitle,
+      eventDate: data.eventDate,
+      meetingUrl: data.meetingUrl,
+      attendeeName: data.userName,
+      attendeeEmail: email,
+      orderId: data.orderId,
+      organizerEmail: FROM_EMAIL,
+    });
 
     return this.sendEmail(
       email,
       `Seu link de acesso - ${data.eventTitle} - CDPI Pass`,
       html,
       text,
+      invite ? [invite] : undefined,
     );
   }
 
@@ -273,14 +285,21 @@ ${EMAIL_CONTACT_LINE}`;
     email: string,
     name: string,
     eventName: string,
+    eventId: string,
     courtesyCode: string,
     eventDate: Date,
     attachments?: EmailAttachment[],
     customMessageBoxHtml?: string,
     layout: CourtesyMassEmailLayout = "courtesy_invite",
     renderedSubject?: string | null,
+    overridePrice?: string | number | null,
   ): Promise<boolean> {
-    const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${courtesyCode}`;
+    const redeemUrl = courtesyEntryUrl(
+      process.env.BASE_URL ?? "",
+      eventId,
+      courtesyCode,
+      overridePrice,
+    );
     const defaultSubject = `Sua cortesia para o evento ${eventName}`;
     const subject =
       renderedSubject != null && String(renderedSubject).trim() !== ""

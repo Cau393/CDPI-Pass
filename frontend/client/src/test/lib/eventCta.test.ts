@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  courtesyLoginRequiredDescription,
+  courtesyPriceLabel,
+  courtesyRedeemCtaLabel,
+  COURTESY_CODE_INVALID_COPY,
   eventAcquisitionCtaLabel,
   eventFeeLabel,
   eventPriceLabel,
@@ -100,6 +104,39 @@ describe("eventAcquisitionCtaLabel", () => {
     expect(
       eventAcquisitionCtaLabel({ ...idle, isFree: true, pending: true }),
     ).toBe("Confirmando...");
+  });
+});
+
+describe("courtesy redeem copy", () => {
+  const open = { confirmed: false, soldOut: false, isFree: false };
+
+  it("labels the price Cortesia and the CTA Resgatar cortesia", () => {
+    expect(courtesyPriceLabel()).toBe("Cortesia");
+    expect(courtesyRedeemCtaLabel(open)).toBe("Resgatar cortesia");
+  });
+
+  it("asks the guest to log in before redeeming", () => {
+    expect(courtesyLoginRequiredDescription()).toBe(
+      "Faça login ou cadastre-se para resgatar a cortesia.",
+    );
+  });
+
+  it("keeps sold-out and already-confirmed labels and ignores closed sales", () => {
+    expect(courtesyRedeemCtaLabel({ ...open, soldOut: true })).toBe(
+      "Evento Esgotado",
+    );
+    expect(courtesyRedeemCtaLabel({ ...open, confirmed: true })).toBe(
+      "Ingresso já confirmado",
+    );
+    expect(
+      courtesyRedeemCtaLabel({ ...open, isFree: true, confirmed: true }),
+    ).toBe("Inscrição confirmada");
+  });
+
+  it("reuses the existing invalid-code sentence", () => {
+    expect(COURTESY_CODE_INVALID_COPY).toBe(
+      "Este código de cortesia não é válido ou já foi utilizado.",
+    );
   });
 });
 

@@ -1,7 +1,7 @@
 /**
  * Validates a post-auth return path for checkout / promo / free cortesia flows.
  * Allowed targets:
- * - `/event/:id` with optional `?promo=` only
+ * - `/event/:id` with a single `?promo=` or a single valid `?cortesia=`
  * - `/cortesia` with optional `?code=` only (strict code shape)
  */
 
@@ -28,6 +28,21 @@ function validatedEventPath(url: URL, pathname: string): string | null {
   if (!ALLOWED_EVENT_PATH.test(pathname)) {
     return null;
   }
+
+  const entries = Array.from(url.searchParams.entries());
+  const cortesiaEntries = entries.filter(([key]) => key === "cortesia");
+  if (cortesiaEntries.length > 0) {
+    const code = cortesiaEntries[0][1];
+    if (!isValidCourtesyCodeParam(code)) {
+      return "/";
+    }
+    const onlyCortesia = entries.length === 1 && entries[0][0] === "cortesia";
+    if (!onlyCortesia) {
+      return pathname;
+    }
+    return `${pathname}?cortesia=${encodeURIComponent(code)}`;
+  }
+
   const promo = url.searchParams.get("promo");
   if (promo != null && promo !== "") {
     return `${pathname}?promo=${encodeURIComponent(promo)}`;

@@ -18,3 +18,5 @@ Architecture Decision Records. One file per decision: `ADR-NNN-short-title.md`. 
 - [[ADR-009-canonical-contact|ADR-009: Canonical contact list]]
 - [[60-Decisions/ADR-010-online-vs-presencial]]
 - [[60-Decisions/ADR-011-courtesy-redeem-limit]]
+- [[60-Decisions/ADR-012-courtesy-event-before-register]]
+- [[60-Decisions/ADR-013-online-calendar-invite]]

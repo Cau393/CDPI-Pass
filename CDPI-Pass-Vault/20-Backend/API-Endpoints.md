@@ -5,7 +5,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 ## Auth
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/auth/register` | 🔓 | Create user (Zod `insertUserSchema`), send 6-digit verification code |
+| POST | `/api/auth/register` | 🔓 | Create user (Zod `insertUserSchema`), send 6-digit verification code. `occupation` and `partnerCompany` are required trimmed strings of 2–255 characters (`Cargo que ocupa é obrigatório` / `Empresa que trabalha é obrigatória`). Missing, blank, whitespace-only, or null is 400. Values are stored as entered (no title case) |
 | POST | `/api/auth/verify-code` | 🔓 | Verify email with 6-digit code |
 | POST | `/api/auth/resend-code` | 🔓 | Resend verification code |
 | POST | `/api/auth/login` | 🔓 | Login, returns JWT |
@@ -94,17 +94,17 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 ## Profile
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| PUT | `/api/profile` | 🔑 | Update profile |
+| PUT | `/api/profile` | 🔑 | Update profile (allowlist: name, email, phone, address, birthDate, occupation, partnerCompany). When present, occupation and partnerCompany are trimmed strings of 2–255 characters; null and blank are 400. Password is required only to change name, email, or phone. Unknown keys, including `isAdmin`, are stripped |
 | PUT | `/api/profile/password` | 🔑 | Change password |
 | DELETE | `/api/profile` | 🔑 | Delete account |
 
 ## Courtesy (user-facing)
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/courtesy-links` | 👑 | Create courtesy link. 400 when the event courtesy cap is already reached |
-| GET | `/api/courtesy-links` | 👑 | List own created links |
-| GET | `/api/courtesy-links/:code` | 🔓 | Resolve link for redeem page |
-| POST | `/api/courtesy/redeem` | 🔑 | Redeem courtesy → paid order (same QR vs meeting-link split as purchase). Counts one paid courtesy order. The redeem that reaches `events.courtesy_limit` succeeds and then deactivates every courtesy link for the event. A later redeem returns 400 `Limite de cortesias do evento atingido`. NULL limit means no cap |
+| POST | `/api/courtesy-links` | 👑 | Create courtesy link. `redeemUrl` is `{origin}/event/{eventId}?cortesia={code}` when `overridePrice` is null, or `{origin}/event/{eventId}?promo={code}` when set. 400 when the event courtesy cap is already reached |
+| GET | `/api/courtesy-links` | 👑 | List own created links. Each row's `redeemUrl` uses the same `?cortesia=` / `?promo=` rule as create |
+| GET | `/api/courtesy-links/:code` | 🔓 | Public resolve for the event page and for logged-out `/cortesia?code=`. 404 missing, 400 inactive or exhausted. Does not require a session |
+| POST | `/api/courtesy/redeem` | 🔑 | Redeem courtesy → paid order (same QR vs meeting-link split as purchase). Unchanged: rejects `overridePrice` codes, does not check `salesClosed`. Counts one paid courtesy order. The redeem that reaches `events.courtesy_limit` succeeds and then deactivates every courtesy link for the event. A later redeem returns 400 `Limite de cortesias do evento atingido`. NULL limit means no cap |
 
 ## Certificates & NPS (user)
 | Method | Path | Auth | Purpose |

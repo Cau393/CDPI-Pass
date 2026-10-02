@@ -43,6 +43,12 @@ describe("buildOnlineEventEmailHtml", () => {
     ).toContain("Workshop Online");
   });
 
+  it("mentions the attached calendar invite", () => {
+    const html = buildOnlineEventEmailHtml({ ...base, confirmationKind: "paid" });
+    expect(html).toContain("invite.ics");
+    expect(html).toContain("adicionar o evento à sua agenda");
+  });
+
   it("injects custom confirmation HTML before the meeting card", () => {
     const html = buildOnlineEventEmailHtml({
       ...base,
@@ -82,6 +88,12 @@ describe("buildOnlineEventEmailText", () => {
     expect(
       buildOnlineEventEmailText({ ...base, confirmationKind: "paid" }),
     ).toContain("https://zoom.us/j/123456");
+  });
+
+  it("mentions the attached calendar invite in the plain-text body", () => {
+    expect(
+      buildOnlineEventEmailText({ ...base, confirmationKind: "paid" }),
+    ).toContain("invite.ics");
   });
 
   it("includes custom copy in the plain-text body", () => {

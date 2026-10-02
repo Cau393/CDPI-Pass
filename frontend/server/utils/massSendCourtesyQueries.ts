@@ -8,6 +8,7 @@ export type CourtesyLinkMassSendLike = {
   ticketCount: number;
   usedCount: number | null;
   isActive: boolean | null;
+  overridePrice?: string | null;
   createdAt: Date | null;
 };
 

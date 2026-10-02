@@ -9,8 +9,9 @@ vi.mock("wouter", () => ({
   useLocation: () => ["/event/11111111-1111-1111-1111-111111111111", setLocation],
 }));
 
+const authState = { isAuthenticated: true };
 vi.mock("../../hooks/useAuth", () => ({
-  useAuth: () => ({ isAuthenticated: true }),
+  useAuth: () => authState,
 }));
 
 const toastSpy = vi.fn();
@@ -428,5 +429,230 @@ describe("EventDetailsPage — free online subscribe WhatsApp", () => {
       expect(setLocation).toHaveBeenCalledWith("/profile");
     });
     expect(openSpy).not.toHaveBeenCalled();
+  });
+});
+
+const COURTESY_CODE = "CDPITEST123";
+
+function mockCourtesyVisit(
+  event: Record<string, unknown>,
+  link: { status: number; body: unknown },
+  orders: unknown[] = [],
+) {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const method = init?.method ?? "GET";
+
+    if (url.includes(`/api/events/${EVENT_ID}/subscribe`) && method === "POST") {
+      return new Response(JSON.stringify({ message: "Inscrição confirmada!" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("/api/courtesy-links/")) {
+      return new Response(JSON.stringify(link.body), {
+        status: link.status,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes(`/api/events/${EVENT_ID}`)) {
+      return new Response(JSON.stringify(event), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.includes("/api/orders")) {
+      return new Response(JSON.stringify({ orders }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("{}", {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+}
+
+describe("EventDetailsPage — free courtesy (?cortesia=)", () => {
+  const validLink = {
+    status: 200,
+    body: {
+      code: COURTESY_CODE,
+      overridePrice: null,
+      isActive: true,
+      remainingTickets: 2,
+      event: {
+        id: EVENT_ID,
+        title: "Título só da cortesia",
+        meetingUrl: "https://zoom.us/j/secret-courtesy",
+        location: "Sala secreta",
+      },
+    },
+  };
+
+  beforeEach(() => {
+    authState.isAuthenticated = false;
+    window.history.pushState(
+      {},
+      "",
+      `/event/${EVENT_ID}?cortesia=${COURTESY_CODE}`,
+    );
+  });
+
+  afterEach(() => {
+    authState.isAuthenticated = true;
+    window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("shows the public event and Resgatar cortesia without a login redirect", async () => {
+    vi.stubGlobal("fetch", mockCourtesyVisit(baseEvent, validLink));
+    renderPage();
+
+    expect(await screen.findByText("Congresso CDPI 2026")).toBeInTheDocument();
+    expect(screen.getByText("São Paulo")).toBeInTheDocument();
+    expect(screen.getByText("Cortesia")).toBeInTheDocument();
+    expect(screen.getByTestId("button-event-cta")).toHaveTextContent(
+      "Resgatar cortesia",
+    );
+    expect(screen.queryByText(/taxa de conveniência/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Título só da cortesia")).not.toBeInTheDocument();
+    expect(screen.queryByText(/secret-courtesy/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Sala secreta")).not.toBeInTheDocument();
+    expect(setLocation).not.toHaveBeenCalled();
+    expect(toastSpy).not.toHaveBeenCalled();
+  });
+
+  it("sends a logged-out click to login with the cortesia query preserved", async () => {
+    vi.stubGlobal("fetch", mockCourtesyVisit(baseEvent, validLink));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-event-cta"));
+
+    expect(toastSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Login necessário",
+        description: "Faça login ou cadastre-se para resgatar a cortesia.",
+        variant: "destructive",
+      }),
+    );
+    expect(setLocation).toHaveBeenCalledWith(
+      `/login?next=${encodeURIComponent(`/event/${EVENT_ID}?cortesia=${COURTESY_CODE}`)}`,
+    );
+  });
+
+  it("sends a logged-in click to the courtesy form and does not buy or subscribe", async () => {
+    authState.isAuthenticated = true;
+    localStorage.setItem("token", "test-token");
+    const fetchMock = mockCourtesyVisit(baseEvent, validLink);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-event-cta"));
+
+    expect(setLocation).toHaveBeenCalledWith(
+      `/cortesia?code=${COURTESY_CODE}`,
+    );
+    expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
+    const calls = fetchMock.mock.calls.map(
+      ([input, init]) =>
+        `${(init as RequestInit | undefined)?.method ?? "GET"} ${String(input)}`,
+    );
+    expect(calls.some((call) => call.includes("/subscribe"))).toBe(false);
+    expect(calls.some((call) => call.startsWith("POST /api/orders"))).toBe(false);
+  });
+
+  it("keeps the courtesy CTA available when sales are closed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockCourtesyVisit({ ...baseEvent, salesClosed: true }, validLink),
+    );
+    renderPage();
+
+    const cta = await screen.findByTestId("button-event-cta");
+    expect(cta).toBeEnabled();
+    expect(cta).toHaveTextContent("Resgatar cortesia");
+    expect(screen.queryByTestId("text-sales-closed")).not.toBeInTheDocument();
+  });
+
+  it("does not offer full-price checkout for an invalid courtesy code", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockCourtesyVisit(baseEvent, {
+        status: 400,
+        body: { message: "Link de cortesia inativo" },
+      }),
+    );
+    renderPage();
+
+    expect(await screen.findByText("Link de cortesia inativo")).toBeInTheDocument();
+    expect(screen.queryByText("Comprar Ingresso")).not.toBeInTheDocument();
+    expect(screen.getByTestId("button-event-cta")).toBeDisabled();
+    expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
+  });
+
+  it("disables the courtesy CTA when the event is full", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockCourtesyVisit(
+        { ...baseEvent, maxAttendees: 10, currentAttendees: 10 },
+        validLink,
+      ),
+    );
+    renderPage();
+
+    const cta = await screen.findByTestId("button-event-cta");
+    expect(cta).toBeDisabled();
+    expect(cta).toHaveTextContent("Evento Esgotado");
+    expect(screen.getByText("Cortesia")).toBeInTheDocument();
+    expect(screen.queryByText(/taxa de conveniência/)).not.toBeInTheDocument();
+  });
+
+  it("keeps an existing paid order as already confirmed", async () => {
+    authState.isAuthenticated = true;
+    localStorage.setItem("token", "test-token");
+    vi.stubGlobal(
+      "fetch",
+      mockCourtesyVisit(baseEvent, validLink, [
+        { eventId: EVENT_ID, status: "paid" },
+      ]),
+    );
+    renderPage();
+
+    expect(
+      await screen.findByText(
+        "Você já possui inscrição confirmada para este evento.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("button-event-cta")).toBeDisabled();
+    expect(screen.getByText("Cortesia")).toBeInTheDocument();
+  });
+
+  it("switches an override-price code to the promo purchase path", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockCourtesyVisit(baseEvent, {
+        status: 200,
+        body: {
+          ...validLink.body,
+          overridePrice: "80.00",
+        },
+      }),
+    );
+    renderPage();
+
+    await waitFor(() => {
+      expect(setLocation).toHaveBeenCalledWith(
+        `/event/${EVENT_ID}?promo=${COURTESY_CODE}`,
+      );
+    });
+    expect(await screen.findByText("Comprar Ingresso")).toBeInTheDocument();
+    expect(screen.queryByText("Resgatar cortesia")).not.toBeInTheDocument();
+    expect(screen.getByText(/Promoção aplicada/)).toBeInTheDocument();
   });
 });

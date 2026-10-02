@@ -38,6 +38,7 @@ import {
   npsCdpiApoiandoResponses,
   communicateRecipientModes,
 } from "@shared/schema";
+import { courtesyEntryUrl } from "./utils/courtesyEntryUrl";
 import { validateCpf, validateEmail, formatCpf } from "./utils/validation";
 import { parseBrazilEventLocalDateTime } from "./utils/eventDateTime";
 import { sanitizeCourtesyTemplateHtml } from "./utils/courtesyTemplateSanitize";
@@ -3081,14 +3082,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         overridePrice: overridePrice || null,
       });
 
-      let finalUrl = "";
-      if (link.overridePrice) {
-        // If it has a price, it's a PROMO link. Point to the event page.
-        finalUrl = `${req.protocol}://${req.get('host')}/event/${link.eventId}?promo=${link.code}`;
-      } else {
-        // Otherwise, it's a FREE courtesy link. Point to the redemption page.
-        finalUrl = `${req.protocol}://${req.get('host')}/cortesia?code=${link.code}`;
-      }
+      const finalUrl = courtesyEntryUrl(
+        `${req.protocol}://${req.get("host")}`,
+        link.eventId,
+        link.code,
+        link.overridePrice,
+      );
 
       res.status(201).json({
         ...link,
@@ -3116,12 +3115,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const linksWithDetails = await Promise.all(links.map(async (link) => {
         const event = await storage.getEvent(link.eventId);
         
-        let finalUrl = "";
-        if (link.overridePrice) {
-          finalUrl = `${req.protocol}://${req.get('host')}/event/${link.eventId}?promo=${link.code}`;
-        } else {
-          finalUrl = `${req.protocol}://${req.get('host')}/cortesia?code=${link.code}`;
-        }
+        const finalUrl = courtesyEntryUrl(
+          `${req.protocol}://${req.get("host")}`,
+          link.eventId,
+          link.code,
+          link.overridePrice,
+        );
         
         return {
           ...link,

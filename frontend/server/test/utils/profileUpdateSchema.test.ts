@@ -60,14 +60,34 @@ describe("profileUpdateSchema", () => {
       cpf: "123.456.789-00",
       isAdmin: true,
       emailVerified: true,
-      partnerCompany: null,
+      partnerCompany: "Nao aplicavel",
+      occupation: "Nao aplicavel",
     });
     expect(parsed).toEqual({
       name: "Maria Silva",
       email: "maria@example.com",
       phone: "5511999999999",
       address: "Rua das Flores 123, Sao Paulo SP",
-      partnerCompany: null,
+      partnerCompany: "Nao aplicavel",
+      occupation: "Nao aplicavel",
+    });
+  });
+
+  it("rejects null or blank occupation and partnerCompany", () => {
+    for (const value of [null, "", "   "]) {
+      expect(profileUpdateSchema.safeParse({ partnerCompany: value }).success).toBe(false);
+      expect(profileUpdateSchema.safeParse({ occupation: value }).success).toBe(false);
+    }
+  });
+
+  it("trims occupation and partnerCompany when the value is 2–255 characters", () => {
+    const parsed = profileUpdateSchema.parse({
+      occupation: "  Medica  ",
+      partnerCompany: "  CDPI  ",
+    });
+    expect(parsed).toEqual({
+      occupation: "Medica",
+      partnerCompany: "CDPI",
     });
   });
 

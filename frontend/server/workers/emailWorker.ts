@@ -9,6 +9,7 @@ import {
   deduplicateReminderLinksByEmail,
 } from '../utils/reminderEligibility';
 import { courtesyActivationBlocked } from '../utils/courtesyRedeemLimit';
+import { courtesyEntryUrl } from '../utils/courtesyEntryUrl';
 
 interface EmailJob {
   id: string;
@@ -228,7 +229,11 @@ class EmailWorker {
 
           const eventDate =
             event.date instanceof Date ? event.date : new Date(event.date as string | number);
-          const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${link.code}`;
+          const redeemUrl = courtesyEntryUrl(
+            process.env.BASE_URL ?? "",
+            event.id,
+            link.code,
+          );
           const variables: Record<string, string> = {
             nome: String(name),
             evento: event.title,
@@ -249,6 +254,7 @@ class EmailWorker {
               email,
               name,
               event.title,
+              event.id,
               link.code,
               event.date,
               attachments,
@@ -261,6 +267,7 @@ class EmailWorker {
               email,
               name,
               event.title,
+              event.id,
               link.code,
               event.date,
               attachments,
@@ -328,7 +335,12 @@ class EmailWorker {
         : dateFormatter.format(eventDate);
 
       for (const link of linksWithReminderEmail) {
-        const redeemUrl = `${process.env.BASE_URL}/cortesia?code=${link.code}`;
+        const redeemUrl = courtesyEntryUrl(
+          process.env.BASE_URL ?? "",
+          event.id,
+          link.code,
+          link.overridePrice,
+        );
         const variables: Record<string, string> = {
           nome: link.recipientName ?? '',
           evento: event.title,
@@ -347,12 +359,14 @@ class EmailWorker {
           link.recipientEmail!,
           link.recipientName ?? "",
           event.title,
+          event.id,
           link.code,
           event.date,
           attachments,
           customMessageBoxHtml,
           "courtesy_reminder",
           renderedReminderSubject,
+          link.overridePrice,
         );
       }
 

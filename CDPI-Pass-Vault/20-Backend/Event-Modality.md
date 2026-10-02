@@ -26,7 +26,7 @@ All confirmation paths go through `server/utils/sendPurchaseConfirmationEmail.ts
 | Modality | QR | E-mail | In-app (paid / courtesy) |
 |---|---|---|---|
 | presencial | generated and stored on the order | ticket + inline QR (`ticketEmailTemplate.ts`) + optional HTML inject | QR actions on Meus Ingressos |
-| online | skipped | meeting link, no ticket (`onlineEventEmailTemplate.ts`) + optional HTML inject | **Acessar reunião**; **Entrar no grupo** if WhatsApp is set |
+| online | skipped | meeting link, no ticket (`onlineEventEmailTemplate.ts`) + `invite.ics` attachment + optional HTML inject | **Acessar reunião**; **Entrar no grupo** if WhatsApp is set |
 
 The order row is still created (attendance / Make.com). Check-in via QR does not apply to online events.
 
@@ -45,6 +45,7 @@ Hardcoded online/presencial templates are **not** the admin HTML templates (cort
 | What | File |
 |---|---|
 | Online HTML/text + instruction list | `server/utils/onlineEventEmailTemplate.ts` (`ONLINE_EVENT_INSTRUCTIONS`, `buildOnlineEventEmailHtml` / `Text`) |
+| Online calendar file | `server/utils/calendarInvite.ts` — `invite.ics` attached by `sendOnlineEventEmail` when the start instant and meeting URL are present. `DTEND` is start + 3 hours. Times are UTC (`YYYYMMDDTHHMMSSZ`). See [[60-Decisions/ADR-013-online-calendar-invite]]. |
 | Online subject | `emailService.sendOnlineEventEmail` — `Seu link de acesso - ${title} - CDPI Pass` |
 | Presencial HTML/text + QR instructions | `server/utils/ticketEmailTemplate.ts` (`TICKET_INSTRUCTIONS`, `TICKET_CONFIRMATION_LINE`) |
 | Presencial subject | `emailService.sendTicketEmail` — `Seu ingresso para ${title} - CDPI Pass` |
@@ -54,6 +55,7 @@ Hardcoded online/presencial templates are **not** the admin HTML templates (cort
 
 ## Related
 - [[60-Decisions/ADR-010-online-vs-presencial]]
+- [[60-Decisions/ADR-013-online-calendar-invite]]
 - [[20-Backend/API-Endpoints]]
 - [[20-Backend/Services-Overview]]
 - [[30-Frontend/Frontend-Overview]]

@@ -14,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
 import { COURTESY_CODE_PARAM_REGEX } from "@/lib/authRedirect";
+import { COURTESY_CODE_INVALID_COPY } from "@/lib/eventCta";
 import ContactChannels from "@/components/ContactChannels";
 import SiteFooter from "@/components/SiteFooter";
 import {
@@ -56,6 +57,7 @@ export default function CourtesyRedeemPage() {
   const code = new URLSearchParams(searchParams).get("code");
   const [isSuccess, setIsSuccess] = useState(false);
   const [inputCode, setInputCode] = useState("");
+  const [isResolvingCode, setIsResolvingCode] = useState(false);
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const { toast } = useToast();
 
@@ -91,19 +93,6 @@ export default function CourtesyRedeemPage() {
     }
   }, [user, form]);
 
-  // Redirect to login with same post-auth pattern as promo (?next=)
-  useEffect(() => {
-    if (!authLoading && !isAuthenticated && code) {
-      toast({
-        title: "Login necessário",
-        description: "Faça login ou cadastre-se para continuar o resgate.",
-        variant: "destructive",
-      });
-      const nextPath = `/cortesia?code=${encodeURIComponent(code)}`;
-      setLocation(`/login?next=${encodeURIComponent(nextPath)}`);
-    }
-  }, [authLoading, isAuthenticated, code, setLocation, toast]);
-
   // One-time migration: old flow used localStorage("courtesyCode")
   useEffect(() => {
     if (authLoading || !isAuthenticated || code) return;
@@ -127,8 +116,15 @@ export default function CourtesyRedeemPage() {
       }
       return response.json();
     },
-    enabled: !!code && isAuthenticated,
+    enabled: !!code && !authLoading,
   });
+
+  useEffect(() => {
+    if (authLoading || isAuthenticated || !code || !linkData?.event?.id) return;
+    const eventId = linkData.event.id as string;
+    const param = linkData.overridePrice ? "promo" : "cortesia";
+    setLocation(`/event/${eventId}?${param}=${encodeURIComponent(code)}`);
+  }, [authLoading, isAuthenticated, code, linkData, setLocation]);
 
   // Redeem courtesy mutation
   const redeemMutation = useMutation({
@@ -180,13 +176,40 @@ export default function CourtesyRedeemPage() {
     );
   }
 
-  if (!isAuthenticated && code) {
-    return (
-      <CourtesyShell centered>
-        <p className="text-gray-500">Redirecionando para login...</p>
-      </CourtesyShell>
-    );
-  }
+  const continueWithCode = async () => {
+    const trimmed = inputCode.trim();
+    if (!trimmed) {
+      toast({
+        title: "Código inválido",
+        description: "Por favor, insira um código válido",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsResolvingCode(true);
+    try {
+      const response = await fetch(
+        `/api/courtesy-links/${encodeURIComponent(trimmed)}`,
+      );
+      if (!response.ok) {
+        setLocation(`/cortesia?code=${encodeURIComponent(trimmed)}`);
+        return;
+      }
+      const data = await response.json();
+      const eventId = data?.event?.id as string | undefined;
+      if (!eventId) {
+        setLocation(`/cortesia?code=${encodeURIComponent(trimmed)}`);
+        return;
+      }
+      const param = data.overridePrice ? "promo" : "cortesia";
+      setLocation(`/event/${eventId}?${param}=${encodeURIComponent(trimmed)}`);
+    } catch {
+      setLocation(`/cortesia?code=${encodeURIComponent(trimmed)}`);
+    } finally {
+      setIsResolvingCode(false);
+    }
+  };
 
   if (!code) {
     return (
@@ -213,17 +236,9 @@ export default function CourtesyRedeemPage() {
                 <Button
                   className="w-full"
                   onClick={() => {
-                    if (inputCode.trim()) {
-                      setLocation(`/cortesia?code=${inputCode.trim()}`);
-                    } else {
-                      toast({
-                        title: "Código inválido",
-                        description: "Por favor, insira um código válido",
-                        variant: "destructive",
-                      });
-                    }
+                    void continueWithCode();
                   }}
-                  disabled={!inputCode.trim()}
+                  disabled={!inputCode.trim() || isResolvingCode}
                   data-testid="button-submit-code"
                 >
                   Continuar
@@ -252,7 +267,7 @@ export default function CourtesyRedeemPage() {
     );
   }
 
-  if (linkError || !linkData) {
+  if (linkError || !linkData || (!isAuthenticated && !linkData.event?.id)) {
     return (
       <CourtesyShell>
         <div className="max-w-lg mx-auto px-4">
@@ -263,7 +278,7 @@ export default function CourtesyRedeemPage() {
             </CardHeader>
             <CardContent>
               <p className="text-center text-gray-600 mb-4">
-                {linkError?.message || "Este código de cortesia não é válido ou já foi utilizado."}
+                {linkError?.message || COURTESY_CODE_INVALID_COPY}
               </p>
               <Button
                 className="w-full"
@@ -275,6 +290,14 @@ export default function CourtesyRedeemPage() {
             </CardContent>
           </Card>
         </div>
+      </CourtesyShell>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <CourtesyShell centered>
+        <p className="text-gray-500">Abrindo a página do evento...</p>
       </CourtesyShell>
     );
   }

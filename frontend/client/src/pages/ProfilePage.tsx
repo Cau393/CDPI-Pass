@@ -727,7 +727,29 @@ const handleCancelOrder = (orderId: string) => {
                         data-testid="input-profile-address"
                       />
                     </div>
-                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div>
+                        <Label htmlFor="occupation" className="block text-sm font-medium text-gray-700 mb-2">
+                          Cargo que ocupa
+                        </Label>
+                        <Input
+                          id="occupation"
+                          {...profileForm.register("occupation")}
+                          data-testid="input-profile-occupation"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="partnerCompany" className="block text-sm font-medium text-gray-700 mb-2">
+                          Empresa que trabalha
+                        </Label>
+                        <Input
+                          id="partnerCompany"
+                          {...profileForm.register("partnerCompany")}
+                          data-testid="input-profile-partner-company"
+                        />
+                      </div>
+                    </div>
+
                     {hasChangedSensitiveFields && (
                       <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
                         <p className="text-sm text-yellow-800 mb-3">

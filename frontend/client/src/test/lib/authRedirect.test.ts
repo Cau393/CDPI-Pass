@@ -41,6 +41,40 @@ describe("getValidatedNextPath", () => {
     ).toBe("/event/550e8400-e29b-41d4-a716-446655440000");
   });
 
+  it("preserves a single valid cortesia query on an event path", () => {
+    const eventId = "550e8400-e29b-41d4-a716-446655440000";
+    expect(getValidatedNextPath(`/event/${eventId}?cortesia=CDPITEST123`)).toBe(
+      `/event/${eventId}?cortesia=CDPITEST123`,
+    );
+  });
+
+  it("rejects a malformed cortesia code on an event path", () => {
+    const eventId = "550e8400-e29b-41d4-a716-446655440000";
+    expect(getValidatedNextPath(`/event/${eventId}?cortesia=ab`)).toBe("/");
+    expect(getValidatedNextPath(`/event/${eventId}?cortesia=`)).toBe("/");
+    expect(getValidatedNextPath(`/event/${eventId}?cortesia=CDPI+space`)).toBe("/");
+  });
+
+  it("drops cortesia when it is combined with promo or any extra param", () => {
+    const eventId = "550e8400-e29b-41d4-a716-446655440000";
+    expect(
+      getValidatedNextPath(`/event/${eventId}?cortesia=CDPITEST123&promo=CDPITEST123`),
+    ).toBe(`/event/${eventId}`);
+    expect(
+      getValidatedNextPath(`/event/${eventId}?cortesia=CDPITEST123&foo=1`),
+    ).toBe(`/event/${eventId}`);
+  });
+
+  it("rejects a malformed cortesia code even when other params are present", () => {
+    const eventId = "550e8400-e29b-41d4-a716-446655440000";
+    expect(
+      getValidatedNextPath(`/event/${eventId}?cortesia=ab&promo=CDPITEST123`),
+    ).toBe("/");
+    expect(getValidatedNextPath(`/event/${eventId}?foo=1&cortesia=no+space`)).toBe(
+      "/",
+    );
+  });
+
   it("allows /cortesia without query", () => {
     expect(getValidatedNextPath("/cortesia")).toBe("/cortesia");
   });

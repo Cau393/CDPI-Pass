@@ -16,16 +16,16 @@
 |---|---|
 | `/` | HomePage |
 | `/eventos` | EventsPage |
-| `/event/:id` | EventDetailsPage |
-| `/login`, `/register` | Login / Register |
+| `/event/:id` | EventDetailsPage (`?promo=` checkout, `?cortesia=` free redeem) |
+| `/login`, `/register` | Login / Register. Register requires **Cargo que ocupa** and **Empresa que trabalha** (after Endereço Completo, before Senha). Empty submit shows both field errors. Labels have no asterisk |
 | `/forgot-password`, `/reset-password` | Password recovery |
 | `/verify-email` | VerifyCodePage (6-digit code) |
-| `/cortesia` | CourtesyRedeemPage (courtesy link redemption) |
+| `/cortesia` | CourtesyRedeemPage (manual code, or the attendee form after the guest chooses to redeem) |
 
 ### User
 | Route | Page |
 |---|---|
-| `/profile` | ProfilePage (orders, certificates, account) |
+| `/profile` | ProfilePage (orders, certificates, account). The profile tab shows **Cargo que ocupa** and **Empresa que trabalha** so a backfilled `Nao aplicavel` can be replaced. Those two fields are not password-gated |
 
 ### Admin (gated by isAdmin; wrapped routes in App.tsx)
 | Route | Page |
@@ -49,6 +49,15 @@ On `/admin/participants`, a row with `hasQrCode` shows **Baixar QR Code**. The c
 Home-page main event poster (`HomePage` hero, `data-testid="img-main-event"`). One clean `object-contain` image in a 16:9 frame with no duplicate or blur. The card stacks on phones and switches to a compact 55/45 image-details layout from `md`; its description is converted to plain text, capped at 90 characters with `…`, and visually clamped to two lines because full details live at `/event/:id`. See [[60-Decisions/ADR-007-home-event-cover-contain]]. The `/event/:id` hero uses the same component and frame; only sidebar/listing thumbnails still crop with `object-cover`.
 
 For events explicitly marked `isFree`, every public surface shows `Grátis` and omits the convenience-fee line entirely (Home hero, Home sidebar, `/eventos`, `/event/:id`). The primary CTA is `Confirmar inscrição` and calls `POST /api/events/:id/subscribe` in place via `useFreeSubscribe` (Home hero and Event Details share the hook). Paid events continue to display their price, `+ taxa de conveniência` (Home) / `+ taxa de conveniência de R$ 5,00` (Event Details), and `Comprar Ingresso`. Copy helpers live in `client/src/lib/eventCta.ts` so labels cannot drift. On Meus Ingressos, free-event orders (`paymentMethod: "free"`) show `Grátis` and `Inscrito em`, not `R$ 0,00` / `Comprado em`.
+
+## Free courtesy entry
+A free courtesy link (`courtesy_links.override_price` null) opens `/event/:eventId?cortesia=CODE`. The page still renders the event from `GET /api/events/:id` (`toPublicEvent` / `publicEventLocationLabel`); the courtesy payload is only used to decide the offer. The price reads **Cortesia** (no convenience fee) and the CTA is **Resgatar cortesia**. Closed sales do not disable that button. A full event still shows **Evento Esgotado**. An existing paid order for the event still shows **Você já possui inscrição confirmada** and stays disabled. An invalid, inactive, or exhausted code shows the API message, or **Este código de cortesia não é válido ou já foi utilizado.**, and does not fall through to **Comprar Ingresso**.
+
+Logged out, the CTA toasts **Faça login ou cadastre-se para resgatar a cortesia.** and goes to `/login?next=` with the cortesia query kept (`getValidatedNextPath` allows a single `?cortesia=` code). After login or register, the guest is back on the event page; the form does not open and redeem is not posted. Logged in, the CTA goes to `/cortesia?code=CODE`, the existing attendee form (empresa parceira and cargo stay there). Submit is still `POST /api/courtesy/redeem`.
+
+`/cortesia?code=CODE` from older mail, while logged out, loads `GET /api/courtesy-links/:code` and replaces the location with the event URL (`?cortesia=` or `?promo=` when `overridePrice` is set). It does not send the visitor to login on load. The manual code box (nav **Resgatar cortesia**) stays; **Continuar** resolves the code and opens the event page. A code with `overridePrice` on the event page is rewritten to `?promo=CODE` and uses the existing buy path, never redeem.
+
+Copy for the courtesy price, CTA, login toast, and invalid-code sentence lives in `client/src/lib/eventCta.ts`. See [[60-Decisions/ADR-012-courtesy-event-before-register]].
 
 ## Courtesy redeem cap
 Admin create and edit (`EventFormFields`, label **Limite total de cortesias**) share an optional numeric field. Blank means no cap. On the cortesia quota lookup and the mass-send recipient list, **Ativar** stays disabled while paid courtesy redeems are at or above that cap. Raising the number on the event form only unlocks the button; it does not turn links back on. See [[60-Decisions/ADR-011-courtesy-redeem-limit]].

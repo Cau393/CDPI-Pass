@@ -18,6 +18,9 @@ Derived from the `frontend/sql/` files (each was run manually on Neon). This is 
 
 **Lesson**: survey answers moved from a jsonb blob on certificates to typed, per-survey-type tables with unique (user,event). Question columns are versioned by replacing the tables (manual SQL), not by jsonb.
 
+## User occupation and company required
+`users_occupation_company_required.sql` — registration requires **Cargo que ocupa** and **Empresa que trabalha**. Adds `users.occupation varchar(255)` when absent (does not add `partner_company`; that column already exists). Backfills NULL or blank values on both columns to the literal `Nao aplicavel` (no accent), then sets NOT NULL and `DEFAULT 'Nao aplicavel'`. The default covers raw and test inserts that omit the columns. `POST /api/auth/register` still rejects a missing, blank, or null value. **Applied to Neon staging on 2026-10-02.** Prod still pending before the matching app deploy. Paid-participant Excel export still reads cargo and empresa from `courtesy_attendees`, not from `users`.
+
 ## Feature additions (additive SQL)
 - `communicate_tables.sql` — communicate templates + jobs.
 - `reminder_templates_and_jobs.sql` — reminder feature tables.

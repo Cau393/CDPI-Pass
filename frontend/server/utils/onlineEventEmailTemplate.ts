@@ -116,6 +116,9 @@ export function buildOnlineEventEmailHtml(data: OnlineEventEmailData): string {
               <p style="font-size: 12px; color: #666; word-break: break-all;">
                 ${safeUrl}
               </p>
+              <p style="font-size: 13px; color: #333;">
+                Um convite de calendário (invite.ics) está anexado a este e-mail. Abra o anexo para adicionar o evento à sua agenda.
+              </p>
             </div>
 
             <div style="background: #BBE1FA; padding: 15px; border-radius: 5px; margin: 20px 0;">
@@ -156,6 +159,8 @@ ${customText}
       Pedido: #${data.orderId}
 
       Link da reunião: ${data.meetingUrl}
+
+      Um convite de calendário (invite.ics) está anexado a este e-mail. Abra o anexo para adicionar o evento à sua agenda.
 
       Instruções Importantes:
 ${instructions}

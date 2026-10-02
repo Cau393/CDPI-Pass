@@ -48,6 +48,8 @@ export default function RegisterPage() {
       emailConfirm: "",
       phone: "",
       address: "",
+      occupation: "",
+      partnerCompany: "",
       password: "",
       passwordConfirm: "",
       acceptTerms: false,
@@ -252,6 +254,42 @@ export default function RegisterPage() {
                 {form.formState.errors.address && (
                   <p className="text-red-600 text-sm mt-1" data-testid="text-address-error">
                     {form.formState.errors.address.message}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <Label htmlFor="occupation" className="block text-sm font-medium text-gray-700 mb-2">
+                  Cargo que ocupa
+                </Label>
+                <Input
+                  id="occupation"
+                  type="text"
+                  {...form.register("occupation")}
+                  className="w-full"
+                  data-testid="input-occupation"
+                />
+                {form.formState.errors.occupation && (
+                  <p className="text-red-600 text-sm mt-1" data-testid="text-occupation-error">
+                    {form.formState.errors.occupation.message}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <Label htmlFor="partnerCompany" className="block text-sm font-medium text-gray-700 mb-2">
+                  Empresa que trabalha
+                </Label>
+                <Input
+                  id="partnerCompany"
+                  type="text"
+                  {...form.register("partnerCompany")}
+                  className="w-full"
+                  data-testid="input-partner-company"
+                />
+                {form.formState.errors.partnerCompany && (
+                  <p className="text-red-600 text-sm mt-1" data-testid="text-partner-company-error">
+                    {form.formState.errors.partnerCompany.message}
                   </p>
                 )}
               </div>

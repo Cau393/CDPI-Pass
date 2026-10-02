@@ -1242,6 +1242,7 @@ async getPendingMassSendJobs(limit: number = 5) {
         ticketCount: courtesyLinks.ticketCount,
         usedCount: courtesyLinks.usedCount,
         isActive: courtesyLinks.isActive,
+        overridePrice: courtesyLinks.overridePrice,
         createdAt: courtesyLinks.createdAt,
       })
       .from(courtesyLinks)

@@ -7,7 +7,7 @@ Dedicated process (`server/run-email-worker.ts`, PM2 app `cdpi-pass-email-worker
 - Processes:
   - `email_queue` rows (`pending` → send via SendGrid → `sent`/`failed`, attempts++).
   - `mass_send_jobs` (courtesy CSV mass sends): parses `csv_data`, creates courtesy links + queues emails.
-  - `reminder_jobs`: finds unredeemed courtesy links (`reminderEligibility.ts`: filter + dedupe by email), renders template (`templateRenderer.ts` with `{nome} {evento} {data} {link}`), queues emails.
+  - `reminder_jobs`: finds unredeemed courtesy links (`reminderEligibility.ts`: filter + dedupe by email), renders template (`templateRenderer.ts` with `{nome} {evento} {data} {link}`), queues emails. `{link}` is the event-page entry from `courtesyEntryUrl` (`?cortesia=` or `?promo=`), the same URL as the email button.
   - `communicate_jobs`: recipients per `recipient_mode` (`participants | participants_and_unredeemed | unredeemed_only`).
 - **Important**: the worker is a separate process. Changing worker code requires restarting `cdpi-pass-email-worker`, not just the server.
 
