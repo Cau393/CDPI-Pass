@@ -39,6 +39,31 @@ export function parseOptionalHttpUrl(
   return { ok: true, url: parsed.data };
 }
 
+const MEETING_PASSWORD_MAX = 100;
+
+export function parseMeetingPassword(raw: unknown):
+  | { ok: true; meetingPassword: string | null }
+  | { ok: false; error: string } {
+  if (raw === undefined || raw === null) {
+    return { ok: true, meetingPassword: null };
+  }
+  if (typeof raw !== "string") {
+    return {
+      ok: false,
+      error: "meeting_password must be at most 100 characters",
+    };
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, meetingPassword: null };
+  if (trimmed.length > MEETING_PASSWORD_MAX) {
+    return {
+      ok: false,
+      error: "meeting_password must be at most 100 characters",
+    };
+  }
+  return { ok: true, meetingPassword: trimmed };
+}
+
 export function resolveCreateWhatsappGroupUrl(opts: {
   modality: EventModality;
   raw: unknown;
@@ -64,6 +89,7 @@ export function resolveCreateModality(body: Record<string, unknown>):
       modality: EventModality;
       meetingUrl: string | null;
       whatsappGroupUrl: string | null;
+      meetingPassword: string | null;
       confirmationEmailHtml: string | null;
     }
   | { ok: false; error: string } {
@@ -100,11 +126,19 @@ export function resolveCreateModality(body: Record<string, unknown>):
   });
   if (!whatsapp.ok) return whatsapp;
 
+  let meetingPassword: string | null = null;
+  if (modality === "online") {
+    const parsedPassword = parseMeetingPassword(body.meeting_password);
+    if (!parsedPassword.ok) return parsedPassword;
+    meetingPassword = parsedPassword.meetingPassword;
+  }
+
   return {
     ok: true,
     modality,
     meetingUrl,
     whatsappGroupUrl: whatsapp.whatsappGroupUrl,
+    meetingPassword,
     confirmationEmailHtml: normalizeConfirmationEmailHtml(
       body.confirmation_email_html,
     ),
@@ -115,6 +149,7 @@ type PatchAccessUpdates = {
   modality?: EventModality;
   meetingUrl?: string | null;
   whatsappGroupUrl?: string | null;
+  meetingPassword?: string | null;
   confirmationEmailHtml?: string | null;
 };
 
@@ -124,6 +159,7 @@ export function resolvePatchModality(opts: {
     modality?: string | null;
     meetingUrl?: string | null;
     whatsappGroupUrl?: string | null;
+    meetingPassword?: string | null;
     confirmationEmailHtml?: string | null;
   };
 }): { ok: true; updates: PatchAccessUpdates } | { ok: false; error: string } {
@@ -134,11 +170,15 @@ export function resolvePatchModality(opts: {
     body,
     "whatsapp_group_url",
   );
+  const hasPassword = Object.prototype.hasOwnProperty.call(
+    body,
+    "meeting_password",
+  );
   const hasHtml = Object.prototype.hasOwnProperty.call(
     body,
     "confirmation_email_html",
   );
-  if (!hasModality && !hasUrl && !hasWhatsapp && !hasHtml) {
+  if (!hasModality && !hasUrl && !hasWhatsapp && !hasPassword && !hasHtml) {
     return { ok: true, updates: {} };
   }
 
@@ -168,6 +208,9 @@ export function resolvePatchModality(opts: {
       if (existing.whatsappGroupUrl) {
         updates.whatsappGroupUrl = null;
       }
+    }
+    if (existing.meetingPassword) {
+      updates.meetingPassword = null;
     }
     if (hasHtml) {
       const nextHtml = normalizeConfirmationEmailHtml(
@@ -211,6 +254,14 @@ export function resolvePatchModality(opts: {
     }
   }
 
+  if (hasPassword) {
+    const parsedPassword = parseMeetingPassword(body.meeting_password);
+    if (!parsedPassword.ok) return parsedPassword;
+    if (parsedPassword.meetingPassword !== (existing.meetingPassword ?? null)) {
+      updates.meetingPassword = parsedPassword.meetingPassword;
+    }
+  }
+
   if (hasHtml) {
     const nextHtml = normalizeConfirmationEmailHtml(
       body.confirmation_email_html,
@@ -228,14 +279,19 @@ export function toPublicEvent<
   T extends {
     meetingUrl?: string | null;
     whatsappGroupUrl?: string | null;
+    meetingPassword?: string | null;
     confirmationEmailHtml?: string | null;
   },
 >(
   event: T,
-): Omit<T, "meetingUrl" | "whatsappGroupUrl" | "confirmationEmailHtml"> {
+): Omit<
+  T,
+  "meetingUrl" | "whatsappGroupUrl" | "meetingPassword" | "confirmationEmailHtml"
+> {
   const {
     meetingUrl: _meetingUrl,
     whatsappGroupUrl: _whatsappGroupUrl,
+    meetingPassword: _meetingPassword,
     confirmationEmailHtml: _confirmationEmailHtml,
     ...rest
   } = event;

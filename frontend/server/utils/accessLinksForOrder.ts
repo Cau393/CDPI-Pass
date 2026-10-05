@@ -9,6 +9,7 @@ export function isPaidLikeOrderStatus(
 export type OrderAccessLinks = {
   meetingUrl: string | null;
   whatsappGroupUrl: string | null;
+  meetingPassword: string | null;
 };
 
 /**
@@ -22,6 +23,7 @@ export function accessLinksForOrder(opts: {
         modality?: string | null;
         meetingUrl?: string | null;
         whatsappGroupUrl?: string | null;
+        meetingPassword?: string | null;
       }
     | null
     | undefined;
@@ -31,12 +33,14 @@ export function accessLinksForOrder(opts: {
   return {
     meetingUrl: opts.event.meetingUrl ?? null,
     whatsappGroupUrl: opts.event.whatsappGroupUrl ?? null,
+    meetingPassword: opts.event.meetingPassword ?? null,
   };
 }
 
 type EventSecrets = {
   meetingUrl?: string | null;
   whatsappGroupUrl?: string | null;
+  meetingPassword?: string | null;
   confirmationEmailHtml?: string | null;
 };
 
@@ -51,6 +55,7 @@ export function withOrderAccessLinks<
   const {
     meetingUrl: _meetingUrl,
     whatsappGroupUrl: _whatsappGroupUrl,
+    meetingPassword: _meetingPassword,
     confirmationEmailHtml: _confirmationEmailHtml,
     ...publicEvent
   } = order.event;
@@ -67,6 +72,7 @@ export function withOrderAccessLinks<
       ...publicEvent,
       meetingUrl: links.meetingUrl,
       whatsappGroupUrl: links.whatsappGroupUrl,
+      meetingPassword: links.meetingPassword,
     } as T["event"],
   };
 }

@@ -49,6 +49,7 @@ import {
   parseApiErrorMessage,
   type EditEventFormValues,
 } from "@/lib/eventForm";
+import { interestAreasMultipartValue } from "@shared/interestAreas";
 import type { Event } from "@shared/schema";
 import {
   normalizeDescriptionForEditor,
@@ -73,6 +74,9 @@ function buildPatchFormData(
   if (dirty.meetingUrl || dirty.modality) {
     fd.append("meeting_url", values.meetingUrl?.trim() ?? "");
   }
+  if (dirty.meetingPassword || dirty.modality) {
+    fd.append("meeting_password", values.meetingPassword?.trim() ?? "");
+  }
   if (dirty.whatsappGroupUrl || dirty.modality) {
     fd.append("whatsapp_group_url", values.whatsappGroupUrl?.trim() ?? "");
   }
@@ -85,6 +89,10 @@ function buildPatchFormData(
   if (dirty.courtesyLimit) {
     fd.append("courtesy_limit", values.courtesyLimit?.trim() ?? "");
   }
+  fd.append(
+    "interest_areas",
+    interestAreasMultipartValue(values.interestAreas),
+  );
   if (dirty.coverImage && values.coverImage?.[0]) {
     fd.append("coverImage", values.coverImage[0]);
   }
@@ -158,6 +166,10 @@ export default function AdminEditEventPage() {
       // being valid or dirty.
       const fd = new FormData();
       fd.append("sales_closed", String(salesClosed));
+      fd.append(
+        "interest_areas",
+        interestAreasMultipartValue(event?.interestAreas),
+      );
       const res = await apiRequest("PATCH", `/api/admin/events/${id}`, fd);
       return res.json() as Promise<Event>;
     },
@@ -192,9 +204,11 @@ export default function AdminEditEventPage() {
       isFree: false,
       modality: "presencial",
       meetingUrl: "",
+      meetingPassword: "",
       whatsappGroupUrl: "",
       confirmationEmailHtml: "",
       courtesyLimit: "",
+      interestAreas: [],
     },
   });
 
@@ -213,10 +227,12 @@ export default function AdminEditEventPage() {
       isFree: event.isFree ?? false,
       modality: event.modality ?? "presencial",
       meetingUrl: event.meetingUrl ?? "",
+      meetingPassword: event.meetingPassword ?? "",
       whatsappGroupUrl: event.whatsappGroupUrl ?? "",
       confirmationEmailHtml: event.confirmationEmailHtml ?? "",
       courtesyLimit:
         event.courtesyLimit == null ? "" : String(event.courtesyLimit),
+      interestAreas: event.interestAreas ?? [],
     });
   }, [event, form]);
 
@@ -246,9 +262,11 @@ export default function AdminEditEventPage() {
       dirty.isFree ||
       dirty.modality ||
       dirty.meetingUrl ||
+      dirty.meetingPassword ||
       dirty.whatsappGroupUrl ||
       dirty.confirmationEmailHtml ||
-      dirty.courtesyLimit;
+      dirty.courtesyLimit ||
+      dirty.interestAreas;
 
     if (!hasTextDirty && !hasNewCover) {
       toast({
@@ -277,10 +295,12 @@ export default function AdminEditEventPage() {
         isFree: updated.isFree ?? false,
         modality: updated.modality ?? "presencial",
         meetingUrl: updated.meetingUrl ?? "",
+        meetingPassword: updated.meetingPassword ?? "",
         whatsappGroupUrl: updated.whatsappGroupUrl ?? "",
         confirmationEmailHtml: updated.confirmationEmailHtml ?? "",
         courtesyLimit:
           updated.courtesyLimit == null ? "" : String(updated.courtesyLimit),
+        interestAreas: updated.interestAreas ?? [],
         coverImage: undefined,
       });
       if (fileInputRef.current) fileInputRef.current.value = "";

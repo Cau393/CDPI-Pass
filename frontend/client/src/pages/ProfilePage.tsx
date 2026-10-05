@@ -559,6 +559,19 @@ const handleCancelOrder = (orderId: string) => {
                                         </a>
                                       </Button>
                                     ) : null}
+                                    {order.event?.meetingPassword ? (
+                                      <div
+                                        className="w-full rounded-md border border-[#0F4C75] bg-[#BBE1FA] px-3 py-2"
+                                        data-testid={`text-meeting-password-${order.id}`}
+                                      >
+                                        <p className="text-xs font-medium text-[#0F4C75]">
+                                          Senha para a Reunião
+                                        </p>
+                                        <p className="select-all font-mono text-lg font-bold text-[#0F4C75]">
+                                          {order.event.meetingPassword}
+                                        </p>
+                                      </div>
+                                    ) : null}
                                   </div>
                                 ) : order.status === "pending" && order.asaasPaymentId ? (
                                   <div className="flex gap-2">

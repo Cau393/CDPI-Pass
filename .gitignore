@@ -4,3 +4,5 @@ IMAGE_DIMENSIONS.md
 frontend/.rtk
 frontend/CLAUDE.md
 frontend/.dockerignore
+.gitignore
+Documentation/

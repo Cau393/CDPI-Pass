@@ -255,6 +255,71 @@ describe("ProfilePage — online access buttons", () => {
     expect(screen.queryByTestId("button-whatsapp-on3")).not.toBeInTheDocument();
   });
 
+  it("shows the meeting password for a confirmed online order", async () => {
+    stubOrders([
+      {
+        id: "on-pw",
+        status: "paid",
+        paymentMethod: "pix",
+        amount: "100.00",
+        createdAt: "2026-09-01T12:00:00.000Z",
+        qrCodeData: null,
+        event: onlineEvent({
+          meetingUrl: MEETING_URL,
+          meetingPassword: "Zoom#2026",
+        }),
+      },
+    ]);
+    renderPage();
+
+    expect(await screen.findByText("Senha para a Reunião")).toBeInTheDocument();
+    expect(screen.getByText("Zoom#2026")).toBeInTheDocument();
+  });
+
+  it("hides the meeting password while an online order is pending", async () => {
+    stubOrders([
+      {
+        id: "on-pending-pw",
+        status: "pending",
+        paymentMethod: "pix",
+        amount: "100.00",
+        createdAt: "2026-09-01T12:00:00.000Z",
+        asaasPaymentId: "pay_pending_pw",
+        qrCodeData: null,
+        event: onlineEvent({
+          meetingUrl: MEETING_URL,
+          meetingPassword: "Zoom#2026",
+        }),
+      },
+    ]);
+    renderPage();
+
+    expect(await screen.findByTestId("text-order-price-on-pending-pw")).toBeInTheDocument();
+    expect(screen.queryByText("Senha para a Reunião")).not.toBeInTheDocument();
+    expect(screen.queryByText("Zoom#2026")).not.toBeInTheDocument();
+  });
+
+  it("does not show the password label when the order has no password", async () => {
+    stubOrders([
+      {
+        id: "on-nopw",
+        status: "courtesy",
+        paymentMethod: "courtesy",
+        amount: "0.00",
+        createdAt: "2026-09-01T12:00:00.000Z",
+        qrCodeData: null,
+        event: onlineEvent({
+          meetingUrl: MEETING_URL,
+          meetingPassword: null,
+        }),
+      },
+    ]);
+    renderPage();
+
+    expect(await screen.findByTestId("button-meeting-on-nopw")).toBeInTheDocument();
+    expect(screen.queryByText("Senha para a Reunião")).not.toBeInTheDocument();
+  });
+
   it("still shows the presencial QR actions for a confirmed in-person ticket", async () => {
     renderPage();
 

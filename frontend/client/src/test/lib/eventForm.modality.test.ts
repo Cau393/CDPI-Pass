@@ -88,6 +88,54 @@ describe("editEventSchema — modality", () => {
     expect(editEventSchema.safeParse({ ...base, courtesyLimit: "1,5" }).success).toBe(false);
   });
 
+  it("accepts an online event with an empty meeting password", () => {
+    const result = editEventSchema.safeParse({
+      ...base,
+      modality: "online",
+      meetingUrl: "https://zoom.us/j/123",
+      meetingPassword: "   ",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toHaveProperty("meetingPassword");
+      expect(result.data.meetingPassword.trim()).toBe("");
+    }
+  });
+
+  it("rejects a meeting password longer than 100 characters", () => {
+    const tooLong = editEventSchema.safeParse({
+      ...base,
+      modality: "online",
+      meetingUrl: "https://zoom.us/j/123",
+      meetingPassword: "x".repeat(101),
+    });
+    expect(tooLong.success).toBe(false);
+    if (!tooLong.success) {
+      expect(
+        tooLong.error.issues.some((issue) => issue.path.includes("meetingPassword")),
+      ).toBe(true);
+    }
+
+    const maxLength = editEventSchema.safeParse({
+      ...base,
+      modality: "online",
+      meetingUrl: "https://zoom.us/j/123",
+      meetingPassword: ` ${"x".repeat(100)} `,
+    });
+    expect(maxLength.success).toBe(true);
+  });
+
+  it("does not require a meeting password for a presencial event", () => {
+    const result = editEventSchema.safeParse({
+      ...base,
+      meetingPassword: "",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toHaveProperty("meetingPassword");
+    }
+  });
+
   it("accepts an online event with a WhatsApp group URL", () => {
     const result = editEventSchema.safeParse({
       ...base,

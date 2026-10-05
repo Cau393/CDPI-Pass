@@ -173,6 +173,7 @@ ${EMAIL_CONTACT_LINE}`;
       eventTitle: data.eventTitle,
       eventDate: data.eventDate,
       meetingUrl: data.meetingUrl,
+      meetingPassword: data.meetingPassword,
       attendeeName: data.userName,
       attendeeEmail: email,
       orderId: data.orderId,

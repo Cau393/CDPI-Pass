@@ -28,7 +28,9 @@ const mockEvent: Event = {
   salesClosed: false,
   modality: "presencial" as const,
   meetingUrl: null,
+  meetingPassword: null,
   whatsappGroupUrl: null,
+  interestAreas: [],
   confirmationEmailHtml: null,
   courtesyLimit: null,
 };

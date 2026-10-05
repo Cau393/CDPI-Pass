@@ -31,6 +31,7 @@ import {
   parseApiErrorMessage,
   type CreateEventFormValues,
 } from "@/lib/eventForm";
+import { interestAreasMultipartValue } from "@shared/interestAreas";
 import type { Event } from "@shared/schema";
 import { sanitizeEventDescriptionHtml } from "@/lib/eventDescriptionHtml";
 
@@ -56,9 +57,11 @@ export default function AdminCreateEventPage({
       isFree: false,
       modality: "presencial",
       meetingUrl: "",
+      meetingPassword: "",
       whatsappGroupUrl: "",
       confirmationEmailHtml: "",
       courtesyLimit: "",
+      interestAreas: [],
     },
   });
 
@@ -87,6 +90,9 @@ export default function AdminCreateEventPage({
     if (values.meetingUrl?.trim()) {
       formData.append("meeting_url", values.meetingUrl.trim());
     }
+    if (values.modality === "online" && values.meetingPassword?.trim()) {
+      formData.append("meeting_password", values.meetingPassword.trim());
+    }
     if (values.whatsappGroupUrl?.trim()) {
       formData.append("whatsapp_group_url", values.whatsappGroupUrl.trim());
     }
@@ -97,6 +103,10 @@ export default function AdminCreateEventPage({
     if (values.courtesyLimit?.trim()) {
       formData.append("courtesy_limit", values.courtesyLimit.trim());
     }
+    formData.append(
+      "interest_areas",
+      interestAreasMultipartValue(values.interestAreas),
+    );
     if (values.coverImage?.[0]) {
       formData.append("coverImage", values.coverImage[0]);
     }

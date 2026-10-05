@@ -103,6 +103,12 @@ export const events = pgTable("events", {
    */
   meetingUrl: varchar("meeting_url", { length: 500 }),
   /**
+   * Optional meeting password for online events. Secret on public event APIs;
+   * sent in the confirmation e-mail and shown on Meus Ingressos after
+   * confirmation. Null when presencial, unset, or blank. Not required online.
+   */
+  meetingPassword: varchar("meeting_password", { length: 100 }),
+  /**
    * Optional WhatsApp group invite URL for online events. Secret on public
    * event APIs; confirmed attendees only. Null when presencial or unset.
    */
@@ -118,6 +124,14 @@ export const events = pgTable("events", {
    * courtesy link is deactivated until the cap is raised or cleared.
    */
   courtesyLimit: integer("courtesy_limit"),
+  /**
+   * Optional closed list of "Área de Interesse" labels, in insertion order.
+   * Empty means inscription does not ask. Not users.area_of_activity.
+   */
+  interestAreas: text("interest_areas")
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
 });
 
 /** NPS responses for "Evento CDPI" certificate flow. */
@@ -228,6 +242,12 @@ export const orders = pgTable("orders", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
   qr_code_s3_url: varchar("qr_code_s3_url", { length: 500 }),
+  /**
+   * Snapshot of the event interest-area label chosen at order creation.
+   * Null when the event list was empty. Not a foreign key: later edits to
+   * events.interest_areas do not change this value.
+   */
+  interestArea: varchar("interest_area", { length: 255 }),
 });
 
 // Email queue table for async processing
@@ -560,7 +580,7 @@ export const courtesyRedemptionSchema = z.object({
   email: accountEmailSchema,
   emailConfirm: accountEmailSchema,
   cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
-  partnerCompany: z.string().min(2, "Empresa parceira é obrigatória"),
+  partnerCompany: z.string().min(2, "Empresa que atua é obrigatória"),
   occupation: z.string().min(2, "Cargo é obrigatório"),
   birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
   address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),

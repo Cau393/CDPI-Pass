@@ -19,17 +19,17 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 ## Events (public)
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| GET | `/api/events` | 🔓 | List active events (`meeting_url`, `whatsapp_group_url`, `confirmation_email_html` omitted) |
+| GET | `/api/events` | 🔓 | List active events (`meeting_url`, `meeting_password`, `whatsapp_group_url`, `confirmation_email_html` omitted) |
 | GET | `/api/events/:id` | 🔓 | Event details (same secrets omitted) |
-| POST | `/api/events/:id/subscribe` | 🔑 | Free inscription (no Asaas). QR if presencial; meeting-link e-mail if online. Response includes `whatsappGroupUrl` (string or null) so the client can open the group tab |
+| POST | `/api/events/:id/subscribe` | 🔑 | Free inscription (no Asaas). QR if presencial; meeting-link e-mail if online. Response includes `whatsappGroupUrl` (string or null) so the client can open the group tab. Does not include the meeting URL or meeting password |
 
 ## Admin: events
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/api/admin/events` | 👑 | List all events (incl. inactive) |
-| POST | `/api/admin/events` | 👑 | Create event (multipart, image upload → S3). Fields include `modality` (`presencial`\|`online`), `meeting_url` (required when online), optional `whatsapp_group_url` (online only), optional `confirmation_email_html` (TipTap; empty = default confirmation e-mail), optional `courtesy_limit` (integer ≥ 1; omit or blank = no cap) |
-| GET | `/api/admin/events/:eventId` | 👑 | Event detail (admin view; includes `meetingUrl`, `whatsappGroupUrl`, `confirmationEmailHtml`) |
-| PATCH | `/api/admin/events/:eventId` | 👑 | Update event (same `modality` / `meeting_url` / `whatsapp_group_url` rules; presencial clears meeting + WhatsApp URLs; `confirmation_email_html` optional on any modality). Optional `courtesy_limit`: blank stores NULL. If the saved cap is already ≤ paid courtesy orders, every courtesy link for the event is set inactive. Raising or clearing the cap does not turn links back on |
+| POST | `/api/admin/events` | 👑 | Create event (multipart, image upload → S3). Fields include `modality` (`presencial`\|`online`), `meeting_url` (required when online), optional `meeting_password` (online only; trim; blank stores NULL; max 100; any characters), optional `whatsapp_group_url` (online only), optional `confirmation_email_html` (TipTap; empty = default confirmation e-mail), optional `courtesy_limit` (integer ≥ 1; omit or blank = no cap). Presencial stores `meeting_password` as NULL even if one was sent |
+| GET | `/api/admin/events/:eventId` | 👑 | Event detail (admin view; includes `meetingUrl`, `meetingPassword`, `whatsappGroupUrl`, `confirmationEmailHtml`) |
+| PATCH | `/api/admin/events/:eventId` | 👑 | Update event (same `modality` / `meeting_url` / `meeting_password` / `whatsapp_group_url` rules; presencial clears meeting URL, meeting password, and WhatsApp URL; empty `meeting_password` stores NULL; `confirmation_email_html` optional on any modality). Optional `courtesy_limit`: blank stores NULL. If the saved cap is already ≤ paid courtesy orders, every courtesy link for the event is set inactive. Raising or clearing the cap does not turn links back on |
 | DELETE | `/api/admin/events/:eventId` | 👑 | Delete event |
 | GET | `/api/admin/events/:eventId/participants` | 👑 | Participant list (paid orders joined users). Each row has `hasQrCode` (boolean only; the PNG is not in the list). `?ticketId=<uuid>` returns `{ qrCodeData }` for that paid order on this event when the stored value is a non-empty `data:image/png;base64,` payload; otherwise 404. A non-UUID `ticketId` is 400 |
 | GET | `/api/admin/events/:eventId/commercial-sales` | 👑 | Sales report |
@@ -85,7 +85,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | POST | `/api/orders` | 🔑 | Create order → Asaas payment (PIX/Boleto/Card). QR generated only if the event is presencial |
-| GET | `/api/orders` | ✉️ | My orders. Nested event includes `modality`. `meetingUrl` and `whatsappGroupUrl` only for `paid`/`courtesy` online orders; omitted otherwise. Never includes `confirmationEmailHtml` |
+| GET | `/api/orders` | ✉️ | My orders. Nested event includes `modality`. `meetingUrl`, `meetingPassword`, and `whatsappGroupUrl` only for `paid`/`courtesy` online orders; omitted otherwise. Never includes `confirmationEmailHtml` |
 | GET | `/api/orders/:id` | 🔑 | Order detail |
 | POST | `/api/orders/:id/check-status` | 🔑 | Poll Asaas payment status |
 | DELETE | `/api/orders/:id/cancel` | 🔑 | Cancel own pending order |

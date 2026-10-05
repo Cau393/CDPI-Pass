@@ -216,4 +216,26 @@ describe("finalizeOrderPaidLikeWebhook", () => {
     );
     expect(emailService.sendTicketEmail).not.toHaveBeenCalled();
   });
+
+  it("includes meetingPassword in the online confirmation email when the event has one", async () => {
+    getEvent.mockResolvedValue({
+      id: "evt-1",
+      title: "E",
+      date: new Date(),
+      location: "L",
+      currentAttendees: 1,
+      modality: "online",
+      meetingUrl: "https://zoom.us/j/1",
+      meetingPassword: "segredo",
+    });
+    const o = baseOrder({ qrCodeData: null });
+    await finalizeOrderPaidLikeWebhook(o, { billingType: "CREDIT_CARD" });
+    expect(emailService.sendOnlineEventEmail).toHaveBeenCalledWith(
+      "u@test.com",
+      expect.objectContaining({
+        meetingUrl: "https://zoom.us/j/1",
+        meetingPassword: "segredo",
+      }),
+    );
+  });
 });

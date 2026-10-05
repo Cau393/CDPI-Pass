@@ -112,6 +112,7 @@ export interface IStorage {
     eventId: string;
     linkId: string;
     userId: string;
+    interestArea: string | null;
     attendee: InsertCourtesyAttendee;
   }): Promise<
     | { ok: false }
@@ -319,6 +320,7 @@ export class DatabaseStorage implements IStorage {
         maxUses: orders.maxUses,
         amntUsed: orders.amntUsed,
         qrCodeUsedAt: orders.qrCodeUsedAt,
+        interestArea: orders.interestArea,
         createdAt: orders.createdAt,
         updatedAt: orders.updatedAt,
         event: {
@@ -331,6 +333,7 @@ export class DatabaseStorage implements IStorage {
           imageUrl: events.imageUrl,
           modality: events.modality,
           meetingUrl: events.meetingUrl,
+          meetingPassword: events.meetingPassword,
           whatsappGroupUrl: events.whatsappGroupUrl,
         },
       })
@@ -589,6 +592,7 @@ export class DatabaseStorage implements IStorage {
     eventId: string;
     linkId: string;
     userId: string;
+    interestArea: string | null;
     attendee: InsertCourtesyAttendee;
   }): Promise<
     | { ok: false }
@@ -639,6 +643,7 @@ export class DatabaseStorage implements IStorage {
           status: "paid",
           courtesyLinkId: params.linkId,
           courtesyAttendeeId: attendee.id,
+          interestArea: params.interestArea,
           createdAt: new Date(),
           updatedAt: new Date(),
         })

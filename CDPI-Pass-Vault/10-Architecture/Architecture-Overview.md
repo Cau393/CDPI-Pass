@@ -45,7 +45,7 @@ flowchart LR
 ## Key patterns
 - **DB-backed job queues** everywhere (`email_queue`, `mass_send_jobs`, `reminder_jobs`, `communicate_jobs`, `print_jobs`): status enum `pending|processing|completed|failed`, attempts counter. No Redis in practice.
 - **Webhook-driven payment finalization**: Asaas webhook and `POST /api/orders/:id/check-status` both funnel into `finalizeOrderPaidLikeWebhook`.
-- **Event modality**: `events.modality` (`presencial` default | `online`). Online skips QR, e-mails `meeting_url`, and shows meeting + optional WhatsApp on Meus Ingressos after confirmation (secret: stripped from public GET). [[20-Backend/Event-Modality]].
+- **Event modality**: `events.modality` (`presencial` default | `online`). Online skips QR, e-mails `meeting_url` and an optional `meeting_password`, and shows the meeting link, optional password, and optional WhatsApp on Meus Ingressos after confirmation (secret: stripped from public GET). [[20-Backend/Event-Modality]].
 - **Zod at the edge**: drizzle-zod insert schemas validate request bodies.
 - **Admin gating**: `authenticateToken` + in-handler `isAdmin` check (no dedicated admin middleware).
 - **Placeholders in email templates**: `{nome}`, `{evento}`, `{data}`, `{link}` replaced per recipient.

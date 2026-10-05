@@ -50,6 +50,7 @@ function Harness({
       isFree: false,
       modality: "presencial",
       meetingUrl: "",
+      meetingPassword: "",
       whatsappGroupUrl: "",
       confirmationEmailHtml: "",
       ...defaults,
@@ -194,6 +195,50 @@ describe("EventFormFields — modality selector", () => {
     render(<Harness />);
     await user.click(screen.getByLabelText("Online"));
     expect(screen.getByTestId("input-whatsapp-group-url")).toBeInTheDocument();
+  });
+
+  it("shows Senha para a Reunião under the meeting link when online", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByLabelText("Online"));
+
+    const password = screen.getByLabelText("Senha para a Reunião");
+    const meeting = screen.getByTestId("input-meeting-url");
+    const whatsapp = screen.getByTestId("input-whatsapp-group-url");
+    expect(password).toBeInTheDocument();
+    expect(
+      meeting.compareDocumentPosition(password) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      password.compareDocumentPosition(whatsapp) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/mostrada em Meus Ingressos após a confirmação/i),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the meeting password for presencial events", () => {
+    render(<Harness />);
+    expect(screen.queryByLabelText("Senha para a Reunião")).not.toBeInTheDocument();
+  });
+
+  it("clears the meeting password when switching back to presencial", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        defaults={{
+          modality: "online",
+          meetingUrl: "https://zoom.us/j/123",
+          meetingPassword: "segredo",
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText("Senha para a Reunião")).toHaveValue("segredo");
+    await user.click(screen.getByLabelText("Presencial"));
+    expect(screen.queryByLabelText("Senha para a Reunião")).not.toBeInTheDocument();
+    await user.click(screen.getByLabelText("Online"));
+    expect(screen.getByLabelText("Senha para a Reunião")).toHaveValue("");
   });
 
   it("shows the confirmation email editor for presencial and online events", () => {

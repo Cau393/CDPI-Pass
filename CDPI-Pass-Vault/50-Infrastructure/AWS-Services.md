@@ -8,7 +8,7 @@ Hosts the Dockerized app (PM2 with server + email worker). See [[50-Infrastructu
 ## S3 (`AWS_S3_BUCKET_NAME`)
 Stores:
 - Event images (uploaded on event create/edit)
-- QR code PNGs for tickets (`orders.qr_code_s3_url`)
+- QR code PNGs for tickets (`orders.qr_code_s3_url`; presencial only — online events skip QR)
 - Certificate .docx templates (per event, `events.certificate_template_url`)
 - Generated certificate PDFs (Lambda output)
 

@@ -14,6 +14,7 @@ describe("resolveCreateModality", () => {
       modality: "presencial",
       meetingUrl: null,
       whatsappGroupUrl: null,
+      meetingPassword: null,
       confirmationEmailHtml: null,
     });
   });
@@ -55,8 +56,56 @@ describe("resolveCreateModality", () => {
       modality: "online",
       meetingUrl: "https://zoom.us/j/123",
       whatsappGroupUrl: null,
+      meetingPassword: null,
       confirmationEmailHtml: null,
     });
+  });
+
+  it("stores a trimmed meeting password for an online event", () => {
+    expect(
+      resolveCreateModality({
+        modality: "online",
+        meeting_url: "https://zoom.us/j/123",
+        meeting_password: "  P@ss w/ <ok>  ",
+      }),
+    ).toEqual({
+      ok: true,
+      modality: "online",
+      meetingUrl: "https://zoom.us/j/123",
+      whatsappGroupUrl: null,
+      meetingPassword: "P@ss w/ <ok>",
+      confirmationEmailHtml: null,
+    });
+  });
+
+  it("stores null when the online meeting password is blank", () => {
+    expect(
+      resolveCreateModality({
+        modality: "online",
+        meeting_url: "https://zoom.us/j/123",
+        meeting_password: "   ",
+      }),
+    ).toMatchObject({ ok: true, meetingPassword: null });
+  });
+
+  it("rejects an online meeting password longer than 100 characters", () => {
+    expect(
+      resolveCreateModality({
+        modality: "online",
+        meeting_url: "https://zoom.us/j/123",
+        meeting_password: "a".repeat(101),
+      }),
+    ).toEqual({
+      ok: false,
+      error: "meeting_password must be at most 100 characters",
+    });
+    expect(
+      resolveCreateModality({
+        modality: "online",
+        meeting_url: "https://zoom.us/j/123",
+        meeting_password: "a".repeat(100),
+      }),
+    ).toMatchObject({ ok: true, meetingPassword: "a".repeat(100) });
   });
 
   it("stores a null meeting URL for presencial even if one was sent", () => {
@@ -70,7 +119,21 @@ describe("resolveCreateModality", () => {
       modality: "presencial",
       meetingUrl: null,
       whatsappGroupUrl: null,
+      meetingPassword: null,
       confirmationEmailHtml: null,
+    });
+  });
+
+  it("ignores a meeting password sent for a presencial event", () => {
+    expect(
+      resolveCreateModality({
+        modality: "presencial",
+        meeting_password: "segredo",
+      }),
+    ).toMatchObject({
+      ok: true,
+      modality: "presencial",
+      meetingPassword: null,
     });
   });
 
@@ -87,6 +150,7 @@ describe("resolveCreateModality", () => {
       modality: "online",
       meetingUrl: "https://zoom.us/j/123",
       whatsappGroupUrl: "https://chat.whatsapp.com/AbC",
+      meetingPassword: null,
       confirmationEmailHtml: "<p>Traga o material</p>",
     });
   });
@@ -209,6 +273,60 @@ describe("resolvePatchModality", () => {
     });
   });
 
+  it("updates the meeting password on an online event", () => {
+    expect(
+      resolvePatchModality({
+        body: { meeting_password: "  nova-senha  " },
+        existing: {
+          modality: "online",
+          meetingUrl: "https://zoom.us/j/123",
+          meetingPassword: null,
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      updates: { meetingPassword: "nova-senha" },
+    });
+  });
+
+  it("clears the meeting password when the patch sends a blank value", () => {
+    expect(
+      resolvePatchModality({
+        body: { meeting_password: "   " },
+        existing: {
+          modality: "online",
+          meetingUrl: "https://zoom.us/j/123",
+          meetingPassword: "antiga",
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      updates: { meetingPassword: null },
+    });
+  });
+
+  it("nulls the password along with the meeting and WhatsApp URLs when switching to presencial", () => {
+    expect(
+      resolvePatchModality({
+        body: { modality: "presencial" },
+        existing: {
+          modality: "online",
+          meetingUrl: "https://zoom.us/j/123",
+          whatsappGroupUrl: "https://chat.whatsapp.com/AbC",
+          meetingPassword: "segredo",
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      updates: {
+        modality: "presencial",
+        meetingUrl: null,
+        whatsappGroupUrl: null,
+        meetingPassword: null,
+      },
+    });
+  });
+
   it("stores confirmation HTML on patch", () => {
     expect(
       resolvePatchModality({
@@ -305,6 +423,22 @@ describe("toPublicEvent", () => {
     expect("meetingUrl" in publicEvent).toBe(false);
     expect("whatsappGroupUrl" in publicEvent).toBe(false);
     expect("confirmationEmailHtml" in publicEvent).toBe(false);
+  });
+
+  it("omits meetingPassword from the public payload", () => {
+    const publicEvent = toPublicEvent({
+      id: "e1",
+      title: "Online",
+      modality: "online",
+      meetingUrl: "https://secret.example/meet",
+      meetingPassword: "segredo",
+    });
+    expect(publicEvent).toEqual({
+      id: "e1",
+      title: "Online",
+      modality: "online",
+    });
+    expect("meetingPassword" in publicEvent).toBe(false);
   });
 });
 

@@ -1,4 +1,4 @@
-import type { MutableRefObject } from "react";
+import { useState, type MutableRefObject } from "react";
 import type { FieldValues, Path, UseFormReturn } from "react-hook-form";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -38,6 +38,10 @@ import {
   MINUTE_OPTIONS,
   parseApiLocalDateTime,
 } from "@/lib/eventForm";
+import {
+  INTEREST_AREA_MAX_LABELS,
+  tryAddInterestArea,
+} from "@shared/interestAreas";
 
 type EventFormShape = {
   title: string;
@@ -49,9 +53,11 @@ type EventFormShape = {
   isFree: boolean;
   modality: "presencial" | "online";
   meetingUrl?: string;
+  meetingPassword?: string;
   whatsappGroupUrl?: string;
   confirmationEmailHtml?: string;
   courtesyLimit?: string;
+  interestAreas?: string[];
   coverImage?: FileList;
 };
 
@@ -79,6 +85,33 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
   const isFree = Boolean(form.watch("isFree" as Path<T>));
   const modality = (form.watch("modality" as Path<T>) as string) || "presencial";
   const isOnline = modality === "online";
+  const interestAreas =
+    (form.watch("interestAreas" as Path<T>) as string[] | undefined) ?? [];
+  const [interestDraft, setInterestDraft] = useState("");
+  const [interestError, setInterestError] = useState<string | null>(null);
+  const interestListFull = interestAreas.length >= INTEREST_AREA_MAX_LABELS;
+
+  const addInterestArea = () => {
+    const result = tryAddInterestArea(interestAreas, interestDraft);
+    if (!result.ok) {
+      setInterestError(result.error);
+      return;
+    }
+    form.setValue("interestAreas" as Path<T>, result.value as never, {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setInterestDraft("");
+    setInterestError(null);
+  };
+
+  const removeInterestArea = (index: number) => {
+    form.setValue(
+      "interestAreas" as Path<T>,
+      interestAreas.filter((_, i) => i !== index) as never,
+      { shouldDirty: true, shouldValidate: true },
+    );
+  };
 
   return (
     <>
@@ -276,6 +309,63 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
             </FormItem>
           )}
         />
+        <div className="space-y-2 md:col-span-2">
+          <Label htmlFor="input-interest-area">Área de Interesse</Label>
+          <p className="text-sm text-muted-foreground">
+            Opcional. Se você adicionar opções, o participante terá que escolher uma antes de confirmar.
+          </p>
+          <div className="flex gap-2">
+            <Input
+              id="input-interest-area"
+              value={interestDraft}
+              onChange={(e) => setInterestDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                if (!interestListFull) addInterestArea();
+              }}
+              disabled={interestListFull}
+              autoComplete="off"
+              data-testid="input-interest-area"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              onClick={addInterestArea}
+              disabled={interestListFull}
+              data-testid="button-add-interest-area"
+            >
+              Adicionar
+            </Button>
+          </div>
+          {interestError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {interestError}
+            </p>
+          ) : null}
+          {interestAreas.length > 0 ? (
+            <ul className="space-y-2">
+              {interestAreas.map((label, index) => (
+                <li
+                  key={`${label}-${index}`}
+                  className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+                  data-testid="interest-area-row"
+                >
+                  <span>{label}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Remover ${label}`}
+                    onClick={() => removeInterestArea(index)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
         <FormField
           control={control}
           name={"modality" as Path<T>}
@@ -292,6 +382,10 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
                     field.onChange(value);
                     if (value === "presencial") {
                       form.setValue("meetingUrl" as Path<T>, "" as never, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                      form.setValue("meetingPassword" as Path<T>, "" as never, {
                         shouldDirty: true,
                         shouldValidate: true,
                       });
@@ -370,6 +464,31 @@ export default function EventFormFields<T extends FieldValues & EventFormShape>(
                 <FormDescription>
                   Enviado no e-mail de confirmação e mostrado em Meus Ingressos
                   após a inscrição. Não aparece na página pública do evento.
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={control}
+            name={"meetingPassword" as Path<T>}
+            render={({ field }) => (
+              <FormItem className="md:col-span-2">
+                <FormLabel>Senha para a Reunião</FormLabel>
+                <FormControl>
+                  <Input
+                    type="text"
+                    autoComplete="off"
+                    placeholder="Opcional"
+                    data-testid="input-meeting-password"
+                    {...field}
+                    value={field.value ?? ""}
+                  />
+                </FormControl>
+                <FormDescription>
+                  Opcional. Enviada no e-mail de confirmação e mostrada em Meus
+                  Ingressos após a confirmação. Não aparece na página pública do
+                  evento.
                 </FormDescription>
                 <FormMessage />
               </FormItem>

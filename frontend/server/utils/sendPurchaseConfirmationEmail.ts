@@ -29,6 +29,7 @@ export async function sendPurchaseConfirmationEmail(opts: {
       eventTitle: event.title,
       eventDate: event.date,
       meetingUrl: event.meetingUrl || "",
+      meetingPassword: event.meetingPassword,
       orderId,
       confirmationKind,
       customHtml: event.confirmationEmailHtml,

@@ -15,6 +15,7 @@ export interface CalendarInviteInput {
   eventTitle: string;
   eventDate: Date;
   meetingUrl: string;
+  meetingPassword?: string | null;
   attendeeName: string;
   attendeeEmail: string;
   orderId: string;
@@ -95,7 +96,10 @@ export function buildCalendarInviteIcs(input: CalendarInviteInput): string | nul
 
   const end = new Date(start.getTime() + ONLINE_EVENT_DURATION_MS);
   const stampedAt = input.stampedAt ? new Date(input.stampedAt) : new Date();
-  const description = `${meetingUrl}\nLink da reunião online do CDPI Pass.`;
+  const password = input.meetingPassword?.trim() ?? "";
+  const description = password
+    ? `${meetingUrl}\nLink da reunião online do CDPI Pass.\nSenha para a Reunião: ${password}`
+    : `${meetingUrl}\nLink da reunião online do CDPI Pass.`;
 
   const lines = [
     "BEGIN:VCALENDAR",

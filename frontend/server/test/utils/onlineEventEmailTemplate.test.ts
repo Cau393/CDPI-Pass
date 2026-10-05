@@ -81,6 +81,63 @@ describe("buildOnlineEventEmailHtml", () => {
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("alert(1)");
   });
+
+  it("shows an escaped meeting password under the URL and above the calendar note", () => {
+    const html = buildOnlineEventEmailHtml({
+      ...base,
+      confirmationKind: "paid",
+      meetingPassword: `<script>alert("x")</script>`,
+    });
+    expect(html).toContain("Senha para a Reunião");
+    expect(html).toContain('href="https://zoom.us/j/123456"');
+    expect(html).toContain("https://zoom.us/j/123456");
+    const visibleUrlAt = html.lastIndexOf("https://zoom.us/j/123456");
+    const passwordAt = html.indexOf("Senha para a Reunião");
+    const icsAt = html.indexOf("invite.ics");
+    expect(passwordAt).toBeGreaterThan(visibleUrlAt);
+    expect(icsAt).toBeGreaterThan(passwordAt);
+
+    const passwordBlock = html.slice(passwordAt, icsAt);
+    expect(passwordBlock).toContain("font-size: 18px");
+    expect(passwordBlock).toContain("monospace");
+    expect(passwordBlock).toContain("font-weight: bold");
+    expect(passwordBlock).toMatch(/#0F4C75|#BBE1FA/);
+    expect(passwordBlock).toContain(
+      "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;",
+    );
+    expect(passwordBlock).not.toContain("<script>");
+  });
+
+  it.each(["paid", "free", "courtesy"] as const)(
+    "keeps the %s confirmation line when a password is present",
+    (confirmationKind) => {
+      const lines = {
+        paid: "Seu pagamento foi confirmado!",
+        free: "Sua inscrição está confirmada!",
+        courtesy: "Sua presença foi confirmada!",
+      };
+      expect(
+        buildOnlineEventEmailHtml({
+          ...base,
+          confirmationKind,
+          meetingPassword: "sala-42",
+        }),
+      ).toContain(lines[confirmationKind]);
+    },
+  );
+
+  it.each([undefined, null, "", "   "] as const)(
+    "omits the password label when the password is %j",
+    (meetingPassword) => {
+      const html = buildOnlineEventEmailHtml({
+        ...base,
+        confirmationKind: "paid",
+        meetingPassword,
+      });
+      expect(html).not.toContain("Senha para a Reunião");
+      expect(html).toContain('href="https://zoom.us/j/123456"');
+    },
+  );
 });
 
 describe("buildOnlineEventEmailText", () => {
@@ -110,5 +167,31 @@ describe("buildOnlineEventEmailText", () => {
     expect(
       buildOnlineEventEmailText({ ...base, confirmationKind: "paid" }).toLowerCase(),
     ).not.toContain("qr");
+  });
+
+  it("includes a dedicated meeting-password line", () => {
+    const text = buildOnlineEventEmailText({
+      ...base,
+      confirmationKind: "paid",
+      meetingPassword: "sala-42",
+    });
+    expect(text).toContain("https://zoom.us/j/123456");
+    expect(text).toContain("Senha para a Reunião: sala-42");
+    expect(text.indexOf("Link da reunião:")).toBeLessThan(
+      text.indexOf("Senha para a Reunião:"),
+    );
+    expect(text.indexOf("Senha para a Reunião:")).toBeLessThan(
+      text.indexOf("invite.ics"),
+    );
+  });
+
+  it("omits the password line when the password is blank", () => {
+    const text = buildOnlineEventEmailText({
+      ...base,
+      confirmationKind: "courtesy",
+      meetingPassword: "   ",
+    });
+    expect(text).not.toContain("Senha para a Reunião");
+    expect(text).toContain("Sua presença foi confirmada!");
   });
 });

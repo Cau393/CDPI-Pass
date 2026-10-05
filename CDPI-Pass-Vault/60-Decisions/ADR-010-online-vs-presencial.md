@@ -21,4 +21,5 @@ Events were always treated as in-person: every confirmed purchase generated a QR
 - Admin create/edit forms gain a Presencial/Online selector, a conditional meeting URL, optional WhatsApp group URL (online), and optional confirmation-email HTML (all modalities).
 - Confirmation e-mail for online events uses `onlineEventEmailTemplate.ts` instead of the ticket template; optional TipTap HTML injects into both templates.
 - Public surfaces show "Online" / "Evento Online" and never the meeting or WhatsApp URL.
-- Schema: `frontend/sql/event_modality.sql` + `frontend/sql/event_online_access_extras.sql`. Implementation notes: [[20-Backend/Event-Modality]].
+- Schema: `frontend/sql/event_modality.sql` + `frontend/sql/event_online_access_extras.sql` + `frontend/sql/event_meeting_password.sql`. Implementation notes: [[20-Backend/Event-Modality]].
+- Optional `events.meeting_password` (varchar 100, nullable, not required for online). It is a secret: omitted from public event payloads and from the free-subscribe 201 body, and not sent to Make.com. When set, the confirmation e-mail (paid, free, and courtesy) and Meus Ingressos for confirmed holders show **Senha para a Reunião**. Presencial stores NULL and clears any previous password. The calendar invite keeps `LOCATION` as the meeting URL and appends the password to `DESCRIPTION` only when one is present.

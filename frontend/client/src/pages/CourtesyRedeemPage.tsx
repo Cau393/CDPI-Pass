@@ -466,7 +466,7 @@ export default function CourtesyRedeemPage() {
                     name="partnerCompany"
                     render={({ field }) => (
                       <FormItem className="md:col-span-2">
-                        <FormLabel>Empresa Parceira *</FormLabel>
+                        <FormLabel>Empresa que atua *</FormLabel>
                         <FormControl>
                           <Input {...field} data-testid="input-partner-company" />
                         </FormControl>

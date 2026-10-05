@@ -44,6 +44,31 @@ describe("buildCalendarInviteIcs", () => {
     expect(ics).toContain(
       "DESCRIPTION:https://zoom.us/j/123456\\nLink da reunião online do CDPI Pass.",
     );
+    expect(ics).not.toContain("Senha para a Reunião");
+  });
+
+  it("appends an ICS-escaped meeting password to DESCRIPTION and keeps LOCATION as the URL", () => {
+    const ics = unfold(
+      buildCalendarInviteIcs({
+        ...input,
+        meetingPassword: "senha, com; quebra\nlinha",
+      })!,
+    );
+    expect(ics).toContain("LOCATION:https://zoom.us/j/123456");
+    expect(ics).not.toContain("LOCATION:https://zoom.us/j/123456\\nSenha");
+    expect(ics).toContain(
+      "DESCRIPTION:https://zoom.us/j/123456\\nLink da reunião online do CDPI Pass.\\nSenha para a Reunião: senha\\, com\\; quebra\\nlinha",
+    );
+  });
+
+  it("omits the password label from DESCRIPTION when the password is blank", () => {
+    const ics = unfold(
+      buildCalendarInviteIcs({ ...input, meetingPassword: "   " })!,
+    );
+    expect(ics).toContain(
+      "DESCRIPTION:https://zoom.us/j/123456\\nLink da reunião online do CDPI Pass.",
+    );
+    expect(ics).not.toContain("Senha para a Reunião");
   });
 
   it("escapes commas and semicolons in the title", () => {

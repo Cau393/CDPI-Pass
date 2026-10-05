@@ -33,6 +33,20 @@ function refineOnlineMeetingUrl(
   }
 }
 
+function refineMeetingPassword(
+  data: { meetingPassword?: string },
+  ctx: z.RefinementCtx,
+) {
+  const password = (data.meetingPassword ?? "").trim();
+  if (password.length > 100) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["meetingPassword"],
+      message: "A senha pode ter no máximo 100 caracteres",
+    });
+  }
+}
+
 function refineOptionalWhatsappUrl(
   data: { modality: "presencial" | "online"; whatsappGroupUrl?: string },
   ctx: z.RefinementCtx,
@@ -151,9 +165,11 @@ export const createEventSchema = z.object({
   isFree: z.boolean().default(false),
   modality: modalitySchema.default("presencial"),
   meetingUrl: z.string().optional().default(""),
+  meetingPassword: z.string().optional().default(""),
   whatsappGroupUrl: z.string().optional().default(""),
   confirmationEmailHtml: z.string().optional().default(""),
   courtesyLimit: courtesyLimitField,
+  interestAreas: z.array(z.string()).default([]),
   coverImage: z
     .custom<FileList | undefined>((v) => v === undefined || v instanceof FileList)
     .refine(
@@ -173,7 +189,7 @@ export const createEventSchema = z.object({
         (v[0]?.size ?? 0) <= 5 * 1024 * 1024,
       "Image must be smaller than 5MB.",
     ),
-}).superRefine(refineOnlineMeetingUrl).superRefine(refineOptionalWhatsappUrl);
+}).superRefine(refineOnlineMeetingUrl).superRefine(refineOptionalWhatsappUrl).superRefine(refineMeetingPassword);
 
 export const editEventSchema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -196,11 +212,13 @@ export const editEventSchema = z.object({
   isFree: z.boolean().default(false),
   modality: modalitySchema.default("presencial"),
   meetingUrl: z.string().optional().default(""),
+  meetingPassword: z.string().optional().default(""),
   whatsappGroupUrl: z.string().optional().default(""),
   confirmationEmailHtml: z.string().optional().default(""),
   courtesyLimit: courtesyLimitField,
+  interestAreas: z.array(z.string()).default([]),
   coverImage: coverFileListSchema,
-}).superRefine(refineOnlineMeetingUrl).superRefine(refineOptionalWhatsappUrl);
+}).superRefine(refineOnlineMeetingUrl).superRefine(refineOptionalWhatsappUrl).superRefine(refineMeetingPassword);
 
 export type CreateEventFormValues = z.infer<typeof createEventSchema>;
 export type EditEventFormValues = z.infer<typeof editEventSchema>;

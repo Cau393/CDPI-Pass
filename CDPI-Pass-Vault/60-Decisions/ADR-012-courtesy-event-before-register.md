@@ -20,7 +20,7 @@ Closed sales do not disable the courtesy CTA. A full event and an existing paid 
 ## Alternatives considered
 - Keep the login redirect and only change the email button. The guest would still register before seeing the event.
 - Auto-open the attendee form, or auto-POST redeem, after login. The guest would not get a second chance to confirm after creating the account.
-- Collect empresa parceira and cargo on `/register`. Those fields stay on the courtesy form, after the guest has seen the event and chosen to redeem.
+- Collect **Empresa que atua** and cargo on `/register`. Those fields stay on the courtesy form, after the guest has seen the event and chosen to redeem.
 
 ## Consequences
 New links and new mail skip the login wall. Old `/cortesia?code=` links still resolve. The auth allowlist is stricter for `cortesia` than for `promo`: extra query params drop the code, and a bad code rejects the whole return path. Redeem, courtesy limits, mass-send CSV processing, and payments are untouched.

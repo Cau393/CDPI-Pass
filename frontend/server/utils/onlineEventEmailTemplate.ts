@@ -16,6 +16,7 @@ export interface OnlineEventEmailData {
   eventTitle: string;
   eventDate: Date;
   meetingUrl: string;
+  meetingPassword?: string | null;
   orderId: string;
   confirmationKind: TicketConfirmationKind;
   customHtml?: string | null;
@@ -38,6 +39,23 @@ function formatEventDate(date: Date): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function meetingPasswordHtml(password: string | null | undefined): string {
+  const trimmed = password?.trim() ?? "";
+  if (!trimmed) return "";
+  const safe = escapeHtml(trimmed);
+  return `
+              <div style="background: #BBE1FA; border: 2px solid #0F4C75; border-radius: 8px; padding: 12px 16px; margin: 12px auto; display: inline-block; text-align: center;">
+                <p style="margin: 0 0 6px; font-size: 13px; color: #0F4C75;"><strong>Senha para a Reunião</strong></p>
+                <p style="margin: 0; font-size: 18px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: bold; color: #0F4C75;">${safe}</p>
+              </div>`;
+}
+
+function meetingPasswordText(password: string | null | undefined): string {
+  const trimmed = password?.trim() ?? "";
+  if (!trimmed) return "";
+  return `\n      Senha para a Reunião: ${trimmed}\n`;
 }
 
 function escapeHtml(value: string): string {
@@ -116,6 +134,7 @@ export function buildOnlineEventEmailHtml(data: OnlineEventEmailData): string {
               <p style="font-size: 12px; color: #666; word-break: break-all;">
                 ${safeUrl}
               </p>
+              ${meetingPasswordHtml(data.meetingPassword)}
               <p style="font-size: 13px; color: #333;">
                 Um convite de calendário (invite.ics) está anexado a este e-mail. Abra o anexo para adicionar o evento à sua agenda.
               </p>
@@ -159,7 +178,7 @@ ${customText}
       Pedido: #${data.orderId}
 
       Link da reunião: ${data.meetingUrl}
-
+${meetingPasswordText(data.meetingPassword)}
       Um convite de calendário (invite.ics) está anexado a este e-mail. Abra o anexo para adicionar o evento à sua agenda.
 
       Instruções Importantes:
