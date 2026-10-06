@@ -9,6 +9,7 @@ import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Ticket, CheckCircle, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -67,7 +68,9 @@ export default function CourtesyRedeemPage() {
       name: "",
       email: "",
       emailConfirm: "",
+      isForeigner: false,
       cpf: "",
+      foreignDocument: "",
       partnerCompany: "",
       occupation: "",
       birthDate: "",
@@ -82,7 +85,12 @@ export default function CourtesyRedeemPage() {
       form.setValue("email", user.email);
       form.setValue("emailConfirm", user.email);
       if (user.name) form.setValue("name", user.name);
-      if (user.cpf) form.setValue("cpf", user.cpf);
+      if (user.isForeigner) {
+        form.setValue("isForeigner", true);
+        if (user.foreignDocument) form.setValue("foreignDocument", user.foreignDocument);
+      } else if (user.cpf) {
+        form.setValue("cpf", user.cpf);
+      }
       if (user.phone) form.setValue("phone", user.phone);
       if (user.address) form.setValue("address", user.address);
       if (user.birthDate) {
@@ -366,6 +374,27 @@ export default function CourtesyRedeemPage() {
           <CardContent>
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                <FormField
+                  control={form.control}
+                  name="isForeigner"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center space-x-2 space-y-0">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value === true}
+                          onCheckedChange={(checked) => {
+                            const next = checked === true;
+                            field.onChange(next);
+                            if (next) form.setValue("cpf", "");
+                            else form.setValue("foreignDocument", "");
+                          }}
+                          data-testid="checkbox-foreigner"
+                        />
+                      </FormControl>
+                      <FormLabel className="font-normal">Sou estrangeiro e não possuo CPF</FormLabel>
+                    </FormItem>
+                  )}
+                />
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
@@ -381,6 +410,31 @@ export default function CourtesyRedeemPage() {
                     )}
                   />
 
+                  {form.watch("isForeigner") === true ? (
+                  <FormField
+                    control={form.control}
+                    name="foreignDocument"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Passaporte ou documento estrangeiro *</FormLabel>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            value={field.value ?? ""}
+                            onChange={(e) =>
+                              field.onChange(
+                                e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 32),
+                              )
+                            }
+                            maxLength={32}
+                            data-testid="input-foreign-document"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  ) : (
                   <FormField
                     control={form.control}
                     name="cpf"
@@ -399,6 +453,7 @@ export default function CourtesyRedeemPage() {
                       </FormItem>
                     )}
                   />
+                  )}
 
                   <FormField
                     control={form.control}

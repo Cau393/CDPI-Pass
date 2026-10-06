@@ -10,12 +10,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { accountEmailSchema, insertUserSchema, type InsertUser } from "@shared/schema";
+import { accountEmailSchema, insertUserObjectSchema, refineAccountDocument } from "@shared/schema";
 import { z } from "zod";
 import { useState, useMemo } from "react";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 
-const registerFormSchema = insertUserSchema.extend({
+const registerFormSchema = insertUserObjectSchema.extend({
   birthDate: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, "Data deve estar no formato dd/mm/aaaa"),
   emailConfirm: accountEmailSchema,
   passwordConfirm: z.string().min(6, "Confirmação de senha é obrigatória"),
@@ -26,7 +26,7 @@ const registerFormSchema = insertUserSchema.extend({
 }).refine((data) => data.password === data.passwordConfirm, {
   message: "As senhas não coincidem",
   path: ["passwordConfirm"],
-});
+}).superRefine(refineAccountDocument);
 
 type RegisterFormData = z.infer<typeof registerFormSchema>;
 
@@ -42,7 +42,9 @@ export default function RegisterPage() {
     resolver: zodResolver(registerFormSchema),
     defaultValues: {
       name: "",
+      isForeigner: false,
       cpf: "",
+      foreignDocument: "",
       birthDate: "",
       email: "",
       emailConfirm: "",
@@ -90,6 +92,8 @@ export default function RegisterPage() {
     registerMutation.mutate(data);
   };
 
+  const isForeigner = form.watch("isForeigner") === true;
+
   // Auto-format CPF
   const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.replace(/\D/g, '');
@@ -133,6 +137,51 @@ export default function RegisterPage() {
                 )}
               </div>
 
+              <div className="flex items-start space-x-2">
+                <Checkbox
+                  id="isForeigner"
+                  checked={isForeigner}
+                  onCheckedChange={(checked) => {
+                    const next = checked === true;
+                    form.setValue("isForeigner", next, { shouldValidate: true });
+                    if (next) {
+                      form.setValue("cpf", "");
+                    } else {
+                      form.setValue("foreignDocument", "");
+                    }
+                  }}
+                  data-testid="checkbox-foreigner"
+                />
+                <Label htmlFor="isForeigner" className="text-sm text-gray-700">
+                  Sou estrangeiro e não possuo CPF
+                </Label>
+              </div>
+
+              {isForeigner ? (
+              <div>
+                <Label htmlFor="foreignDocument" className="block text-sm font-medium text-gray-700 mb-2">
+                  Passaporte ou documento estrangeiro
+                </Label>
+                <Input
+                  id="foreignDocument"
+                  type="text"
+                  placeholder="AB1234567"
+                  {...form.register("foreignDocument")}
+                  onChange={(e) => {
+                    const value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 32);
+                    form.setValue("foreignDocument", value, { shouldValidate: true });
+                  }}
+                  maxLength={32}
+                  className="w-full"
+                  data-testid="input-foreign-document"
+                />
+                {form.formState.errors.foreignDocument && (
+                  <p className="text-red-600 text-sm mt-1" data-testid="text-foreign-document-error">
+                    {form.formState.errors.foreignDocument.message}
+                  </p>
+                )}
+              </div>
+              ) : (
               <div>
                 <Label htmlFor="cpf" className="block text-sm font-medium text-gray-700 mb-2">
                   CPF
@@ -153,6 +202,7 @@ export default function RegisterPage() {
                   </p>
                 )}
               </div>
+              )}
 
               <div>
                 <Label htmlFor="birthDate" className="block text-sm font-medium text-gray-700 mb-2">

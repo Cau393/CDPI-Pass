@@ -17,7 +17,7 @@
 | `/` | HomePage |
 | `/eventos` | EventsPage |
 | `/event/:id` | EventDetailsPage (`?promo=` checkout, `?cortesia=` free redeem) |
-| `/login`, `/register` | Login / Register. Register requires **Cargo que ocupa**, **Empresa que trabalha**, and **Área de Atuação** (after Endereço Completo, before Senha). Empty submit shows those field errors. Labels have no asterisk |
+| `/login`, `/register` | Login / Register. Register requires **Cargo que ocupa**, **Empresa que trabalha**, and **Área de Atuação** (after Endereço Completo, before Senha). Empty submit shows those field errors. Labels have no asterisk. Checkbox **Sou estrangeiro e não possuo CPF** hides CPF and asks for a passport; email stays required and unique. The same checkbox is on courtesy redeem. Profile shows the passport read-only for foreign accounts. Paid checkout for a foreigner offers only an international card (no PIX, boleto, or parcelamento) |
 | `/forgot-password`, `/reset-password` | Password recovery |
 | `/verify-email` | VerifyCodePage (6-digit code) |
 | `/cortesia` | CourtesyRedeemPage (manual code, or the attendee form after the guest chooses to redeem) |

@@ -57,6 +57,41 @@ describe("insertUserSchema registration", () => {
     expect(parsed.email).toBe("user@example.com");
   });
 
+  it("accepts a foreigner with a passport and no CPF", () => {
+    const { cpf: _cpf, ...withoutCpf } = validUser;
+    const parsed = insertUserSchema.parse({
+      ...withoutCpf,
+      isForeigner: true,
+      foreignDocument: "ab-12345",
+    });
+    expect(parsed.isForeigner).toBe(true);
+    expect(parsed.foreignDocument).toBe("ab-12345");
+  });
+
+  it("rejects a foreigner without a passport", () => {
+    const { cpf: _cpf, ...withoutCpf } = validUser;
+    const result = insertUserSchema.safeParse({
+      ...withoutCpf,
+      isForeigner: true,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects CPF and passport together", () => {
+    const result = insertUserSchema.safeParse({
+      ...validUser,
+      isForeigner: true,
+      foreignDocument: "AB12345",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a Brazilian registration without CPF", () => {
+    const { cpf: _cpf, ...withoutCpf } = validUser;
+    expect(insertUserSchema.safeParse(withoutCpf).success).toBe(false);
+    expect(insertUserSchema.safeParse({ ...withoutCpf, isForeigner: false }).success).toBe(false);
+  });
+
   it("rejects an invalid email with Email inválido", () => {
     const result = insertUserSchema.safeParse({
       ...validUser,
@@ -100,6 +135,24 @@ describe("courtesyRedemptionSchema email confirm", () => {
     });
     expect(parsed.email).toBe("user@example.com");
     expect(parsed.emailConfirm).toBe("user@example.com");
+  });
+
+  it("accepts a foreigner passport and no CPF", () => {
+    const { cpf: _cpf, ...withoutCpf } = validCourtesy;
+    const parsed = courtesyRedemptionSchema.parse({
+      ...withoutCpf,
+      isForeigner: true,
+      foreignDocument: "XY998877",
+    });
+    expect(parsed.isForeigner).toBe(true);
+    expect(parsed.foreignDocument).toBe("XY998877");
+  });
+
+  it("rejects a foreigner courtesy redemption without a passport", () => {
+    const { cpf: _cpf, ...withoutCpf } = validCourtesy;
+    expect(
+      courtesyRedemptionSchema.safeParse({ ...withoutCpf, isForeigner: true }).success,
+    ).toBe(false);
   });
 
   it("rejects a confirmation that is a different mailbox", () => {

@@ -138,6 +138,11 @@ describe("mapCommercialSales", () => {
     expect(mapCommercialSales([])).toEqual([]);
   });
 
+  it("shows the passport when the order has no CPF", () => {
+    const rows = [makeRow({ cpf: null, foreignDocument: "AB12345" })];
+    expect(mapCommercialSales(rows)[0].cpf).toBe("AB12345");
+  });
+
   it("handles null phone gracefully", () => {
     const rows = [makeRow({ buyerPhone: null })];
     const result = mapCommercialSales(rows);

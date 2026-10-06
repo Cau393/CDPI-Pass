@@ -52,9 +52,10 @@ function normalizeForSearch(s: string): string {
 function saleMatchesQuery(sale: CommercialSale, query: string): boolean {
   const nq = normalizeForSearch(query.trim());
   if (!nq) return true;
-  const cpfDigits = sale.cpf.replace(/\D/g, "");
+  const cpfText = sale.cpf ?? "";
+  const cpfDigits = cpfText.replace(/\D/g, "");
   const haystack = normalizeForSearch(
-    [sale.nome, sale.cpf, cpfDigits, sale.email, sale.telefone, sale.vendedor]
+    [sale.nome, cpfText, cpfDigits, sale.email, sale.telefone, sale.vendedor]
       .filter(Boolean)
       .join(" "),
   );

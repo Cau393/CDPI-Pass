@@ -20,3 +20,4 @@ Architecture Decision Records. One file per decision: `ADR-NNN-short-title.md`. 
 - [[60-Decisions/ADR-011-courtesy-redeem-limit]]
 - [[60-Decisions/ADR-012-courtesy-event-before-register]]
 - [[60-Decisions/ADR-013-online-calendar-invite]]
+- [[60-Decisions/ADR-014-foreigner-without-cpf]]

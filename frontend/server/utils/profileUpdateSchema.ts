@@ -20,7 +20,8 @@ import { accountEmailSchema } from "@shared/schema";
  *
  * `.strip()` (Zod's default) drops unknown keys instead of rejecting them.
  * That is deliberate: the profile form is seeded from the current user and
- * submits the whole object back, including `isAdmin` and `cpf`. Rejecting
+ * submits the whole object back, including `isAdmin`, `cpf`, `isForeigner`,
+ * and `foreignDocument`. Rejecting
  * unknown keys would break ordinary saves; stripping them means an admin
  * saving their profile keeps their privileges, while an attacker's injected
  * `isAdmin` is silently discarded.

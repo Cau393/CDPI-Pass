@@ -45,6 +45,14 @@ describe("buildParticipantSheetRows", () => {
         presenca: "Não confirmou presença",
       }),
       baseRow({
+        name: "Chris",
+        cpf: null,
+        email: "c@b.com",
+        phone: "(11) 7777-7777",
+        orderStatus: "paid",
+        presenca: "Não confirmou presença",
+      }),
+      baseRow({
         name: "Beto",
         cpf: "111.111.111-11",
         email: "b@b.com",
@@ -56,7 +64,9 @@ describe("buildParticipantSheetRows", () => {
       }),
     ];
     const rows = buildParticipantSheetRows(participants);
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
+    expect(rows[1]?.CPF).toBe("");
+    expect(rows[1]?.Nome).toBe("Chris");
     expect(rows[0]).toEqual({
       Nome: "Ana",
       CPF: "000.000.000-00",
@@ -67,10 +77,10 @@ describe("buildParticipantSheetRows", () => {
       Presença: "Não confirmou presença",
       Status: "Pago",
     });
-    expect(rows[1]?.Status).toBe("Cortesia");
-    expect(rows[1]?.["Cargo que ocupa"]).toBe("Engenheiro");
-    expect(rows[1]?.["Empresa que trabalha"]).toBe("ACME");
-    expect(rows[1]?.Presença).toBe("Presente");
+    expect(rows[2]?.Status).toBe("Cortesia");
+    expect(rows[2]?.["Cargo que ocupa"]).toBe("Engenheiro");
+    expect(rows[2]?.["Empresa que trabalha"]).toBe("ACME");
+    expect(rows[2]?.Presença).toBe("Presente");
     expect(participantExcelHeaders()).toEqual([
       "Nome",
       "CPF",

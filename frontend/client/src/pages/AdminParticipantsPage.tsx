@@ -40,7 +40,7 @@ import type { Event } from "@shared/schema";
 interface Participant {
   userId: string;
   name: string;
-  cpf: string;
+  cpf: string | null;
   email: string;
   phone: string;
   ticketId: string;
@@ -70,9 +70,10 @@ function normalizeForSearch(s: string): string {
 function participantMatchesQuery(p: Participant, query: string): boolean {
   const nq = normalizeForSearch(query.trim());
   if (!nq) return true;
-  const cpfDigits = p.cpf.replace(/\D/g, "");
+  const cpfText = p.cpf ?? "";
+  const cpfDigits = cpfText.replace(/\D/g, "");
   const haystack = normalizeForSearch(
-    [p.name, p.cpf, cpfDigits, p.email, p.phone].filter(Boolean).join(" "),
+    [p.name, cpfText, cpfDigits, p.email, p.phone].filter(Boolean).join(" "),
   );
   const tokens = nq.split(/\s+/).filter(Boolean);
   return tokens.every((t) => haystack.includes(t));

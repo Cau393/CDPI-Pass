@@ -3,7 +3,7 @@
 All in `server/services/`. Routes call these; they wrap external providers.
 
 ## asaasService.ts
-Brazilian payment gateway client. Creates customers and payments (`BOLETO | CREDIT_CARD | PIX`), fetches payment status. Uses `ASAAS_API_KEY` / `ASAAS_API_URL` (sandbox vs prod switch via URL). Webhook validated with `ASAAS_WEBHOOK_TOKEN` at `POST /api/webhooks/asaas`.
+Brazilian payment gateway client. Creates customers and payments (`BOLETO | CREDIT_CARD | PIX`), fetches payment status. Uses `ASAAS_API_KEY` / `ASAAS_API_URL` (sandbox vs prod switch via URL). Webhook validated with `ASAAS_WEBHOOK_TOKEN` at `POST /api/webhooks/asaas`. Brazilian card checkout still uses a payment link with up to 3 installments. A foreign payer (`foreignCustomer: true`) is looked up by `externalReference` (user id) and charged with one `CREDIT_CARD` payment; the invoice URL is what the buyer opens. PIX, boleto, and payment links are rejected for that payer. See [[60-Decisions/ADR-014-foreigner-without-cpf]].
 
 ## emailService.ts
 SendGrid wrapper (`@sendgrid/mail`). Builds transactional emails (verification code, ticket + QR or online meeting link, courtesy invite, reset password, certificate ready). Most sends go through the **DB queue** (`email_queue` table) consumed by the worker, not direct sends. JWT used for signed links in emails. Courtesy invite and reminder button hrefs use `server/utils/courtesyEntryUrl.ts`: free codes go to `/event/{eventId}?cortesia={code}`, promo codes to `?promo=`. The worker's template `{link}` uses the same helper.

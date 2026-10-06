@@ -2,7 +2,7 @@ import * as XLSX from "xlsx";
 
 export type ParticipantExportRow = {
   name: string;
-  cpf: string;
+  cpf: string | null;
   email: string;
   phone: string;
   cargoQueOcupa: string;
@@ -37,7 +37,7 @@ export function buildParticipantSheetRows(
 ): Record<(typeof HEADERS)[number], string>[] {
   return participants.map((p) => ({
     Nome: p.name,
-    CPF: p.cpf,
+    CPF: p.cpf ?? "",
     "E-mail": p.email,
     Telefone: p.phone,
     "Cargo que ocupa": p.cargoQueOcupa,

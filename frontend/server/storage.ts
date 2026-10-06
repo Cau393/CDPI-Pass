@@ -51,6 +51,7 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserByCpf(cpf: string): Promise<User | undefined>;
+  getUserByForeignDocument(foreignDocument: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, updates: Partial<User>): Promise<User | undefined>;
   verifyUserEmail(id: string): Promise<boolean>;
@@ -78,10 +79,25 @@ export interface IStorage {
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
   getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined>;
   isCpfAlreadyRegisteredForEvent(cpf: string, eventId: string): Promise<boolean>;
+  isForeignDocumentAlreadyRegisteredForEvent(
+    foreignDocument: string,
+    eventId: string,
+  ): Promise<boolean>;
+  isUserAlreadyRegisteredForEvent(userId: string, eventId: string): Promise<boolean>;
   /** True when another order (not excludeOrderId) is already paid for cpf+event. */
   existsOtherPaidOrderForCpfAndEvent(
     excludeOrderId: string,
     cpf: string,
+    eventId: string,
+  ): Promise<boolean>;
+  existsOtherPaidOrderForForeignDocumentAndEvent(
+    excludeOrderId: string,
+    foreignDocument: string,
+    eventId: string,
+  ): Promise<boolean>;
+  existsOtherPaidOrderForUserAndEvent(
+    excludeOrderId: string,
+    userId: string,
     eventId: string,
   ): Promise<boolean>;
   createCourtesyAttendee(attendee: InsertCourtesyAttendee): Promise<CourtesyAttendee>;
@@ -178,6 +194,14 @@ export class DatabaseStorage implements IStorage {
 
   async getUserByCpf(cpf: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.cpf, cpf));
+    return user;
+  }
+
+  async getUserByForeignDocument(foreignDocument: string): Promise<User | undefined> {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.foreignDocument, foreignDocument));
     return user;
   }
 
@@ -310,6 +334,7 @@ export class DatabaseStorage implements IStorage {
         status: orders.status,
         courtesyAttendeeId: orders.courtesyAttendeeId,
         cpf: orders.cpf,
+        foreignDocument: orders.foreignDocument,
         paymentMethod: orders.paymentMethod,
         amount: orders.amount,
         asaasPaymentId: orders.asaasPaymentId,
@@ -412,6 +437,39 @@ export class DatabaseStorage implements IStorage {
     return existingOrder.length > 0;
   }
 
+  async isForeignDocumentAlreadyRegisteredForEvent(
+    foreignDocument: string,
+    eventId: string,
+  ): Promise<boolean> {
+    const existingOrder = await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.foreignDocument, foreignDocument),
+          eq(orders.eventId, eventId),
+          eq(orders.status, "paid"),
+        ),
+      )
+      .limit(1);
+    return existingOrder.length > 0;
+  }
+
+  async isUserAlreadyRegisteredForEvent(userId: string, eventId: string): Promise<boolean> {
+    const existingOrder = await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.userId, userId),
+          eq(orders.eventId, eventId),
+          eq(orders.status, "paid"),
+        ),
+      )
+      .limit(1);
+    return existingOrder.length > 0;
+  }
+
   async existsOtherPaidOrderForCpfAndEvent(
     excludeOrderId: string,
     cpf: string,
@@ -430,6 +488,46 @@ export class DatabaseStorage implements IStorage {
       )
       .limit(1);
 
+    return existingOrder.length > 0;
+  }
+
+  async existsOtherPaidOrderForForeignDocumentAndEvent(
+    excludeOrderId: string,
+    foreignDocument: string,
+    eventId: string,
+  ): Promise<boolean> {
+    const existingOrder = await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.foreignDocument, foreignDocument),
+          eq(orders.eventId, eventId),
+          eq(orders.status, "paid"),
+          ne(orders.id, excludeOrderId),
+        ),
+      )
+      .limit(1);
+    return existingOrder.length > 0;
+  }
+
+  async existsOtherPaidOrderForUserAndEvent(
+    excludeOrderId: string,
+    userId: string,
+    eventId: string,
+  ): Promise<boolean> {
+    const existingOrder = await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.userId, userId),
+          eq(orders.eventId, eventId),
+          eq(orders.status, "paid"),
+          ne(orders.id, excludeOrderId),
+        ),
+      )
+      .limit(1);
     return existingOrder.length > 0;
   }
 
@@ -637,7 +735,8 @@ export class DatabaseStorage implements IStorage {
         .values({
           userId: params.userId,
           eventId: params.eventId,
-          cpf: attendee.cpf,
+          cpf: attendee.cpf ?? null,
+          foreignDocument: attendee.foreignDocument ?? null,
           paymentMethod: "courtesy",
           amount: "0.00",
           status: "paid",

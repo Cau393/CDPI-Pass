@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CreditCard, QrCode, FileText, Copy, CheckCircle, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Event } from "@shared/schema";
@@ -31,7 +32,13 @@ interface PaymentModalProps {
 
 export default function PaymentModal({ isOpen, onClose, event, promoCode, displayPrice, onSuccess }: PaymentModalProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isForeigner = user?.isForeigner === true;
   const [selectedMethod, setSelectedMethod] = useState<"pix" | "credit_card" | "boleto">("pix");
+
+  useEffect(() => {
+    if (isForeigner) setSelectedMethod("credit_card");
+  }, [isForeigner]);
   const [paymentData, setPaymentData] = useState<any>(null);
 
   const createOrderMutation = useMutation({
@@ -158,19 +165,23 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
             <>
               {/* Payment Method Selection */}
               <Tabs value={selectedMethod} onValueChange={(v) => setSelectedMethod(v as any)}>
-                <TabsList className="grid w-full grid-cols-3">
+                <TabsList className={`grid w-full ${isForeigner ? "grid-cols-1" : "grid-cols-3"}`}>
+                  {!isForeigner && (
                   <TabsTrigger value="pix" className="flex items-center gap-2">
                     <QrCode className="h-4 w-4" />
                     PIX
                   </TabsTrigger>
+                  )}
                   <TabsTrigger value="credit_card" className="flex items-center gap-2">
                     <CreditCard className="h-4 w-4" />
                     Cartão
                   </TabsTrigger>
+                  {!isForeigner && (
                   <TabsTrigger value="boleto" className="flex items-center gap-2">
                     <FileText className="h-4 w-4" />
                     Boleto
                   </TabsTrigger>
+                  )}
                 </TabsList>
 
                 <TabsContent value="pix" className="space-y-4">
@@ -196,12 +207,20 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
                       <div className="text-center space-y-2">
                         <CreditCard className="h-12 w-12 mx-auto text-primary" />
                         <h3 className="font-semibold">Pagamento com Cartão</h3>
+                        {isForeigner ? (
+                          <p className="text-sm text-gray-600">
+                            Pagamento internacional somente com cartão de crédito ou débito, à vista. PIX, boleto e parcelamento não estão disponíveis.
+                          </p>
+                        ) : (
+                          <>
                         <p className="text-sm text-gray-600">
                           Ao continuar, o link de pagamento abre em uma nova aba e enviamos o mesmo link por e-mail.
                         </p>
                         <p className="text-sm text-gray-600">
                           Aceitamos as principais bandeiras e parcelamento em até 3x.
                         </p>
+                          </>
+                        )}
                       </div>
                     </CardContent>
                   </Card>

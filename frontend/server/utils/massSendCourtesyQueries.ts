@@ -62,7 +62,7 @@ export type RedemptionOrderJoin = {
   attPhone: string | null;
   uName: string;
   uEmail: string;
-  uCpf: string;
+  uCpf: string | null;
   uPhone: string;
 };
 
@@ -72,7 +72,8 @@ export type RedemptionOrderJoin = {
 export function mapRedemptionRowFromOrder(row: RedemptionOrderJoin) {
   const name = row.attName?.trim() ? row.attName : row.uName;
   const email = row.attEmail?.trim() ? row.attEmail : row.uEmail;
-  const cpf = row.attCpf?.trim() ? row.attCpf : row.uCpf;
+  const buyerCpf = row.uCpf?.trim() ? row.uCpf : "";
+  const cpf = row.attCpf?.trim() ? row.attCpf : buyerCpf;
   const phone = row.attPhone?.trim() ? row.attPhone : row.uPhone;
   const used = row.amntUsed ?? 0;
   return {

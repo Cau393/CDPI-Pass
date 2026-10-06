@@ -5,7 +5,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 ## Auth
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/auth/register` | 🔓 | Create user (Zod `insertUserSchema`), send 6-digit verification code. `email` is trimmed and stored lowercase; `User@Example.COM` and `user@example.com` are the same mailbox. Invalid address is 400 `Email inválido`. A mailbox that already exists in any casing is 400 `Email já cadastrado` (including a unique-constraint race). `occupation`, `partnerCompany`, and `areaOfActivity` are required trimmed strings of 2–255 characters (`Cargo que ocupa é obrigatório` / `Empresa que trabalha é obrigatória` / `Área de Atuação é obrigatória`). Missing, blank, whitespace-only, or null is 400. Those three values are stored as entered (no title case) |
+| POST | `/api/auth/register` | 🔓 | Create user (Zod `insertUserSchema`), send 6-digit verification code. `email` is trimmed and stored lowercase; `User@Example.COM` and `user@example.com` are the same mailbox. Invalid address is 400 `Email inválido`. A mailbox that already exists in any casing is 400 `Email já cadastrado` (including a unique-constraint race), for Brazilian and foreign accounts. `isForeigner: false` (default) requires a checksum-valid CPF (`CPF inválido` / `CPF já cadastrado`) and no passport. `isForeigner: true` requires `foreignDocument` (5–32 letters or digits, stored uppercase) and a null CPF (`Documento já cadastrado` on duplicate). Sending both documents, or neither, is 400. `occupation`, `partnerCompany`, and `areaOfActivity` are required trimmed strings of 2–255 characters (`Cargo que ocupa é obrigatório` / `Empresa que trabalha é obrigatória` / `Área de Atuação é obrigatória`). Missing, blank, whitespace-only, or null is 400. Those three values are stored as entered (no title case) |
 | POST | `/api/auth/verify-code` | 🔓 | Verify email with 6-digit code |
 | POST | `/api/auth/resend-code` | 🔓 | Resend verification code |
 | POST | `/api/auth/login` | 🔓 | Login, returns JWT. Email is trimmed and lowercased before lookup, so mixed-case input still finds the account. `Email ou senha incorretos` means the mailbox or password is actually wrong |
@@ -21,7 +21,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 |---|---|---|---|
 | GET | `/api/events` | 🔓 | List active events (`meeting_url`, `meeting_password`, `whatsapp_group_url`, `confirmation_email_html` omitted) |
 | GET | `/api/events/:id` | 🔓 | Event details (same secrets omitted) |
-| POST | `/api/events/:id/subscribe` | 🔑 | Free inscription (no Asaas). QR if presencial; meeting-link e-mail if online. Response includes `whatsappGroupUrl` (string or null) so the client can open the group tab. Does not include the meeting URL or meeting password |
+| POST | `/api/events/:id/subscribe` | 🔑 | Free inscription (no Asaas). QR if presencial; meeting-link e-mail if online. A Brazilian without CPF gets 400 `Complete seu CPF no perfil antes de se inscrever.` A foreigner is checked by passport and user id instead. Response includes `whatsappGroupUrl` (string or null) so the client can open the group tab. Does not include the meeting URL or meeting password |
 
 ## Admin: events
 | Method | Path | Auth | Purpose |
@@ -84,7 +84,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 ## Orders & payments (user)
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/orders` | 🔑 | Create order → Asaas payment (PIX/Boleto/Card). QR generated only if the event is presencial |
+| POST | `/api/orders` | 🔑 | Create order → Asaas payment (PIX/Boleto/Card for Brazilians). A foreigner may only send `credit_card`; the charge is one international card invoice, not a payment link. QR generated only if the event is presencial |
 | GET | `/api/orders` | ✉️ | My orders. Nested event includes `modality`. `meetingUrl`, `meetingPassword`, and `whatsappGroupUrl` only for `paid`/`courtesy` online orders; omitted otherwise. Never includes `confirmationEmailHtml` |
 | GET | `/api/orders/:id` | 🔑 | Order detail |
 | POST | `/api/orders/:id/check-status` | 🔑 | Poll Asaas payment status |
@@ -104,7 +104,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 | POST | `/api/courtesy-links` | 👑 | Create courtesy link. `redeemUrl` is `{origin}/event/{eventId}?cortesia={code}` when `overridePrice` is null, or `{origin}/event/{eventId}?promo={code}` when set. 400 when the event courtesy cap is already reached |
 | GET | `/api/courtesy-links` | 👑 | List own created links. Each row's `redeemUrl` uses the same `?cortesia=` / `?promo=` rule as create |
 | GET | `/api/courtesy-links/:code` | 🔓 | Public resolve for the event page and for logged-out `/cortesia?code=`. 404 missing, 400 inactive or exhausted. Does not require a session |
-| POST | `/api/courtesy/redeem` | 🔑 | Redeem courtesy → paid order (same QR vs meeting-link split as purchase). Unchanged: rejects `overridePrice` codes, does not check `salesClosed`. Counts one paid courtesy order. The redeem that reaches `events.courtesy_limit` succeeds and then deactivates every courtesy link for the event. A later redeem returns 400 `Limite de cortesias do evento atingido`. NULL limit means no cap |
+| POST | `/api/courtesy/redeem` | 🔑 | Redeem courtesy → paid order (same QR vs meeting-link split as purchase). `isForeigner: true` sends `foreignDocument` instead of `cpf`. Unchanged: rejects `overridePrice` codes, does not check `salesClosed`. Counts one paid courtesy order. The redeem that reaches `events.courtesy_limit` succeeds and then deactivates every courtesy link for the event. A later redeem returns 400 `Limite de cortesias do evento atingido`. NULL limit means no cap |
 
 ## Certificates & NPS (user)
 | Method | Path | Auth | Purpose |

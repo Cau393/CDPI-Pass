@@ -3,12 +3,14 @@ export interface CommercialSaleRow {
   status: string;
   paymentMethod: string;
   buyerName: string;
-  cpf: string;
+  cpf: string | null;
+  foreignDocument?: string | null;
   buyerEmail: string;
   buyerPhone: string | null;
   courtesyAttendeeId: string | null;
   attendeeName: string | null;
   attendeeCpf: string | null;
+  attendeeForeignDocument?: string | null;
   attendeeEmail: string | null;
   attendeePhone: string | null;
   sellerName: string | null;
@@ -54,7 +56,9 @@ export function mapCommercialSales(
       nome: isCourtesyAttendee
         ? (row.attendeeName ?? row.buyerName)
         : row.buyerName,
-      cpf: isCourtesyAttendee ? (row.attendeeCpf ?? row.cpf) : row.cpf,
+      cpf: isCourtesyAttendee
+        ? (row.attendeeCpf ?? row.attendeeForeignDocument ?? row.cpf ?? row.foreignDocument ?? "")
+        : (row.cpf ?? row.foreignDocument ?? ""),
       email: isCourtesyAttendee
         ? (row.attendeeEmail ?? row.buyerEmail)
         : row.buyerEmail,

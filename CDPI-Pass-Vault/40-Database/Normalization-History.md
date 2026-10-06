@@ -23,6 +23,9 @@ Derived from the `frontend/sql/` files (each was run manually on Neon). This is 
 
 `users_area_of_activity_required.sql` — same rule for **Área de Atuação**. Adds `users.area_of_activity varchar(255)` when absent, backfills NULL or blank to `Nao aplicavel`, then sets NOT NULL and `DEFAULT 'Nao aplicavel'`. **Applied to Neon staging on 2026-10-02.** Prod still pending before the matching app deploy.
 
+## Foreign accounts without CPF
+`users_foreigner.sql` — adds `users.is_foreigner` (boolean, NOT NULL, default false) and nullable `users.foreign_document` (varchar(32), unique where not null). Drops NOT NULL on `users.cpf` (the unique constraint stays; many nulls are allowed). Check `users_identity_document_chk`: a Brazilian row has a CPF and a null passport; a foreigner row is the reverse. `orders` and `courtesy_attendees` gain nullable `foreign_document` and the same one-document check (`orders_identity_document_chk`, `courtesy_attendees_identity_document_chk`). Existing users stay Brazilian. Orders whose `cpf` snapshot is null are filled from `users.cpf` before `orders_identity_document_chk` is added (18 staging rows were in that state). No fake CPF is invented. Apply on Neon before the matching app deploy. See [[60-Decisions/ADR-014-foreigner-without-cpf]].
+
 ## Account email lowercase
 `users_email_lowercase.sql` — trims and lowercases `users.email`, then adds unique index `users_email_lower_unique` on `lower(email)`. Aborts without changes if two rows would collapse to the same mailbox. Register, login, profile, and courtesy redemption already normalize before write or lookup. Apply before the matching app deploy.
 

@@ -10,7 +10,7 @@ Brazilian audience needs PIX and Boleto, not just cards. Stripe's BR coverage of
 Asaas (Brazilian gateway) for PIX, Boleto and Credit Card. Server creates customer + payment; confirmation arrives via webhook (`POST /api/webhooks/asaas`, validated by `ASAAS_WEBHOOK_TOKEN`) or user-triggered polling (`POST /api/orders/:id/check-status`). Both paths finalize through `finalizeOrderPaidLikeWebhook`.
 
 ## Consequences
-- CPF is required and validated (`000.000.000-00`), stored on users and orders.
+- Brazilian CPF is required and validated (`000.000.000-00`), stored on users and orders. Foreign accounts skip CPF and pay with one international card charge. See [[60-Decisions/ADR-014-foreigner-without-cpf]].
 - Payment state machine kept minimal: `pending → paid | cancelled`.
 - Sandbox/prod switched by `ASAAS_API_URL` + key.
 - Admin escape hatch exists for external payments: `mark-paid-external`.

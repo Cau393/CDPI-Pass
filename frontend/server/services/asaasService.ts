@@ -170,6 +170,65 @@ class AsaasService {
   }
 
   /**
+   * One-off international card charge. Asaas does not allow payment links,
+   * installments, PIX, or boleto for foreignCustomer. Lookup is by
+   * externalReference (our user id), not by document, so a passport cannot
+   * collide with a Brazilian CPF.
+   */
+  async createForeignCardPayment(params: {
+    name: string;
+    email: string;
+    cpfCnpj: string;
+    phone: string;
+    userId: string;
+    value: number;
+    dueDate: Date;
+    description: string;
+    orderExternalReference: string;
+  }): Promise<AsaasPaymentResponse> {
+    const listed = await this.makeRequest(
+      `/customers?externalReference=${encodeURIComponent(params.userId)}&limit=1`,
+    );
+    const customer =
+      listed?.data?.length > 0
+        ? listed.data[0]
+        : await this.makeRequest("/customers", "POST", {
+            name: params.name,
+            email: params.email,
+            cpfCnpj: params.cpfCnpj,
+            phone: params.phone,
+            mobilePhone: params.phone,
+            foreignCustomer: true,
+            externalReference: params.userId,
+          });
+
+    const payment = await this.makeRequest("/payments", "POST", {
+      customer: customer.id,
+      billingType: "CREDIT_CARD",
+      value: params.value,
+      dueDate: params.dueDate.toISOString().split("T")[0],
+      description: params.description,
+      externalReference: params.orderExternalReference,
+    });
+
+    const invoiceUrl = payment.invoiceUrl as string | undefined;
+    if (!invoiceUrl) {
+      throw new Error("Asaas não retornou a URL da cobrança internacional");
+    }
+
+    return {
+      id: payment.id,
+      dateCreated: payment.dateCreated,
+      customer: customer.id,
+      paymentLink: invoiceUrl,
+      value: payment.value,
+      netValue: payment.netValue ?? payment.value,
+      billingType: "CREDIT_CARD",
+      status: payment.status ?? "PENDING",
+    };
+  }
+
+  /**
    * Cobranças PIX/boleto usam id `pay_...`. Cartão via link de pagamento guarda o id do link (numérico);
    * a cobrança real é resolvida por `externalReference` (= id do pedido no sistema).
    */

@@ -7,6 +7,8 @@ const getEvent = vi.fn();
 const getUser = vi.fn();
 const updateEvent = vi.fn();
 const existsOtherPaidOrderForCpfAndEvent = vi.fn();
+const existsOtherPaidOrderForForeignDocumentAndEvent = vi.fn();
+const existsOtherPaidOrderForUserAndEvent = vi.fn();
 const discardPendingOrder = vi.fn();
 const cancelPayment = vi.fn();
 
@@ -20,6 +22,10 @@ vi.mock("../../storage", () => ({
     updateEvent: (...a: unknown[]) => updateEvent(...a),
     existsOtherPaidOrderForCpfAndEvent: (...a: unknown[]) =>
       existsOtherPaidOrderForCpfAndEvent(...a),
+    existsOtherPaidOrderForForeignDocumentAndEvent: (...a: unknown[]) =>
+      existsOtherPaidOrderForForeignDocumentAndEvent(...a),
+    existsOtherPaidOrderForUserAndEvent: (...a: unknown[]) =>
+      existsOtherPaidOrderForUserAndEvent(...a),
     discardPendingOrder: (...a: unknown[]) => discardPendingOrder(...a),
   },
 }));
@@ -70,6 +76,8 @@ describe("finalizeOrderPaidLikeWebhook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     existsOtherPaidOrderForCpfAndEvent.mockResolvedValue(false);
+    existsOtherPaidOrderForForeignDocumentAndEvent.mockResolvedValue(false);
+    existsOtherPaidOrderForUserAndEvent.mockResolvedValue(false);
     discardPendingOrder.mockResolvedValue({
       ok: true,
       order: baseOrder({ status: "cancelled", qrCodeData: null }),
@@ -153,6 +161,40 @@ describe("finalizeOrderPaidLikeWebhook", () => {
     expect(r).toEqual({ ok: true });
     expect(updateOrder).toHaveBeenCalledWith("order-uuid", { status: "paid" });
     expect(incrementCourtesyLinkUsage).not.toHaveBeenCalled();
+  });
+
+  it("does not query CPF when the order has no CPF and blocks a duplicate passport", async () => {
+    existsOtherPaidOrderForForeignDocumentAndEvent.mockResolvedValue(true);
+    const o = baseOrder({ cpf: null, foreignDocument: "AB12345" });
+
+    const r = await finalizeOrderPaidLikeWebhook(o, {
+      billingType: "CREDIT_CARD",
+    });
+
+    expect(existsOtherPaidOrderForCpfAndEvent).not.toHaveBeenCalled();
+    expect(existsOtherPaidOrderForForeignDocumentAndEvent).toHaveBeenCalledWith(
+      "order-uuid",
+      "AB12345",
+      "evt-1",
+    );
+    expect(r).toEqual({ ok: false, code: "duplicate_other_paid" });
+  });
+
+  it("blocks a second paid inscription for the same user when there is no CPF", async () => {
+    existsOtherPaidOrderForUserAndEvent.mockResolvedValue(true);
+    const o = baseOrder({ cpf: null, foreignDocument: "AB12345" });
+
+    const r = await finalizeOrderPaidLikeWebhook(o, {
+      billingType: "CREDIT_CARD",
+    });
+
+    expect(existsOtherPaidOrderForCpfAndEvent).not.toHaveBeenCalled();
+    expect(existsOtherPaidOrderForUserAndEvent).toHaveBeenCalledWith(
+      "order-uuid",
+      "user-1",
+      "evt-1",
+    );
+    expect(r).toEqual({ ok: false, code: "duplicate_other_paid" });
   });
 
   it("refund_then_discard: cancels Asaas and discards when another paid order exists", async () => {

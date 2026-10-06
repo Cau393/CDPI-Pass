@@ -22,7 +22,8 @@ import {
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { 
-  insertUserSchema, 
+  insertUserObjectSchema,
+  refineAccountDocument,
   loginSchema, 
   insertOrderSchema,
   courtesyRedemptionSchema,
@@ -39,7 +40,12 @@ import {
   communicateRecipientModes,
 } from "@shared/schema";
 import { courtesyEntryUrl } from "./utils/courtesyEntryUrl";
-import { validateCpf, validateEmail, formatCpf } from "./utils/validation";
+import { validateEmail } from "./utils/validation";
+import { resolveRegisterIdentity, normalizeForeignDocument } from "./utils/registerIdentity";
+import {
+  isUsersEmailUniqueViolation,
+  isUsersForeignDocumentUniqueViolation,
+} from "./utils/usersEmailUnique";
 import { parseBrazilEventLocalDateTime } from "./utils/eventDateTime";
 import { sanitizeCourtesyTemplateHtml } from "./utils/courtesyTemplateSanitize";
 import {
@@ -163,26 +169,6 @@ const authenticateToken = async (req: any, res: any, next: any) => {
   }
 };
 
-function isUsersEmailUniqueViolation(error: unknown): boolean {
-  const err = error as {
-    code?: string;
-    constraint?: string;
-    message?: string;
-    cause?: { code?: string; constraint?: string; message?: string };
-  };
-  const code = err?.code ?? err?.cause?.code;
-  if (code !== "23505") return false;
-  const constraint = err?.constraint ?? err?.cause?.constraint ?? "";
-  if (
-    constraint === "users_email_unique" ||
-    constraint === "users_email_lower_unique"
-  ) {
-    return true;
-  }
-  const message = `${err?.message ?? ""} ${err?.cause?.message ?? ""}`;
-  return message.includes("users_email");
-}
-
 async function courtesyCapBlocksActivation(eventId: string): Promise<boolean> {
   const event = await storage.getEvent(eventId);
   if (!event) return false;
@@ -218,26 +204,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/auth/register", async (req, res) => {
     try {
       // Create a custom schema for API that accepts string date
-      const apiUserSchema = insertUserSchema.extend({
+      const apiUserSchema = insertUserObjectSchema.extend({
         birthDate: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, "Data deve estar no formato dd/mm/aaaa")
-      });
+      }).superRefine(refineAccountDocument);
       
       const body = apiUserSchema.parse(req.body);
-      
-      // Validate CPF
-      if (!validateCpf(body.cpf)) {
-        return res.status(400).json({ message: "CPF inválido" });
+      const identity = resolveRegisterIdentity(body);
+      if (!identity.ok) {
+        return res.status(400).json({ message: identity.message });
       }
 
-      // Check if user already exists
+      // Check if user already exists. Email stays the account key for both kinds.
       const existingUser = await storage.getUserByEmail(body.email);
       if (existingUser) {
         return res.status(400).json({ message: "Email já cadastrado" });
       }
 
-      const existingCpf = await storage.getUserByCpf(body.cpf);
-      if (existingCpf) {
-        return res.status(400).json({ message: "CPF já cadastrado" });
+      if (identity.cpf) {
+        const existingCpf = await storage.getUserByCpf(identity.cpf);
+        if (existingCpf) {
+          return res.status(400).json({ message: "CPF já cadastrado" });
+        }
+      } else if (identity.foreignDocument) {
+        const existingDocument = await storage.getUserByForeignDocument(identity.foreignDocument);
+        if (existingDocument) {
+          return res.status(400).json({ message: "Documento já cadastrado" });
+        }
       }
 
       // Convert birthDate string from dd/mm/yyyy to Date object for database
@@ -252,7 +244,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...body,
         birthDate: birthDateObj,
         password: hashedPassword,
-        cpf: formatCpf(body.cpf),
+        cpf: identity.cpf,
+        isForeigner: identity.isForeigner,
+        foreignDocument: identity.foreignDocument,
         name: toTitleCaseName(body.name),
         phone: normalizePhoneE164(body.phone, "BR"),
       });
@@ -272,6 +266,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       if (isUsersEmailUniqueViolation(error)) {
         return res.status(400).json({ message: "Email já cadastrado" });
+      }
+      if (isUsersForeignDocumentUniqueViolation(error)) {
+        return res.status(400).json({ message: "Documento já cadastrado" });
       }
       res.status(500).json({ message: "Erro interno do servidor" });
     }
@@ -1440,6 +1437,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           userId: users.id,
           name: users.name,
           cpf: users.cpf,
+          foreignDocument: users.foreignDocument,
           email: users.email,
           phone: users.phone,
           ticketId: orders.id,
@@ -1480,7 +1478,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return {
           userId: r.userId,
           name: r.name,
-          cpf: r.cpf,
+          cpf: r.cpf ?? r.foreignDocument ?? "",
           email: r.email,
           phone: r.phone,
           ticketId: r.ticketId,
@@ -1940,11 +1938,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           paymentMethod: orders.paymentMethod,
           buyerName: users.name,
           cpf: orders.cpf,
+          foreignDocument: orders.foreignDocument,
           buyerEmail: users.email,
           buyerPhone: users.phone,
           courtesyAttendeeId: orders.courtesyAttendeeId,
           attendeeName: courtesyAttendees.name,
           attendeeCpf: courtesyAttendees.cpf,
+          attendeeForeignDocument: courtesyAttendees.foreignDocument,
           attendeeEmail: courtesyAttendees.email,
           attendeePhone: courtesyAttendees.phone,
           sellerName: sellers.name,
@@ -2458,11 +2458,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: interest.message });
       }
 
+      const isForeigner = req.user.isForeigner === true;
+      if (isForeigner && paymentMethod !== "credit_card") {
+        return res.status(400).json({
+          message: "Estrangeiros pagam apenas com cartão de crédito internacional, sem PIX, boleto ou parcelamento.",
+        });
+      }
+      if (isForeigner && !req.user.foreignDocument) {
+        return res.status(400).json({ message: "Complete seu documento no cadastro antes de comprar." });
+      }
+      if (!isForeigner && !req.user.cpf) {
+        return res.status(400).json({ message: "Complete seu CPF no perfil antes de comprar." });
+      }
+
       // Create order. Paid checkout stays pending; the label is stored now.
       const order = await storage.createOrder({
         userId,
         eventId,
-        cpf: req.user.cpf,
+        cpf: isForeigner ? null : req.user.cpf,
+        foreignDocument: isForeigner ? req.user.foreignDocument : null,
         paymentMethod,
         amount: totalAmount.toString(),
         status: "pending",
@@ -2472,11 +2486,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create payment with Asaas
       try {
-        const paymentData = await asaasService.createPayment({
+        const paymentData = isForeigner
+          ? await asaasService.createForeignCardPayment({
+              name: req.user.name,
+              email: req.user.email,
+              cpfCnpj: req.user.foreignDocument!,
+              phone: req.user.phone?.replace(/\D/g, '') || '',
+              userId,
+              value: totalAmount,
+              dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+              description: `Ingresso para ${event.title}`,
+              orderExternalReference: order.id,
+            })
+          : await asaasService.createPayment({
           customer: {
             name: req.user.name,
             email: req.user.email,
-            cpfCnpj: req.user.cpf.replace(/\D/g, ''), // Remove formatting
+            cpfCnpj: req.user.cpf!.replace(/\D/g, ''),
             phone: req.user.phone?.replace(/\D/g, '') || '',
           },
           billingType: paymentMethod === "credit_card" ? "CREDIT_CARD" : 
@@ -2584,15 +2610,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .json({ message: salesBlockedMessage(check.reason) });
       }
 
-      const cpf = req.user.cpf;
-      if (!cpf) {
+      const isForeigner = req.user.isForeigner === true;
+      const cpf = isForeigner ? null : req.user.cpf;
+      const foreignDocument = isForeigner ? req.user.foreignDocument : null;
+      if (!isForeigner && !cpf) {
         return res
           .status(400)
           .json({ message: "Complete seu CPF no perfil antes de se inscrever." });
       }
+      if (isForeigner && !foreignDocument) {
+        return res
+          .status(400)
+          .json({ message: "Complete seu documento no cadastro antes de se inscrever." });
+      }
 
-      // Same one-inscription-per-CPF rule the paid flow relies on.
-      const alreadyRegistered = await storage.isCpfAlreadyRegisteredForEvent(cpf, eventId);
+      const alreadyRegistered = isForeigner
+        ? (await storage.isForeignDocumentAlreadyRegisteredForEvent(foreignDocument!, eventId))
+          || (await storage.isUserAlreadyRegisteredForEvent(userId, eventId))
+        : await storage.isCpfAlreadyRegisteredForEvent(cpf!, eventId);
       if (alreadyRegistered) {
         return res
           .status(409)
@@ -2612,6 +2647,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userId,
         eventId,
         cpf,
+        foreignDocument,
         paymentMethod: "free",
         amount: "0.00",
         status: "paid",
@@ -3319,10 +3355,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: interest.message });
       }
 
-      // Check if CPF is already registered for this event
-      const isCpfRegistered = await storage.isCpfAlreadyRegisteredForEvent(userData.cpf, link.eventId);
-      if (isCpfRegistered) {
-        return res.status(400).json({ message: "CPF já cadastrado para este evento" });
+      const isForeigner = userData.isForeigner === true;
+      const foreignDocument = isForeigner
+        ? normalizeForeignDocument(userData.foreignDocument ?? "")
+        : null;
+      const attendeeCpf = isForeigner ? null : (userData.cpf ?? null);
+      if (isForeigner && !foreignDocument) {
+        return res.status(400).json({ message: "Documento estrangeiro inválido" });
+      }
+      if (!isForeigner && !attendeeCpf) {
+        return res.status(400).json({ message: "CPF inválido" });
+      }
+
+      const alreadyRegistered = isForeigner
+        ? await storage.isForeignDocumentAlreadyRegisteredForEvent(foreignDocument!, link.eventId)
+        : await storage.isCpfAlreadyRegisteredForEvent(attendeeCpf!, link.eventId);
+      if (alreadyRegistered) {
+        return res.status(400).json({
+          message: isForeigner
+            ? "Documento já cadastrado para este evento"
+            : "CPF já cadastrado para este evento",
+        });
       }
 
       // Check if event is full
@@ -3355,7 +3408,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         attendee: {
           name: nameNorm,
           email: userData.email,
-          cpf: userData.cpf,
+          cpf: attendeeCpf,
+          isForeigner,
+          foreignDocument,
           phone: phoneNorm,
           birthDate: birthDateObj,
           address: userData.address,

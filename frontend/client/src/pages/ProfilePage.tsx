@@ -683,11 +683,15 @@ const handleCancelOrder = (orderId: string) => {
                       </div>
                       <div>
                         <Label htmlFor="cpf" className="block text-sm font-medium text-gray-700 mb-2">
-                          CPF
+                          {currentUser?.isForeigner ? "Passaporte ou documento estrangeiro" : "CPF"}
                         </Label>
                         <Input
                           id="cpf"
-                          {...profileForm.register("cpf")}
+                          value={
+                            currentUser?.isForeigner
+                              ? (currentUser.foreignDocument ?? "")
+                              : (currentUser?.cpf ?? "")
+                          }
                           readOnly
                           className="bg-gray-50"
                           data-testid="input-profile-cpf"

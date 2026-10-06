@@ -11,6 +11,7 @@ import {
   serial,
   unique,
   uniqueIndex,
+  check,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -34,7 +35,15 @@ export const users = pgTable(
     emailVerified: boolean("email_verified").default(false),
     password: text("password").notNull(),
     name: varchar("name", { length: 255 }).notNull(),
-    cpf: varchar("cpf", { length: 14 }).notNull().unique(),
+    /**
+     * Brazilian CPF. Null when `is_foreigner` is true.
+     * UNIQUE allows many nulls, so several foreigners can omit it.
+     */
+    cpf: varchar("cpf", { length: 14 }).unique(),
+    /** True when the account has a passport instead of a CPF. */
+    isForeigner: boolean("is_foreigner").notNull().default(false),
+    /** Passport or other foreign id. Null for Brazilian accounts. */
+    foreignDocument: varchar("foreign_document", { length: 32 }),
     phone: varchar("phone", { length: 20 }).notNull(),
     birthDate: timestamp("birth_date").notNull(),
     address: text("address").notNull(),
@@ -49,6 +58,17 @@ export const users = pgTable(
   },
   (table) => [
     uniqueIndex("users_email_lower_unique").on(sql`lower(${table.email})`),
+    uniqueIndex("users_foreign_document_unique")
+      .on(table.foreignDocument)
+      .where(sql`${table.foreignDocument} is not null`),
+    check(
+      "users_identity_document_chk",
+      sql`(
+        (${table.isForeigner} = false AND ${table.cpf} IS NOT NULL AND ${table.foreignDocument} IS NULL)
+        OR
+        (${table.isForeigner} = true AND ${table.cpf} IS NULL AND ${table.foreignDocument} IS NOT NULL)
+      )`,
+    ),
   ],
 );
 
@@ -228,7 +248,10 @@ export const orders = pgTable("orders", {
   userId: varchar("user_id").notNull().references(() => users.id),
   eventId: varchar("event_id").notNull().references(() => events.id),
   courtesyAttendeeId: varchar("courtesy_attendee_id").references(() => courtesyAttendees.id),
-  cpf: varchar("cpf", { length: 14 }).notNull(),
+  /** Snapshot of the buyer's CPF. Null when the buyer is a foreigner. */
+  cpf: varchar("cpf", { length: 14 }),
+  /** Snapshot of the buyer's passport. Null for Brazilian buyers. */
+  foreignDocument: varchar("foreign_document", { length: 32 }),
   status: varchar("status", { length: 50 }).notNull().default("pending"), // pending, paid, cancelled
   paymentMethod: varchar("payment_method", { length: 50 }).notNull(),
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
@@ -248,7 +271,16 @@ export const orders = pgTable("orders", {
    * events.interest_areas do not change this value.
    */
   interestArea: varchar("interest_area", { length: 255 }),
-});
+}, (table) => [
+  check(
+    "orders_identity_document_chk",
+    sql`(
+      (${table.cpf} IS NOT NULL AND ${table.foreignDocument} IS NULL)
+      OR
+      (${table.cpf} IS NULL AND ${table.foreignDocument} IS NOT NULL)
+    )`,
+  ),
+]);
 
 // Email queue table for async processing
 export const emailQueue = pgTable("email_queue", {
@@ -269,7 +301,9 @@ export const courtesyAttendees = pgTable("courtesy_attendees", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name", { length: 255 }).notNull(),
   email: varchar("email", { length: 255 }).notNull(),
-  cpf: varchar("cpf", { length: 14 }).notNull(),
+  cpf: varchar("cpf", { length: 14 }),
+  isForeigner: boolean("is_foreigner").notNull().default(false),
+  foreignDocument: varchar("foreign_document", { length: 32 }),
   phone: varchar("phone", { length: 20 }).notNull(),
   birthDate: timestamp("birth_date").notNull(),
   address: text("address").notNull(),
@@ -278,7 +312,16 @@ export const courtesyAttendees = pgTable("courtesy_attendees", {
   eventTitle: varchar("event_title", { length: 255 }).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  check(
+    "courtesy_attendees_identity_document_chk",
+    sql`(
+      (${table.isForeigner} = false AND ${table.cpf} IS NOT NULL AND ${table.foreignDocument} IS NULL)
+      OR
+      (${table.isForeigner} = true AND ${table.cpf} IS NULL AND ${table.foreignDocument} IS NOT NULL)
+    )`,
+  ),
+]);
 
 // Mass send jobs table
 export const massSendJobs = pgTable('mass_send_jobs', {
@@ -471,10 +514,76 @@ export const eventPrintSettingsRelations = relations(eventPrintSettings, ({ one 
   }),
 }));
 
+export const CPF_FORMAT = /^\d{3}\.\d{3}\.\d{3}-\d{2}$/;
+export const CPF_FORMAT_MESSAGE = "CPF deve estar no formato 000.000.000-00";
+export const FOREIGN_DOCUMENT_PATTERN = /^[A-Z0-9]{5,32}$/;
+export const FOREIGN_DOCUMENT_MESSAGE =
+  "Documento estrangeiro deve ter 5 a 32 letras ou números";
+
+type AccountDocumentFields = {
+  isForeigner?: boolean | null;
+  cpf?: string | null;
+  foreignDocument?: string | null;
+};
+
+function presentDocument(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+/** Brazilian accounts require a formatted CPF. Foreigners require a passport and no CPF. */
+export function refineAccountDocument(
+  data: AccountDocumentFields,
+  ctx: z.RefinementCtx,
+) {
+  const isForeigner = data.isForeigner === true;
+  const cpf = presentDocument(data.cpf);
+  const foreignDocument =
+    presentDocument(data.foreignDocument)
+      ?.toUpperCase()
+      .replace(/[^A-Z0-9]/g, "") ?? null;
+
+  if (isForeigner) {
+    if (cpf) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cpf"],
+        message: "Estrangeiro não informa CPF",
+      });
+    }
+    if (!foreignDocument || !FOREIGN_DOCUMENT_PATTERN.test(foreignDocument)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["foreignDocument"],
+        message: FOREIGN_DOCUMENT_MESSAGE,
+      });
+    }
+    return;
+  }
+
+  if (foreignDocument) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["foreignDocument"],
+      message: "Documento estrangeiro só vale para estrangeiros",
+    });
+  }
+  if (!cpf || !CPF_FORMAT.test(cpf)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["cpf"],
+      message: CPF_FORMAT_MESSAGE,
+    });
+  }
+}
+
 // Insert schemas
-export const insertUserSchema = createInsertSchema(users, {
+export const insertUserObjectSchema = createInsertSchema(users, {
   email: accountEmailSchema,
-  cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
+  cpf: z.string().nullable().optional(),
+  isForeigner: z.boolean().optional(),
+  foreignDocument: z.string().nullable().optional(),
   phone: z
     .string()
     .regex(/^\d{8,15}$/, "Telefone deve conter 8 a 15 dígitos (código do país sem +)"),
@@ -492,6 +601,8 @@ export const insertUserSchema = createInsertSchema(users, {
   emailVerified: true,
   isAdmin: true,
 });
+
+export const insertUserSchema = insertUserObjectSchema.superRefine(refineAccountDocument);
 
 export const insertEventSchema = createInsertSchema(events).omit({
   id: true,
@@ -579,7 +690,9 @@ export const courtesyRedemptionSchema = z.object({
   name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
   email: accountEmailSchema,
   emailConfirm: accountEmailSchema,
-  cpf: z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, "CPF deve estar no formato 000.000.000-00"),
+  isForeigner: z.boolean().optional(),
+  cpf: z.string().optional(),
+  foreignDocument: z.string().optional(),
   partnerCompany: z.string().min(2, "Empresa que atua é obrigatória"),
   occupation: z.string().min(2, "Cargo é obrigatório"),
   birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
@@ -590,6 +703,6 @@ export const courtesyRedemptionSchema = z.object({
 }).refine((data) => data.email === data.emailConfirm, {
   message: "Os emails não coincidem",
   path: ["emailConfirm"],
-});
+}).superRefine(refineAccountDocument);
 
 export type CourtesyRedemption = z.infer<typeof courtesyRedemptionSchema>;

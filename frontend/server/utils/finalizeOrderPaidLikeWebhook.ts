@@ -80,11 +80,29 @@ export async function finalizeOrderPaidLikeWebhook(
     return { ok: false, code: "not_pending" };
   }
 
-  const hasOtherPaid = await storage.existsOtherPaidOrderForCpfAndEvent(
-    order.id,
-    order.cpf,
-    order.eventId,
-  );
+  let hasOtherPaid = false;
+  if (order.cpf) {
+    hasOtherPaid = await storage.existsOtherPaidOrderForCpfAndEvent(
+      order.id,
+      order.cpf,
+      order.eventId,
+    );
+  } else {
+    if (order.foreignDocument) {
+      hasOtherPaid = await storage.existsOtherPaidOrderForForeignDocumentAndEvent(
+        order.id,
+        order.foreignDocument,
+        order.eventId,
+      );
+    }
+    if (!hasOtherPaid) {
+      hasOtherPaid = await storage.existsOtherPaidOrderForUserAndEvent(
+        order.id,
+        order.userId,
+        order.eventId,
+      );
+    }
+  }
   if (hasOtherPaid) {
     return handleDuplicatePaidInscription(order, duplicatePolicy);
   }
