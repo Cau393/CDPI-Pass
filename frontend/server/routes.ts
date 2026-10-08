@@ -214,6 +214,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: identity.message });
       }
 
+      let phone: string;
+      try {
+        phone = normalizePhoneE164(body.phone, "BR");
+      } catch {
+        return res.status(400).json({ message: "Telefone inválido" });
+      }
+
       // Check if user already exists. Email stays the account key for both kinds.
       const existingUser = await storage.getUserByEmail(body.email);
       if (existingUser) {
@@ -248,7 +255,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         isForeigner: identity.isForeigner,
         foreignDocument: identity.foreignDocument,
         name: toTitleCaseName(body.name),
-        phone: normalizePhoneE164(body.phone, "BR"),
+        phone,
       });
       
       await emailService.sendVerificationEmail(user.email, user.id);

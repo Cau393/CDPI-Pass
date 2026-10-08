@@ -60,6 +60,7 @@ vi.mock("../../services/emailService", () => ({
     sendOnlineEventEmail: vi.fn(async () => true),
     sendCardPaymentLinkEmail: vi.fn(async () => true),
     sendEmail: vi.fn(async () => true),
+    sendVerificationEmail: vi.fn(async () => true),
   },
 }));
 
@@ -396,6 +397,61 @@ describe.skipIf(!enabled)("free events and sales-closed (real routes + real DB)"
       expect(res.status).toBe(201);
       // 100.00 event + 5.00 fee
       expect(res.body.order.amount).toBe("105.00");
+    });
+  });
+
+  describe("POST /api/auth/register with an international phone", () => {
+    const tag = randomUUID().slice(0, 8);
+    const foreignEmail = `foreign-${tag}@example.test`;
+    const invalidPhoneEmail = `bad-phone-${tag}@example.test`;
+
+    // Same shape RegisterPage sends for a foreigner: the phone picker emits
+    // E.164 digits without "+", and the CPF field is reset to "".
+    function foreignerBody(email: string, phone: string, foreignDocument: string) {
+      return {
+        name: "Participante Estrangeira",
+        email,
+        password: "senha-segura-1",
+        isForeigner: true,
+        cpf: "",
+        foreignDocument,
+        birthDate: "11/08/1988",
+        phone,
+        address: "Calle de prueba 151, San Lorenzo",
+        occupation: "Directora Técnica",
+        partnerCompany: "Empresa de teste",
+        areaOfActivity: "Asuntos Regulatorios",
+      };
+    }
+
+    afterAll(async () => {
+      await pool.query(`DELETE FROM users WHERE email = ANY($1)`, [
+        [foreignEmail, invalidPhoneEmail],
+      ]);
+    });
+
+    it("creates a foreign account with a Paraguay phone", async () => {
+      const res = await api("POST", "/api/auth/register", {
+        body: foreignerBody(foreignEmail, "595981123456", `PYA${tag}`.toUpperCase()),
+      });
+
+      expect(res.status).toBe(201);
+    });
+
+    it("stores the Paraguay phone as E.164 digits, not as a Brazilian number", async () => {
+      const { rows } = await pool.query(`SELECT phone FROM users WHERE email = $1`, [
+        foreignEmail,
+      ]);
+
+      expect(rows[0]?.phone).toBe("595981123456");
+    });
+
+    it("rejects an invalid phone with 400 instead of a 500", async () => {
+      const res = await api("POST", "/api/auth/register", {
+        body: foreignerBody(invalidPhoneEmail, "55119999", `PYB${tag}`.toUpperCase()),
+      });
+
+      expect(res).toMatchObject({ status: 400, body: { message: "Telefone inválido" } });
     });
   });
 });

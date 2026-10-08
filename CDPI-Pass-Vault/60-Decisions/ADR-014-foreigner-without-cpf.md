@@ -46,4 +46,5 @@ The implementation follows the published contract anyway: send the normalized pa
 - Apply `frontend/sql/users_foreigner.sql` on Neon before deploying.
 - Ask Asaas to enable foreign payers on the production account, then confirm a sandbox (or a tiny production) charge returns `invoiceUrl` for a passport `cpfCnpj`.
 - Profile cannot change CPF, the foreigner flag, or the passport after registration (allowlist strips them).
+- Foreigners usually have a non-BR phone. Phones travel as E.164 digits without `+`, so `normalizePhoneE164` must never parse digits-only input with a default country (fixed 2026-10-07, see [[00-Overview/Lessons-Learned]]). Trade-off: a BR number sent as national digits without `55` is now rejected or, for DDDs that match a country code (`51…` → Peru), read as that country. No client sends that shape (`PhoneInputE164` always includes the country code). A "try BR first for 10–11 digits" guard is wrong because US `12025550100` is also a valid BR national number.
 - [[60-Decisions/ADR-002-asaas-payments]] still uses Asaas. CPF is required only for Brazilian payers.
