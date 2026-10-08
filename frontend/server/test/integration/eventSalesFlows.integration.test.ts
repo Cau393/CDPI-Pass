@@ -404,6 +404,7 @@ describe.skipIf(!enabled)("free events and sales-closed (real routes + real DB)"
     const tag = randomUUID().slice(0, 8);
     const foreignEmail = `foreign-${tag}@example.test`;
     const invalidPhoneEmail = `bad-phone-${tag}@example.test`;
+    const lostCallingCodeEmail = `br-phone-${tag}@example.test`;
 
     // Same shape RegisterPage sends for a foreigner: the phone picker emits
     // E.164 digits without "+", and the CPF field is reset to "".
@@ -426,7 +427,7 @@ describe.skipIf(!enabled)("free events and sales-closed (real routes + real DB)"
 
     afterAll(async () => {
       await pool.query(`DELETE FROM users WHERE email = ANY($1)`, [
-        [foreignEmail, invalidPhoneEmail],
+        [foreignEmail, invalidPhoneEmail, lostCallingCodeEmail],
       ]);
     });
 
@@ -452,6 +453,26 @@ describe.skipIf(!enabled)("free events and sales-closed (real routes + real DB)"
       });
 
       expect(res).toMatchObject({ status: 400, body: { message: "Telefone inválido" } });
+    });
+
+    // A client whose phone field lost "+55" (keyboard Tab bug) sends national digits.
+    it("stores national Brazilian digits that are no valid E.164 number as +55", async () => {
+      const res = await api("POST", "/api/auth/register", {
+        body: {
+          ...foreignerBody(lostCallingCodeEmail, "11987654321", ""),
+          isForeigner: false,
+          cpf: "529.982.247-25",
+          foreignDocument: "",
+        },
+      });
+      const { rows } = await pool.query(`SELECT phone FROM users WHERE email = $1`, [
+        lostCallingCodeEmail,
+      ]);
+
+      expect({ status: res.status, phone: rows[0]?.phone }).toEqual({
+        status: 201,
+        phone: "5511987654321",
+      });
     });
   });
 });
