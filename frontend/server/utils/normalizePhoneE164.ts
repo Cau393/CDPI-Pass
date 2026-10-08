@@ -4,7 +4,8 @@ export type DefaultCountry = import("libphonenumber-js").CountryCode;
 
 /**
  * Normalize phone to E.164 digits only (no leading '+').
- * @throws Error if empty or not a valid number for the given defaultCountry context
+ * Digits-only input is read as E.164; defaultCountry applies only to formatted input.
+ * @throws Error if empty or not a valid number
  */
 export function normalizePhoneE164(
   input: string,
@@ -15,7 +16,11 @@ export function normalizePhoneE164(
     throw new Error("Telefone é obrigatório");
   }
 
-  const parsed = parsePhoneNumberFromString(raw, defaultCountry);
+  // Digits-only is the API/DB contract: E.164 without "+". Parsing it with a
+  // default country reads it as a national number ("595…" became "+55595…").
+  const parsed = /^\d+$/.test(raw)
+    ? parsePhoneNumberFromString(`+${raw}`)
+    : parsePhoneNumberFromString(raw, defaultCountry);
   if (!parsed || !parsed.isValid()) {
     throw new Error("Telefone inválido");
   }

@@ -23,7 +23,7 @@ const eventAnswers = {
 const apoiandoAnswers = {
   name: "joão costa",
   email: "j@ex.com",
-  phone: "11987654321",
+  phone: "5511987654321",
   overallScore: 9,
   futureTopics: "x",
   organizationExperience: "Excelente, sempre por perto" as const,

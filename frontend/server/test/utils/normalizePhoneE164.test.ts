@@ -22,6 +22,18 @@ describe("normalizePhoneE164", () => {
     expect(normalizePhoneE164("+55 (11) 9.8765-4321", "BR")).toBe("5511987654321");
   });
 
+  it("keeps Paraguay E.164 digits sent without +", () => {
+    expect(normalizePhoneE164("595981123456", "BR")).toBe("595981123456");
+  });
+
+  it("does not reinterpret US E.164 digits as a Brazilian number", () => {
+    expect(normalizePhoneE164("12025550100", "BR")).toBe("12025550100");
+  });
+
+  it("keeps Brazilian E.164 digits sent without +", () => {
+    expect(normalizePhoneE164("5511987654321", "BR")).toBe("5511987654321");
+  });
+
   it("throws on empty", () => {
     expect(() => normalizePhoneE164("", "BR")).toThrow("obrigatório");
   });

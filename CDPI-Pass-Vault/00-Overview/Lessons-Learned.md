@@ -2,6 +2,11 @@
 
 One entry per mistake or wrong assumption that cost time. Each entry: date · symptom · root cause · prevention (rule or check). Newest first. When a prevention changes how code must be written, it also gets a one-line rule in `frontend/.claude/rules/*.md`.
 
+## 2026-10-07 — foreigners got a 500 on "Criar conta"
+- **Symptom:** a Paraguayan attendee (passport, `+595` phone) got `500 {"message":"Erro interno do servidor"}` on registration, right after ADR-014 shipped. Asaas and the `users_foreigner.sql` migration looked like suspects but were not involved.
+- **Root cause:** `PhoneInputE164` sends E.164 digits without `+` (`595981123456`), but every server caller ran `normalizePhoneE164(phone, "BR")`, which parsed those digits as a *Brazilian national* number (`+55595…`), found it invalid and threw. The register route called it inline in `createUser({...})`, so the plain `Error` hit the generic 500. Brazilians never noticed because their digits start with `55`. Some foreign numbers were silently corrupted instead: US `12025550100` was stored as BR `5512025550100`. Every test fixture was Brazilian.
+- **Prevention:** `normalizePhoneE164` reads digits-only input as E.164 and uses `defaultCountry` only for formatted input. Register maps a bad phone to 400 like the other callers. Identity/phone tests carry a non-BR fixture, and a route-level integration test registers a foreigner. Rules added to `testing.md` and `error-handling.md`.
+
 ## 2026-09-03 — old contact info survived in emails after code fix
 - **Symptom:** footer was updated but "Informações Importantes" in the email body still showed `99860-6833`.
 - **Root cause:** courtesy, reminder, and communicate email bodies are stored in the database (`events.courtesy_template`, `reminder_templates.body`, `communicate_templates.body`). The admin typed old contact info into the TipTap editor and saved it. Changing `shared/contact.ts` only fixed the code-generated footer — the DB body was untouched.
