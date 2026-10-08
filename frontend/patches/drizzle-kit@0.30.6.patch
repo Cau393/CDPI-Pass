@@ -1,0 +1,36 @@
+diff --git a/api.js b/api.js
+index 24f82ccc03dde45b0c23cb2422345c22dc200a16..4ebd640584b870e36aaf15ff44a18c8ff188b048 100644
+--- a/api.js
++++ b/api.js
+@@ -31460,6 +31460,7 @@ WHERE
+       column6.column_default = column6.column_default.replace(/::(.*?)(?<![^\w"])(?=$)/, "");
+       const columnDefaultAsString = column6.column_default.toString();
+       if (isArray) {
++        if (columnDefaultAsString === "'{}'") return "'{}'";
+         return `'{${columnDefaultAsString.slice(2, -2).split(/\s*,\s*/g).map((value) => {
+           if (["integer", "smallint", "bigint", "double precision", "real"].includes(column6.data_type.slice(0, -2))) {
+             return value;
+diff --git a/api.mjs b/api.mjs
+index e95ffbb6d3b90b01cbfdaaee13e9ed5a6a979a56..7f1a447bbdd99f275466c96c46be4c66c9e40332 100644
+--- a/api.mjs
++++ b/api.mjs
+@@ -31465,6 +31465,7 @@ WHERE
+       column6.column_default = column6.column_default.replace(/::(.*?)(?<![^\w"])(?=$)/, "");
+       const columnDefaultAsString = column6.column_default.toString();
+       if (isArray) {
++        if (columnDefaultAsString === "'{}'") return "'{}'";
+         return `'{${columnDefaultAsString.slice(2, -2).split(/\s*,\s*/g).map((value) => {
+           if (["integer", "smallint", "bigint", "double precision", "real"].includes(column6.data_type.slice(0, -2))) {
+             return value;
+diff --git a/bin.cjs b/bin.cjs
+index 959405ffb553981776dac860ff9a5c2853ceef70..4f45900ebfb251b485059a22b48929df1fb9006f 100755
+--- a/bin.cjs
++++ b/bin.cjs
+@@ -19865,6 +19865,7 @@ WHERE
+       column11.column_default = column11.column_default.replace(/::(.*?)(?<![^\w"])(?=$)/, "");
+       const columnDefaultAsString = column11.column_default.toString();
+       if (isArray3) {
++        if (columnDefaultAsString === "'{}'") return "'{}'";
+         return `'{${columnDefaultAsString.slice(2, -2).split(/\s*,\s*/g).map((value) => {
+           if (["integer", "smallint", "bigint", "double precision", "real"].includes(column11.data_type.slice(0, -2))) {
+             return value;

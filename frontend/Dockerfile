@@ -13,8 +13,11 @@ RUN corepack enable
 # Copy only manifest + lockfile first so dependency installs stay cached when
 # application source changes. pnpm-workspace.yaml carries the allowBuilds
 # allowlist and must be present, or install-time scripts get skipped and the
-# native modules (bcrypt, esbuild) silently fail to build.
+# native modules (bcrypt, esbuild) silently fail to build. patches/ holds the
+# files pnpm-workspace.yaml's patchedDependencies point at; install fails
+# without them.
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+COPY frontend/patches ./patches
 
 # --frozen-lockfile fails the build if the lockfile and package.json disagree,
 # which is what makes the dependency set reproducible instead of drifting.

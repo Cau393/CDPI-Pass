@@ -10,6 +10,7 @@ import {
   integer,
   serial,
   unique,
+  index,
   uniqueIndex,
   check,
 } from "drizzle-orm/pg-core";
@@ -151,8 +152,17 @@ export const events = pgTable("events", {
   interestAreas: text("interest_areas")
     .array()
     .notNull()
-    .default(sql`'{}'::text[]`),
-});
+    .default([]),
+}, (table) => [
+  check("events_courtesy_limit_chk", sql`${table.courtesyLimit} IS NULL OR ${table.courtesyLimit} >= 1`),
+  check("events_free_price_zero_chk", sql`${table.isFree} = false OR ${table.price} = 0`),
+  check("events_modality_chk", sql`${table.modality} IN ('presencial', 'online')`),
+  check("events_nps_type_chk", sql`${table.npsType} IN ('cdpi_event', 'cdpi_apoiando')`),
+  check(
+    "events_online_meeting_url_chk",
+    sql`${table.modality} <> 'online' OR (${table.meetingUrl} IS NOT NULL AND btrim(${table.meetingUrl}) <> '')`,
+  ),
+]);
 
 /** NPS responses for "Evento CDPI" certificate flow. */
 export const npsCdpiEventResponses = pgTable(
@@ -180,7 +190,41 @@ export const npsCdpiEventResponses = pgTable(
     privacyConsent: boolean("privacy_consent").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [unique("nps_cdpi_event_user_event_unique").on(t.userId, t.eventId)],
+  (t) => [
+    unique("nps_cdpi_event_user_event_unique").on(t.userId, t.eventId),
+    index("nps_cdpi_event_created_at_idx").on(t.createdAt.desc().nullsFirst()),
+    index("nps_cdpi_event_event_id_idx").on(t.eventId),
+    check(
+      "nps_cdpi_event_workshop_feeling_chk",
+      sql`${t.workshopFeeling} IN ('Foi incrível!', 'Gostei bastante', 'Foi bom, mas esperava mais', 'Não atendeu minhas expectativas')`,
+    ),
+    check("nps_cdpi_event_themes_relevant_chk", sql`${t.themesRelevant} IN ('Sim', 'Não')`),
+    check(
+      "nps_cdpi_event_didactics_chk",
+      sql`${t.instructorsDidactics} IN ('Excelente', 'Muito boa', 'Boa', 'Regular', 'Ruim')`,
+    ),
+    check(
+      "nps_cdpi_event_career_value_chk",
+      sql`${t.careerValue} IN ('Com certeza', 'Em partes', 'Ainda estou processando')`,
+    ),
+    check(
+      "nps_cdpi_event_attend_again_chk",
+      sql`${t.wouldAttendAgain} IN ('Sim, com certeza', 'Talvez, depende do tema', 'Ainda não sei')`,
+    ),
+    check(
+      "nps_cdpi_event_support_chk",
+      sql`${t.supportRating} IN ('Excelente, sempre por perto', 'Bom, mas pode melhorar', 'Tive algumas dificuldades', 'Outro')`,
+    ),
+    check(
+      "nps_cdpi_event_support_other_chk",
+      sql`(
+        (${t.supportRating} = 'Outro' AND ${t.supportOtherText} IS NOT NULL AND length(trim(${t.supportOtherText})) > 0)
+        OR
+        (${t.supportRating} <> 'Outro' AND (${t.supportOtherText} IS NULL OR length(trim(${t.supportOtherText})) = 0))
+      )`,
+    ),
+    check("nps_cdpi_event_privacy_chk", sql`${t.privacyConsent} IS TRUE`),
+  ],
 );
 
 /** NPS responses for "Evento de Terceiros" certificate flow. */
@@ -205,7 +249,25 @@ export const npsCdpiApoiandoResponses = pgTable(
     privacyConsent: boolean("privacy_consent").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [unique("nps_cdpi_apoiando_user_event_unique").on(t.userId, t.eventId)],
+  (t) => [
+    unique("nps_cdpi_apoiando_user_event_unique").on(t.userId, t.eventId),
+    index("nps_cdpi_apoiando_created_at_idx").on(t.createdAt.desc().nullsFirst()),
+    index("nps_cdpi_apoiando_event_id_idx").on(t.eventId),
+    check("nps_cdpi_apoiando_overall_chk", sql`${t.overallScore} >= 0 AND ${t.overallScore} <= 10`),
+    check(
+      "nps_cdpi_apoiando_organization_chk",
+      sql`${t.organizationExperience} IN ('Excelente, sempre por perto', 'Bom, mas pode melhorar', 'Tive algumas dificuldades', 'Outro')`,
+    ),
+    check(
+      "nps_cdpi_apoiando_organization_other_chk",
+      sql`(
+        (${t.organizationExperience} = 'Outro' AND ${t.organizationOtherText} IS NOT NULL AND length(trim(${t.organizationOtherText})) > 0)
+        OR
+        (${t.organizationExperience} <> 'Outro' AND (${t.organizationOtherText} IS NULL OR length(trim(${t.organizationOtherText})) = 0))
+      )`,
+    ),
+    check("nps_cdpi_apoiando_privacy_chk", sql`${t.privacyConsent} IS TRUE`),
+  ],
 );
 
 // Generated certificates (one per user per event)
@@ -332,7 +394,9 @@ export const massSendJobs = pgTable('mass_send_jobs', {
   createdBy: text('created_by').notNull().references(() => users.id),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => [
+  check("mass_send_jobs_status_check", sql`${table.status} IN ('pending', 'processing', 'completed', 'failed')`),
+]);
 
 /** Reminder e-mail template per event; keyed by event_id. */
 export const reminderTemplates = pgTable("reminder_templates", {
@@ -356,7 +420,9 @@ export const reminderJobs = pgTable("reminder_jobs", {
   createdBy: text("created_by").notNull().references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => [
+  check("reminder_jobs_status_chk", sql`${table.status} IN ('pending', 'processing', 'completed', 'failed')`),
+]);
 
 /** Communicate (announcement) e-mail template per event; placeholders {nome}, {evento}, {data}. */
 export const communicateTemplates = pgTable("communicate_templates", {
@@ -382,7 +448,14 @@ export const communicateJobs = pgTable("communicate_jobs", {
   createdBy: text("created_by").notNull().references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => [
+  index("communicate_jobs_status_created_at_idx").on(table.status, table.createdAt),
+  check("communicate_jobs_status_check", sql`${table.status} IN ('pending', 'processing', 'completed', 'failed')`),
+  check(
+    "communicate_jobs_recipient_mode_check",
+    sql`${table.recipientMode} IN ('participants', 'participants_and_unredeemed', 'unredeemed_only')`,
+  ),
+]);
 
 /** One row per event: toggle automatic Zebra print queue on check-in. */
 export const eventPrintSettings = pgTable("event_print_settings", {
@@ -420,7 +493,11 @@ export const printJobs = pgTable("print_jobs", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
-});
+}, (table) => [
+  index("print_jobs_event_status_created_idx").on(table.eventId, table.status, table.createdAt),
+  index("print_jobs_order_id_idx").on(table.orderId),
+  check("print_jobs_status_chk", sql`${table.status} IN ('pending', 'processing', 'completed', 'failed')`),
+]);
 
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({

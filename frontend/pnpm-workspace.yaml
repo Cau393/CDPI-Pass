@@ -29,3 +29,10 @@ allowBuilds:
 # which is how the vite/vitest mismatch stayed hidden under npm. Keep it off so
 # incompatible peers fail loudly at install time.
 autoInstallPeers: false
+
+# drizzle-kit 0.30.6 (and 0.31.11) reads any empty-array column default back as
+# '{""}', so `events.interest_areas DEFAULT '{}'` showed up as a change on every
+# push. The patch returns '{}' for that case. Drop it once an upgrade fixes
+# defaultForColumn upstream; `pnpm db:diff` reporting 0 statements is the check.
+patchedDependencies:
+  drizzle-kit@0.30.6: patches/drizzle-kit@0.30.6.patch

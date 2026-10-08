@@ -47,3 +47,15 @@ Derived from the `frontend/sql/` files (each was run manually on Neon). This is 
 - Apply order documented in-file when it matters (e.g. NPS sequence).
 
 See [[40-Database/Migration-Workflow]] for the process.
+
+## Schema reconciled for drizzle-kit push (2026-10-07)
+`reconcile_schema_for_drizzle_push.sql` closes the drift between `shared/schema.ts` and Neon, so `drizzle-kit push` reports no changes ([[60-Decisions/ADR-015-drizzle-kit-push]]). Before it, push wanted 74 statements on staging, including `TRUNCATE users CASCADE` and `TRUNCATE orders CASCADE`.
+- `schema.ts` now declares the 22 CHECK constraints and 7 indexes that earlier `sql/` files created (events, both NPS tables, the four job tables).
+- The SQL renames 18 hand-named FKs (`*_fkey`) to drizzle names (`*_<ref>_<col>_fk`); the ON DELETE actions are unchanged.
+- It backfills `courtesy_attendees.event_title` from the attendee's order's event (staging 2 rows, prod 1), then sets it NOT NULL. `orders.max_uses` / `amnt_used` become NOT NULL (0 nulls).
+- `users.email_verification_code` becomes `varchar(6)` and `orders.qr_code_s3_url` becomes `varchar(500)` (max existing lengths 6 / 117), matching the schema.
+- Staging also got `cleanup_legacy_nps_responses.sql` (prod had it since 2026-09-04).
+
+**Applied to Neon staging and prod on 2026-10-07.** Staging: `pnpm db:diff` → 0 statements; `drizzle-kit push` → "No changes detected". Prod: `compare_database_schema` against staging shows no `public` differences.
+
+**Lesson**: a schema object created by hand SQL but not declared in `schema.ts` is a time bomb for any ORM push. Declare everything in `schema.ts`; keep `sql/` for backfills and type changes only.

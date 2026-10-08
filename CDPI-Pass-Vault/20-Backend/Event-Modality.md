@@ -2,7 +2,7 @@
 
 Events are either **presencial** (door ticket + QR e-mail) or **online** (meeting URL, no QR). Decision: [[60-Decisions/ADR-010-online-vs-presencial]]. SQL: `frontend/sql/event_modality.sql` (additive; existing rows default to `presencial`), `frontend/sql/event_online_access_extras.sql` (optional WhatsApp group URL + confirmation-email HTML), and `frontend/sql/event_meeting_password.sql` (optional meeting password).
 
-**Apply before deploy.** Staging Neon already has `modality` / `meeting_url` (applied 2026-09-14). Prod still needs that file in the Neon SQL editor before the matching app release. Apply `event_online_access_extras.sql` on the same databases before shipping WhatsApp / extra confirmation HTML. Apply `event_meeting_password.sql` in the Neon SQL editor before deploying the meeting-password release. Do not use `db:push`.
+**Apply before deploy.** Staging Neon already has `modality` / `meeting_url` (applied 2026-09-14). Prod still needs that file in the Neon SQL editor before the matching app release. Apply `event_online_access_extras.sql` on the same databases before shipping WhatsApp / extra confirmation HTML. Apply `event_meeting_password.sql` in the Neon SQL editor before deploying the meeting-password release.
 
 ## Schema
 `events.modality` — `presencial` | `online`, `NOT NULL`, default `presencial`. CHECK `events_modality_chk`.

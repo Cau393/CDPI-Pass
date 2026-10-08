@@ -8,7 +8,7 @@ Event management + ticketing platform for CDPI Pharma. Prod: https://cdpipass.co
 - [[10-Architecture/Stack|Stack]] · [[10-Architecture/Architecture-Overview|Architecture & Request Flow]]
 - [[20-Backend/API-Endpoints|API Endpoints]] · [[20-Backend/Services-Overview|Services]] · [[20-Backend/Event-Modality|Event modality (online vs presencial)]] · [[20-Backend/Workers-and-Middleware|Workers & Middleware]] · [[20-Backend/Print-Coordinator|Print Coordinator (WebSocket)]] · [[20-Backend/Certificates|Certificates (Lambda PDF)]]
 - [[30-Frontend/Frontend-Overview|Frontend: pages, routing, conventions]]
-- [[40-Database/Schema-Overview|DB Schema + ER Diagram]] · [[40-Database/Normalization-History|Normalization History]] · [[40-Database/Migration-Workflow|Migration Workflow (manual SQL)]]
+- [[40-Database/Schema-Overview|DB Schema + ER Diagram]] · [[40-Database/Normalization-History|Normalization History]] · [[40-Database/Migration-Workflow|Migration Workflow (drizzle-kit push)]]
 - [[50-Infrastructure/Deployment|Deployment (EC2/Docker/PM2)]] · [[50-Infrastructure/AWS-Services|AWS Services]] · [[50-Infrastructure/Neon-Database|Neon Database]] · [[50-Infrastructure/Environment-Variables|Env Vars]]
 - [[60-Decisions/README|Decisions (ADRs)]]
 - [[70-Operations/Operator-Guides|Operator Guides Index]]

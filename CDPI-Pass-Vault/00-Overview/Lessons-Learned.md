@@ -66,3 +66,8 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Symptom:** the deploy note described a manual Docker flow; the CI workflow actually deploys on push to `hotfix-frontend-update`.
 - **Root cause:** `Deployment.md` was never updated after `da67741 CI: deploy via git+PM2`.
 - **Prevention:** infra/CI change → update `50-Infrastructure/Deployment.md` in the same commit (rule already in `documentation.md`; now also listed here).
+
+## 2026-10-07 — `drizzle-kit push` "had bugs" and wanted to TRUNCATE users
+- **Symptom:** pushing schema changes to Neon with Drizzle did not work; the push prompt offered 74 statements, including `TRUNCATE users CASCADE` and `TRUNCATE orders CASCADE`.
+- **Root cause:** years of hand-written `sql/` files created checks, indexes, FK names, types and NOT NULLs that `shared/schema.ts` never declared. Push treats the schema as truth, so it tried to undo all of it. drizzle-kit 0.30 also turns any type change on a non-empty table into `TRUNCATE ... CASCADE`, and it misreads empty-array defaults (patched). Forbidding push hid the drift instead of fixing it.
+- **Prevention:** `schema.ts` declares every DB object; `pnpm db:diff` must be 0 before and after a change; backfills and type changes go in a transactional `sql/` file applied before the push. See [[60-Decisions/ADR-015-drizzle-kit-push]] and `frontend/.claude/rules/database.md`.

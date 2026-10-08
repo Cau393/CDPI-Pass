@@ -1,7 +1,7 @@
 # ADR-001: Manual SQL migrations, no drizzle-kit push
 
 - **Date**: recorded 2026-09-01 (decision predates)
-- **Status**: accepted
+- **Status**: superseded by [[60-Decisions/ADR-015-drizzle-kit-push|ADR-015]] (2026-10-07)
 
 ## Context
 Schema lives in `shared/schema.ts` (Drizzle), DB on Neon. drizzle-kit push/generate applies diffs automatically, with no review gate, and can produce destructive statements against a shared staging DB and a separate prod DB.

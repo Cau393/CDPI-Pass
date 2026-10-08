@@ -1,6 +1,6 @@
 # Database Schema Overview
 
-Source of truth: `frontend/shared/schema.ts` (Drizzle). 16 tables. Hosted on Neon Postgres ([[50-Infrastructure/Neon-Database]]). **All changes via manual SQL** — [[40-Database/Migration-Workflow]].
+Source of truth: `frontend/shared/schema.ts` (Drizzle). 16 tables. Hosted on Neon Postgres ([[50-Infrastructure/Neon-Database]]). Every DB object (checks, indexes, FKs, defaults) is declared there; changes go through `drizzle-kit push`. See [[40-Database/Migration-Workflow]].
 
 ## ER Diagram
 ```mermaid

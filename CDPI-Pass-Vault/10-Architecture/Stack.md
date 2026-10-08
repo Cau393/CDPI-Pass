@@ -37,7 +37,7 @@ npm run build            # tsup (server) + vite (client) → dist/
 npm run check            # tsc
 npm run test:frontend | test:backend
 ```
-DB: **never** `db:push` / `db:generate` / `db:seed` — see [[40-Database/Migration-Workflow]].
+DB: `pnpm db:diff` (dry run) then `pnpm db:push` to staging; never `db:seed` on Neon. See [[40-Database/Migration-Workflow]].
 
 ## Notable non-choices
 - No Redis/Celery despite env vars existing: all queues are Postgres tables.
