@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: false
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  drizzle-kit@0.30.6: f89880f1b264b2f6c51d05530155b22304306d0e503d85e9c7913a096fc27507
+
 importers:
 
   .:
@@ -386,7 +389,7 @@ importers:
         version: 10.5.4(postcss@8.5.26)
       drizzle-kit:
         specifier: ^0.30.4
-        version: 0.30.6
+        version: 0.30.6(patch_hash=f89880f1b264b2f6c51d05530155b22304306d0e503d85e9c7913a096fc27507)
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
@@ -2622,6 +2625,7 @@ packages:
   '@smithy/node-http-handler@4.12.0':
     resolution: {integrity: sha512-0mq1pHadfyXCYCqm2cNpbjNIT+fbaUpNxewZb/YNr2L0IrEVMOb8gM/Fl4K6XvHCW3uSNDFwPl/+iKm0bx9jYg==}
     engines: {node: '>=18.0.0'}
+    deprecated: Depreacted due to a memory leak issue https://github.com/smithy-lang/smithy-typescript/issues/2258
 
   '@smithy/signature-v4@5.7.3':
     resolution: {integrity: sha512-7ImGm+FkHRLcBaRttIAMZ6bzJZWb2cJGoYjq46F2UjycujWzrL9GEN9h4w7eQyXJYnltrUhxbbieBAIRrdqpow==}
@@ -8437,7 +8441,7 @@ snapshots:
 
   dotenv@17.4.2: {}
 
-  drizzle-kit@0.30.6:
+  drizzle-kit@0.30.6(patch_hash=f89880f1b264b2f6c51d05530155b22304306d0e503d85e9c7913a096fc27507):
     dependencies:
       '@drizzle-team/brocli': 0.10.2
       '@esbuild-kit/esm-loader': 2.6.5

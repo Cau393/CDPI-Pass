@@ -18,6 +18,7 @@
     "test:backend": "vitest run --config vitest.server.config.ts",
     "test:integration": "bash scripts/run-integration-tests.sh",
     "db:push": "drizzle-kit push",
+    "db:diff": "tsx scripts/db-diff.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx server/db-migrate.ts",
     "db:apply-nps-sql": "tsx scripts/apply-nps-sql-1-2.ts",

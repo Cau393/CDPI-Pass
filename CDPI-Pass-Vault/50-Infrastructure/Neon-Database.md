@@ -9,9 +9,9 @@ Postgres hosted on **Neon** (serverless), region `sa-east-1` (aws). Accessed via
 | Production | on the EC2 server env | Separate database. `.env` comment notes data was migrated to the Brazilian DB |
 
 ## Hard rules
-- **NEVER push schema or data to Neon from tooling** (`db:push`, `db:generate`, `db:migrate`, `db:seed` are all forbidden). Schema changes go through manual `.sql` files — see [[40-Database/Migration-Workflow]].
-- The `.env` in the repo points at **staging**. Do not assume it is prod, and do not point tooling at prod.
-- Data fixes are also manual SQL (see one-time scripts in `sql/`: status normalization, phone backfill, NPS backfill).
+- Schema changes go through `pnpm db:diff` (dry run) then `pnpm db:push`, staging first. Prod is pushed by the developer from their own machine. See [[40-Database/Migration-Workflow]]. Never `--force`, never accept a `truncate`, never `db:seed` on Neon.
+- The `.env` in the repo points at **staging**. Do not assume it is prod. Agents never point tooling at prod.
+- Data fixes, backfills and type changes are reviewed transactional SQL in `sql/` (status normalization, phone backfill, NPS backfill, the 2026-10-07 push reconciliation), applied before the push.
 
 ## Operational notes
 - Connection uses Neon **pooler** endpoint with `sslmode=require&channel_binding=require`.
