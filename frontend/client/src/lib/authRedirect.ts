@@ -133,3 +133,25 @@ export function getValidatedNextPath(rawNext: string | null | undefined): string
 
   return "/";
 }
+
+/** Auth pages that carry their own `?next=` instead of being a return target. */
+const AUTH_PATHNAMES = new Set(["/login", "/register", "/verify-email"]);
+
+/**
+ * Href for a login/register entry point. Carries `currentPath` as `?next=` only
+ * when it is a valid return target (event or courtesy page), so the visitor
+ * lands back where they were after signing up. On an auth page, that page's
+ * own `next` is forwarded instead, so switching login ↔ register keeps it.
+ */
+export function authEntryHref(
+  base: "/login" | "/register",
+  currentPath: string,
+): string {
+  const queryStart = currentPath.indexOf("?");
+  const pathname = queryStart === -1 ? currentPath : currentPath.slice(0, queryStart);
+  const source = AUTH_PATHNAMES.has(pathname)
+    ? new URLSearchParams(queryStart === -1 ? "" : currentPath.slice(queryStart)).get("next")
+    : currentPath;
+  const next = getValidatedNextPath(source);
+  return next === "/" ? base : `${base}?next=${encodeURIComponent(next)}`;
+}

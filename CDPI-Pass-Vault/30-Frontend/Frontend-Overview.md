@@ -59,6 +59,9 @@ Logged out, the CTA toasts **Faça login ou cadastre-se para resgatar a cortesia
 
 Copy for the courtesy price, CTA, login toast, and invalid-code sentence lives in `client/src/lib/eventCta.ts`. See [[60-Decisions/ADR-012-courtesy-event-before-register]].
 
+## Sign-up and login entry points
+Logged out, `Navigation` shows **Entrar** (ghost) and a white **Cadastre-se** pill (`nav-register`) on desktop. On mobile, the **Cadastre-se** pill (`nav-register-mobile`) sits in the top bar next to the hamburger, so it is visible without opening the menu; the menu lists **Entrar** and **Criar conta**. Logged in, the bar keeps **Área de acesso**. LoginPage offers a full-width outline **Criar conta** button that keeps `?next=`. Every header entry point builds its href with `authEntryHref(base, currentPath)` (`client/src/lib/authRedirect.ts`). It adds `?next=` only when `getValidatedNextPath` accepts the current page (event or courtesy), so signing up from an event returns the visitor to it. On `/login`, `/register` or `/verify-email` it forwards that page's own `next`, so switching between login and sign-up keeps the return path. Measured in Chromium: the pill is 116×44 and *Entrar* / the menu items are 44px tall (touch targets); at 360px the logo, pill and hamburger fit with no horizontal scroll. LoginPage builds its *Criar conta* href with `authEntryHref` too, so an invalid `next` is dropped instead of forwarded. See [[60-Decisions/ADR-016-event-registration-forms-and-minimal-signup]].
+
 ## Courtesy redeem cap
 Admin create and edit (`EventFormFields`, label **Limite total de cortesias**) share an optional numeric field. Blank means no cap. On the cortesia quota lookup and the mass-send recipient list, **Ativar** stays disabled while paid courtesy redeems are at or above that cap. Raising the number on the event form only unlocks the button; it does not turn links back on. See [[60-Decisions/ADR-011-courtesy-redeem-limit]].
 

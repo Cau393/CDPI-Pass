@@ -9,12 +9,22 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/useAuth";
+import { authEntryHref } from "@/lib/authRedirect";
 import { Menu, User, LogOut, Search } from "lucide-react";
+
+/** Primary sign-up CTA: filled pill that stands out on the bg-primary bar. */
+const SIGN_UP_PILL_CLASS =
+  "bg-white text-primary hover:bg-white/90 min-h-11 px-4 rounded-full text-sm font-semibold shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-primary";
 
 export default function Navigation() {
   const [, setLocation] = useLocation();
   const { user, isAuthenticated } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  /** Login/register keep the current event or courtesy page as the return path. */
+  const goToAuth = (base: "/login" | "/register") => {
+    setLocation(authEntryHref(base, `${window.location.pathname}${window.location.search}`));
+  };
 
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -53,7 +63,7 @@ export default function Navigation() {
           </div>
           
           <div className="hidden md:block">
-            <div className="ml-10 flex items-baseline space-x-6">
+            <div className="ml-10 flex items-center space-x-6">
               <button
                 onClick={() => setLocation("/eventos")}
                 className="text-white hover:bg-white/10 px-3 py-2 rounded-md text-sm font-medium transition-colors"
@@ -88,13 +98,22 @@ export default function Navigation() {
                   )}
                 </>
               ) : (
-                <button
-                  onClick={() => setLocation("/login")}
-                  className="text-white hover:bg-white/10 px-3 py-2 rounded-md text-sm font-medium transition-colors"
-                  data-testid="nav-login"
-                >
-                  Área de acesso
-                </button>
+                <>
+                  <button
+                    onClick={() => goToAuth("/login")}
+                    className="text-white hover:bg-white/10 min-h-11 px-3 py-2 rounded-md text-sm font-medium transition-colors"
+                    data-testid="nav-login"
+                  >
+                    Entrar
+                  </button>
+                  <button
+                    onClick={() => goToAuth("/register")}
+                    className={SIGN_UP_PILL_CLASS}
+                    data-testid="nav-register"
+                  >
+                    Cadastre-se
+                  </button>
+                </>
               )}
               <button
                 onClick={() => setLocation("/eventos")}
@@ -189,7 +208,17 @@ export default function Navigation() {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-            
+
+            {!isAuthenticated && (
+              <button
+                onClick={() => goToAuth("/register")}
+                className={`${SIGN_UP_PILL_CLASS} mr-2`}
+                data-testid="nav-register-mobile"
+              >
+                Cadastre-se
+              </button>
+            )}
+
             <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
               className="text-white hover:bg-white/10 p-2 rounded-md transition-colors"
@@ -223,15 +252,26 @@ export default function Navigation() {
                 Resgate de cortesia
               </button>
               {!isAuthenticated && (
-                <button
-                  onClick={() => {
-                    setLocation("/login");
-                    setIsMobileMenuOpen(false);
-                  }}
-                  className="text-white hover:bg-white/10 block px-3 py-2 rounded-md text-base font-medium w-full text-left transition-colors"
-                >
-                  Área de acesso
-                </button>
+                <>
+                  <button
+                    onClick={() => {
+                      goToAuth("/login");
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="text-white hover:bg-white/10 block min-h-11 px-3 py-2 rounded-md text-base font-medium w-full text-left transition-colors"
+                  >
+                    Entrar
+                  </button>
+                  <button
+                    onClick={() => {
+                      goToAuth("/register");
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className="text-white hover:bg-white/10 block min-h-11 px-3 py-2 rounded-md text-base font-medium w-full text-left transition-colors"
+                  >
+                    Criar conta
+                  </button>
+                </>
               )}
             </div>
           </div>
