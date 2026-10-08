@@ -65,22 +65,38 @@ vi.mock("../../services/emailService", () => ({
 }));
 
 const asaasCalls: unknown[] = [];
-vi.mock("../../services/asaasService", () => ({
-  asaasService: {
-    // If a free event ever reaches Asaas, this records it and the test fails.
-    createPayment: vi.fn(async (payload: unknown) => {
-      asaasCalls.push(payload);
-      return {
-        id: `pay_${randomUUID()}`,
-        paymentLink: "https://asaas.test/pay",
-        status: "PENDING",
-        value: 0,
-      };
-    }),
-    cancelPayment: vi.fn(async () => ({})),
-    getPayment: vi.fn(async () => ({})),
-  },
-}));
+vi.mock("../../services/asaasService", async () => {
+  const { AsaasApiError } = await import("../../utils/asaasErrors");
+  return {
+    asaasService: {
+      // Production answer of 2026-10-06 while the account has no foreign-payer permission.
+      createForeignCardPayment: vi.fn(async () => {
+        throw new AsaasApiError(400, {
+          errors: [
+            {
+              code: "invalid_object",
+              description:
+                "Sua conta não tem permissão para gerar pagadores estrangeiros. Para mais informações, entre em contato com seu Gerente de Contas.",
+            },
+            { code: "invalid_object", description: "O CPF/CNPJ informado é inválido." },
+          ],
+        });
+      }),
+      // If a free event ever reaches Asaas, this records it and the test fails.
+      createPayment: vi.fn(async (payload: unknown) => {
+        asaasCalls.push(payload);
+        return {
+          id: `pay_${randomUUID()}`,
+          paymentLink: "https://asaas.test/pay",
+          status: "PENDING",
+          value: 0,
+        };
+      }),
+      cancelPayment: vi.fn(async () => ({})),
+      getPayment: vi.fn(async () => ({})),
+    },
+  };
+});
 
 vi.mock("../../services/s3Service", () => ({
   s3Service: {
@@ -159,6 +175,18 @@ async function createUser(): Promise<{ id: string; token: string; cpf: string }>
   );
   createdUserIds.push(id);
   return { id, token: jwt.sign({ userId: id }, JWT_SECRET), cpf };
+}
+
+/** ADR-014 foreign account: passport instead of CPF, Paraguay phone. */
+async function createForeignUser(): Promise<{ id: string; token: string }> {
+  const id = randomUUID();
+  await pool.query(
+    `INSERT INTO users (id, email, email_verified, password, name, cpf, is_foreigner, foreign_document, phone, birth_date, address, occupation, partner_company, area_of_activity, is_admin)
+     VALUES ($1,$2,true,'x',$3,NULL,true,$4,'595981123456',$5,'Calle de prueba 151, Asunción','Nao aplicavel','Nao aplicavel','Nao aplicavel',false)`,
+    [id, `foreign-${id.slice(0, 8)}@example.test`, "Participante Estrangeira", `PY${id.slice(0, 8).toUpperCase()}`, new Date("1990-01-01")],
+  );
+  createdUserIds.push(id);
+  return { id, token: jwt.sign({ userId: id }, JWT_SECRET) };
 }
 
 describe.skipIf(!enabled)("free events and sales-closed (real routes + real DB)", () => {
@@ -381,6 +409,27 @@ describe.skipIf(!enabled)("free events and sales-closed (real routes + real DB)"
       await pool.query(`DELETE FROM orders WHERE courtesy_link_id = $1`, [linkId]);
       await pool.query(`DELETE FROM courtesy_links WHERE id = $1`, [linkId]);
       await pool.query(`DELETE FROM courtesy_attendees WHERE email = 'convidado@example.test'`);
+    });
+  });
+
+  describe("foreign card checkout while Asaas refuses foreign payers", () => {
+    it("answers 503 with the CDPI contact and leaves no order behind", async () => {
+      const eventId = await createEvent({ price: "100.00" });
+      const foreigner = await createForeignUser();
+
+      const res = await api("POST", "/api/orders", {
+        token: foreigner.token,
+        body: { eventId, paymentMethod: "credit_card" },
+      });
+      const { rows } = await pool.query(`SELECT count(*)::int AS n FROM orders WHERE user_id = $1`, [
+        foreigner.id,
+      ]);
+
+      expect({ status: res.status, code: res.body?.code, orders: rows[0].n }).toEqual({
+        status: 503,
+        code: "foreign_payment_unavailable",
+        orders: 0,
+      });
     });
   });
 

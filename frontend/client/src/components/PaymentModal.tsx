@@ -11,6 +11,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Event } from "@shared/schema";
 import { publicEventLocationLabel } from "@shared/eventModality";
 import { isFreeEvent } from "@/lib/eventCta";
+import { parseApiErrorMessage } from "@/lib/eventForm";
 
 interface EventForModal {
   id: string;
@@ -70,7 +71,7 @@ export default function PaymentModal({ isOpen, onClose, event, promoCode, displa
       onError: (error: Error) => {
         toast({
           title: "Erro ao processar pagamento",
-          description: error.message,
+          description: parseApiErrorMessage(error),
           variant: "destructive",
         });
       },

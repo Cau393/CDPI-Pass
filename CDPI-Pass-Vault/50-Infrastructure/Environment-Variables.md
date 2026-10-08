@@ -9,7 +9,7 @@ Reference of names + purpose only. **Values live in `frontend/.env` (staging) an
 | `JWT_SECRET` | auth middleware, emails, print WS | JWT signing |
 | `SESSION_SECRET` | server | session secret |
 | `SENDGRID_API_KEY`, `SENDGRID_FROM_EMAIL` | emailService | email delivery |
-| `ASAAS_API_KEY`, `ASAAS_API_URL` | asaasService | payments (sandbox vs prod by URL) |
+| `ASAAS_API_KEY`, `ASAAS_API_URL` | asaasService | payments; URL defaults to `https://api.asaas.com/v3` (read since 2026-10-08; sandbox key `$aact_hmlg_…` needs `https://api-sandbox.asaas.com/v3`) |
 | `ASAAS_WEBHOOK_TOKEN` | webhook route | validates Asaas webhook calls |
 | `QR_CODE_SECRET` | qrCodeService | HMAC signing of QR payloads |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` | s3Service, Lambda | AWS credentials (needs S3 + `lambda:InvokeFunction`) |
