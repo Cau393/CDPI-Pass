@@ -6,7 +6,7 @@ The step-by-step runbook for [[60-Decisions/ADR-016-event-registration-forms-and
 |---|---|---|
 | 0 | Prerequisites (sync, baseline, foreign-card fix) | ⏳ |
 | 1 | Visible *Cadastre-se* CTA | ✅ PR `feat/register-cta-visibility` |
-| 2 | DB expand (schema only) | ⏳ |
+| 2 | DB expand (schema only) | 🟡 staging done; prod push pending (PR `feat/registration-forms-db`) |
 | 3 | Form builder + locked fields + answers + Excel | ⏳ |
 | 4 | Minimal signup | ⏳ |
 | 5 | Docs (part of every PR) | ongoing |
@@ -56,9 +56,9 @@ Edit `frontend/shared/schema.ts`. Each change only **adds or loosens**. drizzle-
 | `events.registration_form jsonb NOT NULL DEFAULT '[]'::jsonb`, `.$type<RegistrationField[]>()` | ADD COLUMN |
 | `orders.registration_answers jsonb NOT NULL DEFAULT '[]'::jsonb`, `.$type<RegistrationAnswer[]>()` | ADD COLUMN |
 | `users.birth_date`, `users.address` | DROP NOT NULL |
-| `users_identity_document_chk` → `(is_foreigner = false AND foreign_document IS NULL) OR (is_foreigner = true AND cpf IS NULL AND foreign_document IS NOT NULL)` | drop and re-add CHECK |
-| `orders_identity_document_chk` → `NOT (cpf IS NOT NULL AND foreign_document IS NOT NULL)` | drop and re-add CHECK |
-| `courtesy_attendees_identity_document_chk` relaxed like `users`; `courtesy_attendees.birth_date`, `address` DROP NOT NULL | drop and re-add CHECK, DROP NOT NULL |
+| `users_identity_document_chk` → `(is_foreigner = false AND foreign_document IS NULL) OR (is_foreigner = true AND cpf IS NULL AND foreign_document IS NOT NULL)` | **nothing**: push ignores a changed CHECK expression; `sql/registration_forms_loosen_identity_checks.sql` |
+| `orders_identity_document_chk` → `NOT (cpf IS NOT NULL AND foreign_document IS NOT NULL)` | same SQL file |
+| `courtesy_attendees_identity_document_chk` relaxed like `users`; `courtesy_attendees.birth_date`, `address` DROP NOT NULL | same SQL file; DROP NOT NULL by push |
 
 Add `frontend/sql/backfill_interest_areas_into_registration_form.sql`. It is idempotent and safe to re-run:
 
@@ -72,10 +72,18 @@ WHERE registration_form = '[]'::jsonb AND cardinality(interest_areas) > 0;
 
 Mark `events.interest_areas` and `orders.interest_area` as deprecated in schema comments. **Do not drop them**; that is a later, separately approved step.
 
+**Rollout order (staging, then prod):**
+1. `sql/registration_forms_loosen_identity_checks.sql` (idempotent);
+2. `pnpm db:diff` shows exactly 6 statements (2 ADD COLUMN, 4 DROP NOT NULL), no TRUNCATE; then `pnpm db:push`;
+3. `sql/backfill_interest_areas_into_registration_form.sql` (idempotent);
+4. `pnpm db:diff` = 0, and the three `*_identity_document_chk` from `pg_get_constraintdef` match the SQL file.
+
+Prod schema goes **before** the Phase 2 code is deployed: the new code selects `registration_answers`.
+
 **Done when**
-- `pnpm db:diff` on staging shows exactly the statements above, with no TRUNCATE.
-- After `pnpm db:push` on staging, `pnpm db:diff` shows **0**. If the jsonb default keeps re-appearing, declare it as ``sql`'[]'::jsonb` `` and re-check.
-- The backfill has been applied on staging.
+- `pnpm db:diff` on staging shows exactly the statements above, with no TRUNCATE. ✅ 2026-10-08
+- After `pnpm db:push` on staging, `pnpm db:diff` shows **0**. If the jsonb default keeps re-appearing, declare it as ``sql`'[]'::jsonb` `` and re-check. ✅ 2026-10-08 (declared that way from the start)
+- The backfill has been applied on staging. ✅ 2026-10-08 (0 staging events had labels)
 - `pnpm run test:integration` is green.
 - The developer pushes prod and confirms with a staging-vs-prod schema compare.
 

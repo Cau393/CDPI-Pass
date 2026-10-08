@@ -59,3 +59,14 @@ See [[40-Database/Migration-Workflow]] for the process.
 **Applied to Neon staging and prod on 2026-10-07.** Staging: `pnpm db:diff` → 0 statements; `drizzle-kit push` → "No changes detected". Prod: `compare_database_schema` against staging shows no `public` differences.
 
 **Lesson**: a schema object created by hand SQL but not declared in `schema.ts` is a time bomb for any ORM push. Declare everything in `schema.ts`; keep `sql/` for backfills and type changes only.
+
+## Registration forms: DB expand (ADR-016 Phase 2, 2026-10-08)
+Additive or loosening only; old code ignores the new columns, so deploy order is: prod schema first, then the Phase 2 code.
+- `events.registration_form` and `orders.registration_answers`: jsonb NOT NULL default `'[]'` (push).
+- `users.birth_date`, `users.address`, `courtesy_attendees.birth_date`, `courtesy_attendees.address`: DROP NOT NULL (push).
+- `sql/registration_forms_loosen_identity_checks.sql`: drops and re-adds the three `*_identity_document_chk` with the looser expressions. **Needed because drizzle-kit 0.30 push matches CHECKs by name and never emits a change when only the expression differs**; apply it before the push.
+- `sql/backfill_interest_areas_into_registration_form.sql`: copies `interest_areas` into a required "Área de interesse" dropdown on events whose form is still empty (idempotent). Apply after the push.
+
+**Staging (2026-10-08):** checks SQL → `pnpm db:push` (6 statements, no TRUNCATE) → backfill (0 events had labels) → `pnpm db:diff` = 0; identity CHECK definitions identical to a fresh push. **Prod: pending** (developer runs it).
+
+**Lesson**: `db:diff` = 0 does not prove a CHECK matches `schema.ts`. Compare `pg_get_constraintdef` against a DB freshly pushed from the schema.

@@ -74,7 +74,8 @@ export interface IStorage {
 
   // Order operations
   getOrder(id: string): Promise<Order | undefined>;
-  getOrdersByUser(userId: string, page: number, limit: number): Promise<{ orders: Order[]; total: number }>;
+  /** "Meus ingressos": buyer-facing, so registration answers are not selected (ADR-016). */
+  getOrdersByUser(userId: string, page: number, limit: number): Promise<{ orders: Omit<Order, "registrationAnswers">[]; total: number }>;
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
   getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined>;
@@ -323,7 +324,7 @@ export class DatabaseStorage implements IStorage {
     return order;
   }
 
-  async getOrdersByUser(userId: string, page: number = 1, limit: number = 10): Promise<{ orders: Order[]; total: number }> {
+  async getOrdersByUser(userId: string, page: number = 1, limit: number = 10): Promise<{ orders: Omit<Order, "registrationAnswers">[]; total: number }> {
     const offset = (page - 1) * limit;
     
     const ordersQuery = db

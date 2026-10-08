@@ -13,9 +13,11 @@ import {
   index,
   uniqueIndex,
   check,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import type { RegistrationAnswer, RegistrationField } from "./eventRegistrationForm";
 
 /**
  * Account mailbox: trim and lowercase before format check.
@@ -46,8 +48,10 @@ export const users = pgTable(
     /** Passport or other foreign id. Null for Brazilian accounts. */
     foreignDocument: varchar("foreign_document", { length: 32 }),
     phone: varchar("phone", { length: 20 }).notNull(),
-    birthDate: timestamp("birth_date").notNull(),
-    address: text("address").notNull(),
+    /** Profile-only since ADR-016; null until the user fills the profile. */
+    birthDate: timestamp("birth_date"),
+    /** Asked by in-person inscriptions (ADR-016); null until then. */
+    address: text("address"),
     occupation: varchar("occupation", { length: 255 }).notNull().default("Nao aplicavel"),
     partnerCompany: varchar("partner_company", { length: 255 }).notNull().default("Nao aplicavel"),
     areaOfActivity: varchar("area_of_activity", { length: 255 }).notNull().default("Nao aplicavel"),
@@ -62,10 +66,12 @@ export const users = pgTable(
     uniqueIndex("users_foreign_document_unique")
       .on(table.foreignDocument)
       .where(sql`${table.foreignDocument} is not null`),
+    // ADR-016: a Brazilian account may have no CPF until its first in-person
+    // or paid inscription. Never re-tighten once such rows exist.
     check(
       "users_identity_document_chk",
       sql`(
-        (${table.isForeigner} = false AND ${table.cpf} IS NOT NULL AND ${table.foreignDocument} IS NULL)
+        (${table.isForeigner} = false AND ${table.foreignDocument} IS NULL)
         OR
         (${table.isForeigner} = true AND ${table.cpf} IS NULL AND ${table.foreignDocument} IS NOT NULL)
       )`,
@@ -148,11 +154,19 @@ export const events = pgTable("events", {
   /**
    * Optional closed list of "Área de Interesse" labels, in insertion order.
    * Empty means inscription does not ask. Not users.area_of_activity.
+   * @deprecated ADR-016: copied into registration_form by
+   * sql/backfill_interest_areas_into_registration_form.sql. Read-only until a
+   * separately approved step drops it.
    */
   interestAreas: text("interest_areas")
     .array()
     .notNull()
     .default([]),
+  /** Creator-defined questions (ADR-016). Locked document/address questions are not stored here. */
+  registrationForm: jsonb("registration_form")
+    .$type<RegistrationField[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
 }, (table) => [
   check("events_courtesy_limit_chk", sql`${table.courtesyLimit} IS NULL OR ${table.courtesyLimit} >= 1`),
   check("events_free_price_zero_chk", sql`${table.isFree} = false OR ${table.price} = 0`),
@@ -331,16 +345,19 @@ export const orders = pgTable("orders", {
    * Snapshot of the event interest-area label chosen at order creation.
    * Null when the event list was empty. Not a foreign key: later edits to
    * events.interest_areas do not change this value.
+   * @deprecated ADR-016: replaced by registration_answers; kept read-only.
    */
   interestArea: varchar("interest_area", { length: 255 }),
+  /** Snapshot of the registration-form answers at inscription (ADR-016). */
+  registrationAnswers: jsonb("registration_answers")
+    .$type<RegistrationAnswer[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
 }, (table) => [
+  // ADR-016: an online order may carry no document; never both.
   check(
     "orders_identity_document_chk",
-    sql`(
-      (${table.cpf} IS NOT NULL AND ${table.foreignDocument} IS NULL)
-      OR
-      (${table.cpf} IS NULL AND ${table.foreignDocument} IS NOT NULL)
-    )`,
+    sql`NOT (${table.cpf} IS NOT NULL AND ${table.foreignDocument} IS NOT NULL)`,
   ),
 ]);
 
@@ -367,8 +384,9 @@ export const courtesyAttendees = pgTable("courtesy_attendees", {
   isForeigner: boolean("is_foreigner").notNull().default(false),
   foreignDocument: varchar("foreign_document", { length: 32 }),
   phone: varchar("phone", { length: 20 }).notNull(),
-  birthDate: timestamp("birth_date").notNull(),
-  address: text("address").notNull(),
+  /** Asked only on in-person courtesy events (ADR-016). */
+  birthDate: timestamp("birth_date"),
+  address: text("address"),
   partnerCompany: varchar("partner_company", { length: 255 }),
   occupation: varchar("occupation", { length: 255 }),
   eventTitle: varchar("event_title", { length: 255 }).notNull(),
@@ -378,7 +396,7 @@ export const courtesyAttendees = pgTable("courtesy_attendees", {
   check(
     "courtesy_attendees_identity_document_chk",
     sql`(
-      (${table.isForeigner} = false AND ${table.cpf} IS NOT NULL AND ${table.foreignDocument} IS NULL)
+      (${table.isForeigner} = false AND ${table.foreignDocument} IS NULL)
       OR
       (${table.isForeigner} = true AND ${table.cpf} IS NULL AND ${table.foreignDocument} IS NOT NULL)
     )`,

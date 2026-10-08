@@ -76,3 +76,8 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Symptom:** found during the ADR-016 analysis; no user hit it (prod had 0 events with interest areas). `resolveOrderInterestArea` rejects `POST /api/orders` and `POST /api/courtesy/redeem` with 400 "Selecione uma área de interesse" when the event has labels, but only `useFreeSubscribe` sends `interestArea`. `PaymentModal` and `CourtesyRedeemPage` never do, so paid checkout and courtesy redeem would fail on such an event.
 - **Root cause:** the server gate was added to all three inscription routes, while client wiring and tests covered only the free-subscribe path.
 - **Prevention:** a new inscription gate ships with a client caller **and** a test for each of the three entry points (`PaymentModal` → `/api/orders`, `useFreeSubscribe` → `/subscribe`, `CourtesyRedeemPage` → `/courtesy/redeem`). Phase 3 of [[70-Operations/Plan-Event-Registration-Forms]] replaces the gate and wires all three.
+
+## 2026-10-08 — drizzle-kit push silently ignores a changed CHECK expression
+- **Symptom:** while rehearsing ADR-016 Phase 2 locally, `pnpm db:diff` listed the new columns and DROP NOT NULLs but none of the three loosened `*_identity_document_chk` constraints; after the push it reported 0 statements while the database still had the strict checks.
+- **Root cause:** drizzle-kit 0.30 push matches CHECK constraints by name only. The runbook assumed it would "drop and re-add".
+- **Prevention:** a changed CHECK ships as a `sql/` drop + add applied before the push; verify with `pg_get_constraintdef` against a DB freshly pushed from `schema.ts`. Rule in `frontend/.claude/rules/database.md`.
