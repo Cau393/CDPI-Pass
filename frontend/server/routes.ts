@@ -2549,7 +2549,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? await asaasService.createForeignCardPayment({
               name: req.user.name,
               email: req.user.email,
-              cpfCnpj: req.user.foreignDocument!,
               phone: req.user.phone?.replace(/\D/g, '') || '',
               userId,
               value: totalAmount,
