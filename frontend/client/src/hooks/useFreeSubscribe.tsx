@@ -70,17 +70,20 @@ export function useFreeSubscribe() {
       });
       setLocation("/profile");
     },
-    onError: (error: Error, input) => {
-      refreshAfterStaleRegistration(error, input.event.id);
+    onError: async (error: Error, input) => {
+      // The form may have changed since this event was cached: retry with the fresh one.
+      const fresh = await refreshAfterStaleRegistration(error, input.event.id);
+      const event = fresh ?? input.event;
       const missing = identityRequiredMissing(error);
       if (missing) {
         // Said inline, so a reopen that asks nothing new is never silent.
         setPromptError(parseApiErrorMessage(error));
-        setPrompt({ event: input.event, missing });
+        setPrompt({ event, missing });
         return;
       }
       const message = parseApiErrorMessage(error);
       setPromptError(message);
+      if (fresh) setPrompt((current) => (current ? { ...current, event: fresh } : current));
       toast({
         title: "Não foi possível confirmar",
         description: message,

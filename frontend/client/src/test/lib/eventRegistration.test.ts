@@ -130,6 +130,11 @@ describe("staleRegistrationError", () => {
     expect(staleRegistrationError(new Error(`400: ${JSON.stringify({ message })}`))).toBe("form");
   });
 
+  it("flags the 409 reload message an old bundle gets as a form-stale error", () => {
+    const err = new Error('409: {"message":"Atualize a página para concluir o cadastro"}');
+    expect(staleRegistrationError(err)).toBe("form");
+  });
+
   it("ignores unrelated errors and non-400 statuses", () => {
     expect(staleRegistrationError(new Error('400: {"message":"Evento esgotado"}'))).toBeNull();
     expect(staleRegistrationError(new Error('500: {"message":"Responda a pergunta obrigatória: A"}'))).toBeNull();
