@@ -9,7 +9,7 @@ The step-by-step runbook for [[60-Decisions/ADR-016-event-registration-forms-and
 | 2 | DB expand (schema only) | ✅ staging and prod applied 2026-10-08 (backup branch `backup-pre-adr016-phase2-2026-10-08`); code in #4 |
 | 3 | Form builder + locked fields + answers + Excel | ✅ in #4 |
 | 4 | Minimal signup | ✅ in #4 |
-| 6 | Rollout ([[70-Operations/Prompt-ADR-016-Rollout]], design [[70-Operations/ADR-016-Rollout-Plan]]): legacy questions (#5), refuter items (#6), Playwright suite (#7), rehearsals | 🟡 code merged into #4; prod SQL awaiting owner approval; see **Deploy checklist** |
+| 6 | Rollout ([[70-Operations/Prompt-ADR-016-Rollout]], design [[70-Operations/ADR-016-Rollout-Plan]]): legacy questions (#5), refuter items (#6), Playwright suite (#7), rehearsals | ✅ deployed 2026-10-09 17:34 BRT (`f937827`, PR #4 + #13); see **Deploy checklist → Progress** |
 | 5 | Docs (part of every PR) | ongoing |
 
 ## Who is asked what
@@ -304,6 +304,28 @@ Every new test must **fail before** its change. Gates per PR: `pnpm run check`, 
   - An overdue PIX paid after the order was cancelled: `PAYMENT_RECEIVED` → the order **stays cancelled**. The customer paid and has no ticket. This is pre-existing prod behaviour; the owner decides whether a late payment should revive the order or alert an admin.
   - Fixes in PR #13 (into #4): `paymentLink` fallback, atomic `pending → paid` claim, foreign paid block.
 - **Gate before the deploy (owner, 2026-10-09):** the owner runs a complete purchase and sign-up on **localhost with the staging DB and the sandbox key**, with the sandbox webhook live through ngrok. Only after that is #4 merged into `hotfix-frontend-update`.
+- **Owner human test ✅** (localhost + staging DB + sandbox webhook): card through the payment link, 3 installments → 3 × `PAYMENT_CONFIRMED` → order `paid` once, 1 seat, 1 e-mail. **Asaas does copy the link's `externalReference` onto each installment payment**; the `paymentLink` fallback is a safety net.
+- **Lead Playwright run ✅** on the same setup, 9/9:
+  - 4-field signup + e-mail code.
+  - Free online, no dialog.
+  - Free in-person: CPF + address.
+  - PIX and boleto paid by the webhook only, 1 seat each, "Confirmado" on the profile.
+  - "Sou estrangeiro" on a paid event: notice, Continuar off, nothing saved.
+  - Foreigner, free in-person with a passport → confirmed.
+  - Foreign account on a paid event: notice, button off, API 403.
+- **Deploy ✅:** pre-flight 1 prod order in 15 min, 0 pending in 60 min, legacy ids 3/3. The owner said go at 17h (not the usual quiet hour), and the measured traffic was quiet. PR #4 merged `f937827` 20:34:57 UTC. CI/CD run 37987955871: Run Tests ✅, Deploy to EC2 ✅.
+- **Prod smoke ✅** (read-only):
+  - `/api/events` 200 and every event has `registrationForm`. The 3 live events carry the 3 legacy ids.
+  - The 3 pages at 390/1280 px: 200, correct button, no page errors, no horizontal scroll, "Cadastre-se" in the header.
+  - Old-shape register → 409, 0 accounts created.
+- **Cleanup ✅:**
+  - The temporary sandbox webhook was deleted. The sandbox now also holds a webhook that is not ours: "Workshop ingressos" → `workshopemagrecimento.lovable.app`.
+  - Test customers deleted. Received sandbox charges cannot be deleted.
+  - The local app, proxy, fake S3 and Postgres were stopped.
+- **Owner, still open:**
+  - Asaas **prod** → Integrações → Webhooks: active, not interrupted, no failed queue.
+  - Decide whether a late payment of a cancelled order should revive it or alert an admin.
+  - Re-enable foreign paid checkout when Asaas confirms (`FOREIGN_PAID_CHECKOUT_ENABLED`).
 
 Merge #4 only after every step before it has observed output. The why behind each step is in [[70-Operations/ADR-016-Rollout-Plan]].
 
