@@ -984,8 +984,8 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
         },
       });
 
-      expect(missing.status).toBe(400);
-      expect(missing.body.message).toContain("Cargo que ocupa");
+      // No `answers` key = old bundle: reload (409); the 400 with a key is covered below.
+      expect(missing.status).toBe(409);
       expect(ok.status).toBe(201);
     });
 
@@ -1029,8 +1029,7 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
       expect((await orderFor(user.id, eventId)).registration_answers).toEqual(
         snapshot(PROFILE.occupation, PROFILE.company, PROFILE.area),
       );
-      expect(refused.status).toBe(400);
-      expect(refused.body.message).toContain("Cargo que ocupa");
+      expect(refused.status).toBe(409);
     });
 
     describe("courtesy redeem", () => {
@@ -1061,7 +1060,7 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
         });
         const link = await code(eventId, admin.id);
 
-        const noArea = await api("POST", "/api/courtesy/redeem", { token: sponsor.token, body: { ...body({}), code: link } });
+        const noArea = await api("POST", "/api/courtesy/redeem", { token: sponsor.token, body: { ...body({ answers: {} }), code: link } });
         const ok = await api("POST", "/api/courtesy/redeem", {
           token: sponsor.token,
           body: { ...body({ answers: { "legacy-area-of-activity": "Farmácia" } }), code: link },
@@ -1171,6 +1170,120 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
         const res = await api("GET", `/api/admin/events/${eventId}/participants`, { token: admin.token });
 
         expect(res.body.data[0]).toMatchObject({ occupation: PROFILE.occupation, registrationAnswers: [] });
+      });
+    });
+
+    describe("old bundle (no `answers` key) that cannot be completed", () => {
+      const RELOAD = { message: "Atualize a página para concluir a inscrição", code: "reload_required" };
+
+      it("/subscribe: 4-field account, no answers key -> 409 reload; with answers key -> 400; full profile -> 201", async () => {
+        const eventId = await createEvent({ modality: "online", isFree: true, registrationForm: legacyForm });
+        const bare = await createBareUser();
+        const full = await createLegacyUser();
+        const foreigner = await createLegacyUser({ foreigner: true });
+
+        const old = await api("POST", `/api/events/${eventId}/subscribe`, { token: bare.token, body: {} });
+        const fresh = await api("POST", `/api/events/${eventId}/subscribe`, { token: bare.token, body: { answers: {} } });
+        const okFull = await api("POST", `/api/events/${eventId}/subscribe`, { token: full.token, body: {} });
+        const okForeign = await api("POST", `/api/events/${eventId}/subscribe`, { token: foreigner.token, body: {} });
+
+        expect(old).toMatchObject({ status: 409, body: RELOAD });
+        expect(fresh.status).toBe(400);
+        expect(okFull.status).toBe(201);
+        expect(okForeign.status).toBe(201);
+      });
+
+      it("/api/orders: 4-field foreigner, no answers key -> 409 reload; with answers key -> 400", async () => {
+        const eventId = await createEvent({ modality: "online", isFree: false, registrationForm: legacyForm });
+        const visitor = await createBareUser({ phone: "595981123456" });
+        await api("PUT", "/api/profile/identity", { token: visitor.token, body: { isForeigner: true, foreignDocument: nextPassport() } });
+
+        const old = await api("POST", "/api/orders", { token: visitor.token, body: { eventId, paymentMethod: "credit_card" } });
+        const fresh = await api("POST", "/api/orders", {
+          token: visitor.token,
+          body: { eventId, paymentMethod: "credit_card", answers: {} },
+        });
+
+        expect(old).toMatchObject({ status: 409, body: RELOAD });
+        expect(fresh.status).toBe(400);
+      });
+
+      it("/courtesy/redeem: old body (no answers key) on an event with the area question -> 409; with the key -> 400", async () => {
+        const eventId = await createEvent({ modality: "online", isFree: false, registrationForm: legacyForm });
+        const admin = await createBareUser({ isAdmin: true });
+        const sponsor = await createLegacyUser({ foreigner: true });
+        const email = `forms-courtesy-${sponsor.id.slice(0, 8)}@example.test`;
+        const c = `LEGCY${randomUUID().slice(0, 6).toUpperCase()}`;
+        await pool.query(
+          `INSERT INTO courtesy_links (id, event_id, code, ticket_count, used_count, is_active, created_by) VALUES ($1,$2,$3,5,0,true,$4)`,
+          [randomUUID(), eventId, c, admin.id],
+        );
+        const body = {
+          code: c,
+          name: "Convidada",
+          email,
+          emailConfirm: email,
+          partnerCompany: "Empresa",
+          occupation: "Analista",
+          phone: "595981123456",
+        };
+
+        const old = await api("POST", "/api/courtesy/redeem", { token: sponsor.token, body });
+        const fresh = await api("POST", "/api/courtesy/redeem", { token: sponsor.token, body: { ...body, answers: {} } });
+
+        expect(old).toMatchObject({ status: 409, body: RELOAD });
+        expect(fresh.status).toBe(400);
+      });
+    });
+
+    describe("courtesy rows never show the redeeming account's PII", () => {
+      it("online courtesy redeemed by a full-profile account (BR and foreigner): blank document, address, not foreigner", async () => {
+        const eventId = await createEvent({ modality: "online", isFree: false });
+        const admin = await createBareUser({ isAdmin: true });
+        const c = `LEGCY${randomUUID().slice(0, 6).toUpperCase()}`;
+        await pool.query(
+          `INSERT INTO courtesy_links (id, event_id, code, ticket_count, used_count, is_active, created_by) VALUES ($1,$2,$3,5,0,true,$4)`,
+          [randomUUID(), eventId, c, admin.id],
+        );
+        for (const sponsor of [await createLegacyUser(), await createLegacyUser({ foreigner: true })]) {
+          const email = `forms-courtesy-${sponsor.id.slice(0, 8)}@example.test`;
+          const res = await api("POST", "/api/courtesy/redeem", {
+            token: sponsor.token,
+            body: { code: c, name: "Convidada", email, emailConfirm: email, partnerCompany: "Empresa", occupation: "Analista", phone: "595981123456" },
+          });
+          expect(res.status).toBe(201);
+        }
+
+        const list = await api("GET", `/api/admin/events/${eventId}/participants`, { token: admin.token });
+
+        expect(list.body.data).toHaveLength(2);
+        for (const row of list.body.data) {
+          expect(row).toMatchObject({ orderStatus: "courtesy", cpf: "", address: null, isForeigner: false });
+        }
+      });
+    });
+
+    describe("sql/phone_parenthesized_br_fix.sql", () => {
+      it("fixes only parenthesized 10-11 digit phones, leaves foreign E.164 alone, and is re-runnable", async () => {
+        const SQL = readFileSync(join(__dirname, "../../../sql/phone_parenthesized_br_fix.sql"), "utf8");
+        const phones = ["(11) 98765-4321", "12025550123", "34612345678", "595981123456", "5511999990000"];
+        const users: TestUser[] = [];
+        for (const phone of phones) users.push(await createBareUser({ phone }));
+        const attendeeId = randomUUID();
+        await pool.query(
+          `INSERT INTO courtesy_attendees (id, name, email, phone, event_title) VALUES ($1,'Conv','forms-courtesy-phone-${attendeeId.slice(0, 8)}@example.test','(21) 3456-7890','t')`,
+          [attendeeId],
+        );
+        const read = async () =>
+          (await pool.query(`SELECT phone FROM users WHERE id = ANY($1) ORDER BY array_position($1::varchar[], id)`, [users.map((u) => u.id)])).rows.map((r) => r.phone);
+
+        await pool.query(SQL);
+        const once = await read();
+        await pool.query(SQL);
+
+        expect(once).toEqual(["5511987654321", "12025550123", "34612345678", "595981123456", "5511999990000"]);
+        expect(await read()).toEqual(once);
+        expect((await pool.query(`SELECT phone FROM courtesy_attendees WHERE id = $1`, [attendeeId])).rows[0].phone).toBe("552134567890");
       });
     });
 

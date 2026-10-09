@@ -1,3 +1,6 @@
+-- DO NOT RE-RUN: step 2 corrupts foreign numbers (it prefixes 55 to EVERY 10-11
+-- digit phone, e.g. 12025550123 -> 5512025550123). Historical, applied in May.
+-- Use phone_parenthesized_br_fix.sql instead.
 -- Run manually in PostgreSQL (no drizzle-kit push).
 -- Normalize phones in users + courtesy_attendees to E.164 without '+'.
 -- Existing data is BR-formatted "(00) 00000-0000"; this strips formatting

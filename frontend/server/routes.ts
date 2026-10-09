@@ -1,5 +1,5 @@
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
-import type { Express } from "express";
+import type { Express, Response } from "express";
 import { createServer, type Server } from "http";
 import { randomUUID } from "crypto";
 import { storage } from "./storage";
@@ -181,6 +181,17 @@ async function courtesyCapBlocksActivation(eventId: string): Promise<boolean> {
   if (!event) return false;
   const redeemed = await storage.countPaidCourtesyRedeems(eventId);
   return courtesyActivationBlocked(redeemed, event.courtesyLimit ?? null);
+}
+
+/**
+ * Answers that do not resolve. A body without an `answers` key comes from a tab
+ * still on the pre-ADR-016 bundle (new bundles always send it): the person
+ * cannot fix it, so ask for a reload (409) instead of an unexplainable 400.
+ */
+function registrationAnswersFailure(res: Response, body: unknown, message: string) {
+  const sentAnswers = typeof body === "object" && body !== null && "answers" in body;
+  if (sentAnswers) return res.status(400).json({ message });
+  return res.status(409).json({ message: "Atualize a página para concluir a inscrição", code: "reload_required" });
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -1521,7 +1532,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return {
           userId: r.userId,
           name: isCourtesyRow ? (r.attendeeName ?? r.name) : r.name,
-          cpf: r.attendeeCpf ?? r.attendeeForeignDocument ?? r.cpf ?? r.foreignDocument ?? "",
+          // A courtesy row is the attendee: never the redeeming account's document, address or nationality.
+          cpf: isCourtesyRow
+            ? (r.attendeeCpf ?? r.attendeeForeignDocument ?? "")
+            : (r.cpf ?? r.foreignDocument ?? ""),
           email: isCourtesyRow ? (r.attendeeEmail ?? r.email) : r.email,
           phone: isCourtesyRow ? (r.attendeePhone ?? r.phone) : r.phone,
           ticketId: r.ticketId,
@@ -1529,8 +1543,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           occupation: merged.occupation,
           partnerCompany: merged.partnerCompany,
           areaOfActivity: merged.areaOfActivity,
-          address: r.attendeeAddress ?? r.userAddress ?? null,
-          isForeigner: (r.attendeeIsForeigner ?? r.userIsForeigner) === true,
+          address: isCourtesyRow ? (r.attendeeAddress ?? null) : (r.userAddress ?? null),
+          isForeigner: (isCourtesyRow ? r.attendeeIsForeigner : r.userIsForeigner) === true,
           registrationAnswers: merged.answers,
           amntUsed: used,
           maxUses: maxU,
@@ -2513,7 +2527,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         body: withLegacyProfileAnswers(event.registrationForm, req.body ?? {}, req.user),
       });
       if (!registration.ok) {
-        return res.status(400).json({ message: registration.message });
+        return registrationAnswersFailure(res, req.body, registration.message);
       }
 
       // Create order. Paid checkout stays pending; the label is stored now.
@@ -2685,7 +2699,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         body: withLegacyProfileAnswers(event.registrationForm, req.body ?? {}, req.user),
       });
       if (!registration.ok) {
-        return res.status(400).json({ message: registration.message });
+        return registrationAnswersFailure(res, req.body, registration.message);
       }
 
       // Free inscription is immediately confirmed: there is nothing to pay.
@@ -3464,7 +3478,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }),
       });
       if (!registration.ok) {
-        return res.status(400).json({ message: registration.message });
+        return registrationAnswersFailure(res, req.body, registration.message);
       }
 
       const isForeigner = !online && userData.isForeigner === true;
