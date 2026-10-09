@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cfg, legacyQuestionsAttached, prodEventIds, seedProdIdEvents, sql } from "./db";
+import { cfg, legacyQuestionsAttached, prodEventIds, seedProdIdEvents, snapshotAttendeeCounters, sql } from "./db";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LEGACY_SQL = path.resolve(HERE, "../../sql/adr016_attach_legacy_questions.sql");
@@ -25,5 +25,7 @@ export default async function globalSetup() {
     if (inserted.length === 3) await sql(readFileSync(LEGACY_SQL, "utf8"));
     else console.log(`[e2e] local: ${3 - inserted.length} prod-id event(s) already existed; legacy SQL not applied`);
   }
+  // Events not inserted by this run (all three in staging) keep their counter: snapshot it for teardown.
+  await snapshotAttendeeCounters(prodEventIds());
   console.log(`[e2e] ${cfg.mode}: legacy questions attached to all 3 prod-id events: ${await legacyQuestionsAttached()}`);
 }
