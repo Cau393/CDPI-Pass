@@ -39,7 +39,7 @@ How [[60-Decisions/ADR-016-event-registration-forms-and-minimal-signup]] reaches
 
 ## Prepared prod statements (none executed; each needs the owner's approval of the exact text)
 1. **Backfill:** `frontend/sql/adr016_attach_legacy_questions.sql`. Expect 3 rows; the verification query shows 3/3/3.
-2. **Phone normalisation:** re-run the existing idempotent `frontend/sql/phone_e164_backfill.sql`. Expect 1 `users` and 3 `courtesy_attendees` rows. The foreign numbers are 12 digits, so the 10–11-digit rule leaves them alone. Its sanity gate rolls everything back on any bad row.
+2. **Phone fix:** `frontend/sql/phone_parenthesized_br_fix.sql`, scoped to the `(00) 00000-0000` shape: 1 `users` row and 3 `courtesy_attendees` rows. *Superseded:* this plan first said to re-run `phone_e164_backfill.sql`. The round-2 refuter showed that its 10–11-digit rule would also prefix valid foreign numbers such as `1…` or `34…`, so it must never be re-run.
 3. **No unique index:** prod has 7 duplicate groups (see above).
 
 ## Deploy order (summary; full checklist in the runbook)

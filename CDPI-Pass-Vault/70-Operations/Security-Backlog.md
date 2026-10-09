@@ -334,6 +334,18 @@ grep -n "trust proxy" frontend/server/index.ts   # app.set('trust proxy', 1)
 
 ---
 
+### 16. Login does not require a verified e-mail (found 2026-10-09, ADR-016 refuter round 2)
+
+`POST /api/auth/login` (`server/routes.ts`, comment "Skip email verification check for MVP") lets an unverified account log in. Before ADR-016 the signup's CPF uniqueness limited throwaway accounts. With the 4-field signup, anyone can create unverified accounts and subscribe them to free online events. Each subscription sends the confirmation and meeting e-mails to whatever address was typed, which makes it a spam relay and inflates attendance.
+
+**Fix (owner decision)**:
+- Require `emailVerified` for `/subscribe` and `/api/orders`, answering 403 "Confirme seu e-mail" with a resend link, or require it at login.
+- Count unverified accounts with orders first, so existing customers are not locked out.
+
+Related: the three legacy questions (`legacy-*` ids) are not locked in the form builder. An admin who removes one and adds it back creates a new id, so the profile fallback and the Excel merge stop applying to it. [[70-Operations/Operator-Guides]] says not to. Locking those rows in the builder would enforce it.
+
+---
+
 ## Out of scope but seen
 
 - Three other IAM users with long-lived keys belong to other projects in the same account (`rachae-backend`, `cdpi-lesson-editor-backend`, `cdpi-pass-deployer`). A blast-radius review of the whole account is worth doing once items 2 and 3 are closed.
