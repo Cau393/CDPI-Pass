@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { RegistrationField } from "@shared/eventRegistrationForm";
 import {
   identityRequiredMissing,
+  legacyPrefill,
   needsRegistrationDialog,
   registrationAnswerErrors,
   registrationAnswersPayload,
@@ -135,5 +136,23 @@ describe("registrationAnswersPayload", () => {
         "q-old": "stale",
       }),
     ).toEqual({ "q-cargo": "Farmacêutica" });
+  });
+});
+
+describe("legacyPrefill", () => {
+  const legacy = (id: string, archived = false): RegistrationField => ({ ...cargo, id, archived });
+
+  it("returns the profile's real values for the active legacy questions only", () => {
+    const profile = { occupation: "Médica", partnerCompany: "Nao aplicavel", areaOfActivity: "Pesquisa" };
+    expect(
+      legacyPrefill(
+        [legacy("legacy-occupation"), legacy("legacy-partner-company"), legacy("legacy-area-of-activity", true), cargo],
+        profile,
+      ),
+    ).toEqual({ "legacy-occupation": "Médica" });
+  });
+
+  it("is empty without an account", () => {
+    expect(legacyPrefill([legacy("legacy-occupation")], undefined)).toEqual({});
   });
 });

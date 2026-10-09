@@ -56,6 +56,8 @@ import {
 import {
   parseRegistrationFormField,
   resolveRegistrationAnswers,
+  withLegacyProfileAnswers,
+  mergeLegacyIntoProfile,
   participantAnswers,
   withoutBuyerAnswers,
 } from "@shared/eventRegistrationForm";
@@ -1424,6 +1426,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .select({
           userId: users.id,
           name: users.name,
+          attendeeName: courtesyAttendees.name,
+          attendeeEmail: courtesyAttendees.email,
+          attendeePhone: courtesyAttendees.phone,
+          userOccupation: users.occupation,
+          userPartnerCompany: users.partnerCompany,
+          userAreaOfActivity: users.areaOfActivity,
           cpf: users.cpf,
           foreignDocument: users.foreignDocument,
           userIsForeigner: users.isForeigner,
@@ -1470,19 +1478,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
           r.paymentMethod === "courtesy" || r.courtesyAttendeeId != null
             ? "courtesy"
             : "paid";
+        const isCourtesyRow = r.courtesyAttendeeId != null;
+        // Profile columns: the order's legacy answer first, else the profile. A
+        // courtesy attendee is not the redeeming account, so only their own
+        // fields apply (no area field exists for them: the answer or nothing).
+        const merged = mergeLegacyIntoProfile(
+          participantAnswers(r.registrationAnswers, r.interestArea),
+          isCourtesyRow
+            ? { occupation: r.occupation, partnerCompany: r.partnerCompany }
+            : {
+                occupation: r.userOccupation,
+                partnerCompany: r.userPartnerCompany,
+                areaOfActivity: r.userAreaOfActivity,
+              },
+        );
         return {
           userId: r.userId,
-          name: r.name,
+          name: isCourtesyRow ? (r.attendeeName ?? r.name) : r.name,
           cpf: r.attendeeCpf ?? r.attendeeForeignDocument ?? r.cpf ?? r.foreignDocument ?? "",
-          email: r.email,
-          phone: r.phone,
+          email: isCourtesyRow ? (r.attendeeEmail ?? r.email) : r.email,
+          phone: isCourtesyRow ? (r.attendeePhone ?? r.phone) : r.phone,
           ticketId: r.ticketId,
           orderStatus,
-          occupation: r.occupation ?? null,
-          partnerCompany: r.partnerCompany ?? null,
+          occupation: merged.occupation,
+          partnerCompany: merged.partnerCompany,
+          areaOfActivity: merged.areaOfActivity,
           address: r.attendeeAddress ?? r.userAddress ?? null,
           isForeigner: (r.attendeeIsForeigner ?? r.userIsForeigner) === true,
-          registrationAnswers: participantAnswers(r.registrationAnswers, r.interestArea),
+          registrationAnswers: merged.answers,
           amntUsed: used,
           maxUses: maxU,
           checkedIn: used > 0,
@@ -2458,9 +2481,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (missingIdentity.length > 0) {
         return res.status(400).json(identityRequiredBody(missingIdentity));
       }
+      // Old bundles send no answers: the legacy questions fall back to the account's profile.
       const registration = resolveRegistrationAnswers({
         fields: event.registrationForm,
-        body: req.body ?? {},
+        body: withLegacyProfileAnswers(event.registrationForm, req.body ?? {}, req.user),
       });
       if (!registration.ok) {
         return res.status(400).json({ message: registration.message });
@@ -2628,9 +2652,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .json({ message: "Você já possui inscrição confirmada para este evento." });
       }
 
+      // Old bundles send no answers: the legacy questions fall back to the account's profile.
       const registration = resolveRegistrationAnswers({
         fields: event.registrationForm,
-        body: req.body ?? {},
+        body: withLegacyProfileAnswers(event.registrationForm, req.body ?? {}, req.user),
       });
       if (!registration.ok) {
         return res.status(400).json({ message: registration.message });
@@ -3391,9 +3416,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // The attendee may not be the redeeming account: the legacy questions
+      // come from the attendee's own form fields, never from req.user's profile.
       const registration = resolveRegistrationAnswers({
         fields: event.registrationForm,
-        body: req.body ?? {},
+        body: withLegacyProfileAnswers(event.registrationForm, req.body ?? {}, {
+          occupation: userData.occupation,
+          partnerCompany: userData.partnerCompany,
+        }),
       });
       if (!registration.ok) {
         return res.status(400).json({ message: registration.message });

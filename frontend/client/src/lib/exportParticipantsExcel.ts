@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import type { RegistrationAnswer, RegistrationField } from "@shared/eventRegistrationForm";
+import { isLegacyFieldId, type RegistrationAnswer, type RegistrationField } from "@shared/eventRegistrationForm";
 
 export type ParticipantExportRow = {
   name: string;
@@ -11,6 +11,7 @@ export type ParticipantExportRow = {
   address: string | null;
   cargoQueOcupa: string;
   empresaQueTrabalha: string;
+  areaDeAtuacao: string;
   presenca: string;
   orderStatus: "paid" | "courtesy" | "cancelled";
   registrationAnswers: RegistrationAnswer[];
@@ -27,6 +28,7 @@ const FIXED_HEADERS = [
   "Empresa que trabalha",
   "Presença",
   "Status",
+  "Área de atuação",
 ] as const;
 
 /** Rótulos de Status para Excel: apenas pagamento e cortesia (demais ficam em branco). */
@@ -70,6 +72,7 @@ export function buildParticipantSheet(
       p.empresaQueTrabalha,
       p.presenca,
       statusLabelForExcel(p.orderStatus),
+      p.areaDeAtuacao,
       ...questions.map(({ fieldId }) => answers.get(fieldId) ?? ""),
     ];
   });
@@ -81,17 +84,20 @@ function questionColumns(
   participants: readonly ParticipantExportRow[],
   registrationForm: readonly RegistrationField[],
 ): { fieldId: string; label: string }[] {
+  // The legacy questions feed the profile columns above, never columns of their own.
   const answeredLabels = new Map<string, string>();
   for (const p of participants) {
     for (const answer of p.registrationAnswers) {
+      if (isLegacyFieldId(answer.fieldId)) continue;
       if (!answeredLabels.has(answer.fieldId)) answeredLabels.set(answer.fieldId, answer.label);
     }
   }
 
-  const active = registrationForm
+  const form = registrationForm.filter((field) => !isLegacyFieldId(field.id));
+  const active = form
     .filter((field) => !field.archived)
     .map((field) => ({ fieldId: field.id, label: field.label }));
-  const archived = registrationForm
+  const archived = form
     .filter((field) => field.archived && answeredLabels.has(field.id))
     .map((field) => ({ fieldId: field.id, label: `${field.label} (removida)` }));
   const known = new Set(registrationForm.map((field) => field.id));

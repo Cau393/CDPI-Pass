@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { RegistrationField } from "@shared/eventRegistrationForm";
+import { LEGACY_QUESTIONS, type RegistrationField } from "@shared/eventRegistrationForm";
 import {
   buildParticipantSheet,
   statusLabelForExcel,
@@ -17,6 +17,7 @@ const FIXED_HEADERS = [
   "Empresa que trabalha",
   "Presença",
   "Status",
+  "Área de atuação",
 ];
 
 function field(overrides: Partial<RegistrationField> & Pick<RegistrationField, "id" | "label">): RegistrationField {
@@ -39,6 +40,7 @@ function participant(overrides: Partial<ParticipantExportRow> = {}): Participant
     address: "Rua A, 100, São Paulo",
     cargoQueOcupa: "",
     empresaQueTrabalha: "",
+    areaDeAtuacao: "",
     presenca: "Não confirmou presença",
     orderStatus: "paid",
     registrationAnswers: [],
@@ -77,7 +79,41 @@ describe("buildParticipantSheet", () => {
       "",
       "Não confirmou presença",
       "Pago",
+      "",
     ]);
+  });
+
+  it("fills the profile columns and gives the legacy questions no columns of their own", () => {
+    const legacyForm = LEGACY_QUESTIONS.map((q, i) =>
+      field({ id: q.id, label: q.label, required: true, archived: i === 2 }),
+    );
+    const sheet = buildParticipantSheet(
+      [
+        participant({
+          cargoQueOcupa: "Médica",
+          empresaQueTrabalha: "Clínica Aurora",
+          areaDeAtuacao: "Pesquisa",
+          registrationAnswers: [{ fieldId: "q-turno", label: "Turno", value: "Tarde" }],
+        }),
+      ],
+      [...legacyForm, field({ id: "q-turno", label: "Turno" })],
+    );
+    expect(sheet[0]).toEqual([...FIXED_HEADERS, "Turno"]);
+    expect(sheet[1].slice(6, 8)).toEqual(["Médica", "Clínica Aurora"]);
+    expect(sheet[1][10]).toBe("Pesquisa");
+    expect(sheet[1][11]).toBe("Tarde");
+  });
+
+  it("drops a legacy answer that is still in the snapshot instead of adding a '(removida)' column", () => {
+    const sheet = buildParticipantSheet(
+      [
+        participant({
+          registrationAnswers: [{ fieldId: "legacy-occupation", label: "Cargo que ocupa", value: "Médica" }],
+        }),
+      ],
+      [],
+    );
+    expect(sheet[0]).toEqual([...FIXED_HEADERS]);
   });
 
   it("shows Estrangeiro Sim and the passport for a foreign visitor", () => {
@@ -127,7 +163,7 @@ describe("buildParticipantSheet", () => {
       ],
       form,
     );
-    expect([sheet[0].slice(10), sheet[1].slice(10)]).toEqual([
+    expect([sheet[0].slice(11), sheet[1].slice(11)]).toEqual([
       ["Cargo", "Área"],
       ["Farmacêutica", "Indústria"],
     ]);
@@ -146,7 +182,7 @@ describe("buildParticipantSheet", () => {
       ],
       form,
     );
-    expect(header.slice(10)).toEqual(["Cargo", "Como soube (removida)"]);
+    expect(header.slice(11)).toEqual(["Cargo", "Como soube (removida)"]);
   });
 
   it("drops an archived question nobody answered", () => {
@@ -162,7 +198,7 @@ describe("buildParticipantSheet", () => {
       field({ id: "q-b", label: "Empresa" }),
     ];
     const [header] = buildParticipantSheet([], form);
-    expect(header.slice(10)).toEqual(["Telefone (2)", "Empresa", "Empresa (2)"]);
+    expect(header.slice(11)).toEqual(["Telefone (2)", "Empresa", "Empresa (2)"]);
   });
 
   it("keeps a legacy interest-area answer even when the event form lost that question", () => {
@@ -176,7 +212,7 @@ describe("buildParticipantSheet", () => {
       ],
       [],
     );
-    expect([header.slice(10), row.slice(10)]).toEqual([
+    expect([header.slice(11), row.slice(11)]).toEqual([
       ["Área de interesse (removida)"],
       ["Pesquisa"],
     ]);

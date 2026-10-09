@@ -5,6 +5,8 @@
  * computed from the event's modality and price, never stored here.
  */
 
+import { NOT_APPLICABLE_PROFILE_VALUE } from "./schema";
+
 export type RegistrationFieldType = "text" | "select" | "radio";
 
 export interface RegistrationField {
@@ -226,3 +228,95 @@ export function participantAnswers(
   if (!legacyInterestArea) return [];
   return [{ fieldId: LEGACY_INTEREST_AREA_FIELD_ID, label: "Área de interesse", value: legacyInterestArea }];
 }
+
+/** Profile columns the three legacy questions stand in for. */
+export type LegacyProfileKey = "occupation" | "partnerCompany" | "areaOfActivity";
+
+export interface LegacyQuestion {
+  id: string;
+  profileKey: LegacyProfileKey;
+  label: string;
+}
+
+/**
+ * Questions attached to the live events so they keep collecting what the old
+ * full signup collected. Their ids are fixed: the backfill SQL, the prefill,
+ * the server fallback and the participants export all key on them.
+ */
+export const LEGACY_QUESTIONS: readonly LegacyQuestion[] = [
+  { id: "legacy-occupation", profileKey: "occupation", label: "Cargo que ocupa" },
+  { id: "legacy-partner-company", profileKey: "partnerCompany", label: "Empresa que trabalha" },
+  { id: "legacy-area-of-activity", profileKey: "areaOfActivity", label: "Área de atuação" },
+];
+
+export type LegacyProfile = Partial<Record<LegacyProfileKey, string | null | undefined>>;
+
+export function isLegacyFieldId(fieldId: string): boolean {
+  return LEGACY_QUESTIONS.some((question) => question.id === fieldId);
+}
+
+function realProfileValue(raw: string | null | undefined): string | null {
+  const value = typeof raw === "string" ? raw.trim() : "";
+  return value && value !== NOT_APPLICABLE_PROFILE_VALUE ? value : null;
+}
+
+/** The profile's real value for a legacy question; null for null, blank, "Nao aplicavel" or a non-legacy id. */
+export function legacyProfileValue(fieldId: string, profile: LegacyProfile | null | undefined): string | null {
+  const question = LEGACY_QUESTIONS.find((q) => q.id === fieldId);
+  return question ? realProfileValue(profile?.[question.profileKey]) : null;
+}
+
+/**
+ * Mixed-version safety: a body without answers for an active legacy question
+ * gets the profile's real value (also a blank one, when the question is required).
+ * Anything else the client sent, including a blank optional answer, stays as sent.
+ * Returns a copy; a malformed `answers` is left for resolveRegistrationAnswers to reject.
+ */
+export function withLegacyProfileAnswers<B extends object>(
+  fields: readonly RegistrationField[] | null | undefined,
+  body: B,
+  profile: LegacyProfile | null | undefined,
+): B {
+  const raw = (body as { answers?: unknown }).answers;
+  if (raw !== undefined && raw !== null && !isPlainObject(raw)) return body;
+  const given: Record<string, unknown> = { ...(raw ?? {}) };
+  let changed = false;
+  for (const field of fields ?? []) {
+    if (field.archived || !isLegacyFieldId(field.id)) continue;
+    // Explicit answers win: fall back only when the key is absent, or blank on a required question.
+    const sent = given[field.id];
+    if (sent !== undefined && sent !== null && !(field.required && (typeof sent !== "string" || sent.trim() === ""))) continue;
+    const fallback = legacyProfileValue(field.id, profile);
+    if (fallback === null) continue;
+    given[field.id] = fallback;
+    changed = true;
+  }
+  return changed ? { ...body, answers: given } : body;
+}
+
+/**
+ * Participants list: the legacy questions feed the existing profile columns
+ * (the order's answer first, else `profile`) instead of getting columns of
+ * their own. Returns the merged values and the remaining answers.
+ */
+export function mergeLegacyIntoProfile(
+  answers: readonly RegistrationAnswer[],
+  profile: LegacyProfile | null | undefined,
+): Record<LegacyProfileKey, string | null> & { answers: RegistrationAnswer[] } {
+  const merged = { occupation: null, partnerCompany: null, areaOfActivity: null } as Record<
+    LegacyProfileKey,
+    string | null
+  >;
+  for (const question of LEGACY_QUESTIONS) {
+    const answered = answers.find((a) => a.fieldId === question.id)?.value.trim();
+    merged[question.profileKey] = answered || realProfileValue(profile?.[question.profileKey]);
+  }
+  return { ...merged, answers: answers.filter((a) => !isLegacyFieldId(a.fieldId)) };
+}
+
+/**
+ * Courtesy redeem: the form already asks the attendee's own cargo and company
+ * (server-side they fill these two legacy answers), so those two questions are
+ * not shown again. The area has no courtesy field and stays a normal question.
+ */
+export const COURTESY_FILLED_LEGACY_IDS: readonly string[] = ["legacy-occupation", "legacy-partner-company"];

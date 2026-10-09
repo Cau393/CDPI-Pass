@@ -13,7 +13,9 @@ import type { Server } from "http";
 import jwt from "jsonwebtoken";
 import { Pool } from "pg";
 import { randomUUID } from "crypto";
-import type { RegistrationField } from "@shared/eventRegistrationForm";
+import { readFileSync } from "fs";
+import { join } from "path";
+import { LEGACY_QUESTIONS, type RegistrationField } from "@shared/eventRegistrationForm";
 
 const VERIFY_URL = process.env.VERIFY_DATABASE_URL;
 const enabled = Boolean(VERIFY_URL);
@@ -904,6 +906,305 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
       });
 
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe("legacy profile questions (old-bundle fallback, courtesy, participants)", () => {
+    const legacyForm: RegistrationField[] = LEGACY_QUESTIONS.map((q) => ({
+      id: q.id,
+      type: "text",
+      label: q.label,
+      options: [],
+      required: true,
+      archived: false,
+    }));
+    const PROFILE = { occupation: "Médica", company: "Clínica Aurora", area: "Pesquisa clínica" };
+
+    /** An account from before ADR-016: work fields filled in, optionally a passport and a +595 phone. */
+    async function createLegacyUser(opts: { foreigner?: boolean; isAdmin?: boolean } = {}): Promise<TestUser> {
+      const id = randomUUID();
+      const email = `forms-legacy-${id.slice(0, 8)}@example.test`;
+      await pool.query(
+        `INSERT INTO users (id, email, email_verified, password, name, cpf, is_foreigner, foreign_document, phone, address, occupation, partner_company, area_of_activity, is_admin)
+         VALUES ($1,$2,true,'x','Conta Antiga',$3,$4,$5,$6,'Rua Antiga, 1, Sao Paulo',$7,$8,$9,$10)`,
+        [
+          id,
+          email,
+          opts.foreigner ? null : nextCpf(),
+          opts.foreigner === true,
+          opts.foreigner ? nextPassport() : null,
+          opts.foreigner ? "595981123456" : "5511999999999",
+          PROFILE.occupation,
+          PROFILE.company,
+          PROFILE.area,
+          opts.isAdmin ?? false,
+        ],
+      );
+      createdUserIds.push(id);
+      return { id, token: jwt.sign({ userId: id }, JWT_SECRET), email };
+    }
+
+    const snapshot = (...values: string[]) =>
+      LEGACY_QUESTIONS.map((q, i) => ({ fieldId: q.id, label: q.label, value: values[i] }));
+
+    it("old bundle: a free subscribe WITHOUT answers snapshots the profile values", async () => {
+      const eventId = await createEvent({ modality: "online", isFree: true, registrationForm: legacyForm });
+      const user = await createLegacyUser();
+
+      const res = await api("POST", `/api/events/${eventId}/subscribe`, { token: user.token, body: {} });
+
+      expect(res.status).toBe(201);
+      expect((await orderFor(user.id, eventId)).registration_answers).toEqual(
+        snapshot(PROFILE.occupation, PROFILE.company, PROFILE.area),
+      );
+    });
+
+    it("explicit answers win over the profile", async () => {
+      const eventId = await createEvent({ modality: "online", isFree: true, registrationForm: legacyForm });
+      const user = await createLegacyUser();
+
+      const res = await api("POST", `/api/events/${eventId}/subscribe`, {
+        token: user.token,
+        body: { answers: { "legacy-occupation": "Diretora", "legacy-area-of-activity": " " } },
+      });
+
+      expect(res.status).toBe(201);
+      expect((await orderFor(user.id, eventId)).registration_answers).toEqual(
+        snapshot("Diretora", PROFILE.company, PROFILE.area),
+      );
+    });
+
+    it("a 4-field account with no profile value still gets 400 without answers, 201 with them", async () => {
+      const eventId = await createEvent({ modality: "online", isFree: true, registrationForm: legacyForm });
+      const user = await createBareUser();
+
+      const missing = await api("POST", `/api/events/${eventId}/subscribe`, { token: user.token, body: {} });
+      const ok = await api("POST", `/api/events/${eventId}/subscribe`, {
+        token: user.token,
+        body: {
+          answers: {
+            "legacy-occupation": "Analista",
+            "legacy-partner-company": "Acme",
+            "legacy-area-of-activity": "Regulatório",
+          },
+        },
+      });
+
+      expect(missing.status).toBe(400);
+      expect(missing.body.message).toContain("Cargo que ocupa");
+      expect(ok.status).toBe(201);
+    });
+
+    it("foreigner (passport, +595 phone): the fallback fills the answers too", async () => {
+      const eventId = await createEvent({ modality: "online", isFree: true, registrationForm: legacyForm });
+      const visitor = await createLegacyUser({ foreigner: true });
+
+      const res = await api("POST", `/api/events/${eventId}/subscribe`, { token: visitor.token, body: {} });
+
+      expect(res.status).toBe(201);
+      expect((await orderFor(visitor.id, eventId)).registration_answers).toEqual(
+        snapshot(PROFILE.occupation, PROFILE.company, PROFILE.area),
+      );
+    });
+
+    it("old bundle: a paid card order WITHOUT answers snapshots the profile (foreigner, Asaas mocked)", async () => {
+      const eventId = await createEvent({ modality: "online", isFree: false, registrationForm: legacyForm });
+      const visitor = await createLegacyUser({ foreigner: true });
+
+      const res = await api("POST", "/api/orders", {
+        token: visitor.token,
+        body: { eventId, paymentMethod: "credit_card" },
+      });
+
+      expect(res.status).toBe(201);
+      expect((await orderFor(visitor.id, eventId)).registration_answers).toEqual(
+        snapshot(PROFILE.occupation, PROFILE.company, PROFILE.area),
+      );
+    });
+
+    it("old bundle: a paid PIX order by a Brazilian WITHOUT answers snapshots the profile; 4-field gets 400", async () => {
+      const eventId = await createEvent({ modality: "online", isFree: false, registrationForm: legacyForm });
+      const user = await createLegacyUser();
+      const bare = await createBareUser();
+      await api("PUT", "/api/profile/identity", { token: bare.token, body: { cpf: nextCpf() } });
+
+      const ok = await api("POST", "/api/orders", { token: user.token, body: { eventId, paymentMethod: "pix" } });
+      const refused = await api("POST", "/api/orders", { token: bare.token, body: { eventId, paymentMethod: "pix" } });
+
+      expect(ok.status).toBe(201);
+      expect((await orderFor(user.id, eventId)).registration_answers).toEqual(
+        snapshot(PROFILE.occupation, PROFILE.company, PROFILE.area),
+      );
+      expect(refused.status).toBe(400);
+      expect(refused.body.message).toContain("Cargo que ocupa");
+    });
+
+    describe("courtesy redeem", () => {
+      async function code(eventId: string, createdBy: string): Promise<string> {
+        const c = `LEGCY${randomUUID().slice(0, 6).toUpperCase()}`;
+        await pool.query(
+          `INSERT INTO courtesy_links (id, event_id, code, ticket_count, used_count, is_active, created_by)
+           VALUES ($1,$2,$3,5,0,true,$4)`,
+          [randomUUID(), eventId, c, createdBy],
+        );
+        return c;
+      }
+
+      it("online: occupation and company come from the attendee, never the redeeming account; area is asked", async () => {
+        const eventId = await createEvent({ modality: "online", isFree: false, registrationForm: legacyForm });
+        const admin = await createBareUser({ isAdmin: true });
+        const sponsor = await createLegacyUser();
+        const email = `forms-courtesy-${sponsor.id.slice(0, 8)}@example.test`;
+        const body = (extra: object) => ({
+          code: "",
+          name: "Convidada Online",
+          email,
+          emailConfirm: email,
+          partnerCompany: "Empresa do Convidado",
+          occupation: "Analista Convidada",
+          phone: "595981123456",
+          ...extra,
+        });
+        const link = await code(eventId, admin.id);
+
+        const noArea = await api("POST", "/api/courtesy/redeem", { token: sponsor.token, body: { ...body({}), code: link } });
+        const ok = await api("POST", "/api/courtesy/redeem", {
+          token: sponsor.token,
+          body: { ...body({ answers: { "legacy-area-of-activity": "Farmácia" } }), code: link },
+        });
+
+        expect(noArea.status).toBe(400);
+        expect(noArea.body.message).toContain("Área de atuação");
+        expect(ok.status).toBe(201);
+        expect((await orderFor(sponsor.id, eventId)).registration_answers).toEqual(
+          snapshot("Analista Convidada", "Empresa do Convidado", "Farmácia"),
+        );
+      });
+
+      it("in-person: same rule with the attendee's CPF, and the participants list shows the attendee", async () => {
+        const eventId = await createEvent({ modality: "presencial", isFree: false, registrationForm: legacyForm });
+        const admin = await createBareUser({ isAdmin: true });
+        const sponsor = await createLegacyUser();
+        const email = `forms-courtesy-${sponsor.id.slice(0, 8)}@example.test`;
+
+        const res = await api("POST", "/api/courtesy/redeem", {
+          token: sponsor.token,
+          body: {
+            code: await code(eventId, admin.id),
+            name: "Convidado Presencial",
+            email,
+            emailConfirm: email,
+            cpf: nextCpf(),
+            partnerCompany: "Empresa do Convidado",
+            occupation: "Analista Convidado",
+            phone: "5511988887777",
+            birthDate: "1990-05-10",
+            address: ADDRESS,
+            answers: { "legacy-area-of-activity": "Farmácia" },
+          },
+        });
+        const list = await api("GET", `/api/admin/events/${eventId}/participants`, { token: admin.token });
+
+        expect(res.status).toBe(201);
+        expect(list.body.data).toEqual([
+          expect.objectContaining({
+            orderStatus: "courtesy",
+            name: "Convidado Presencial",
+            email,
+            phone: "5511988887777",
+            occupation: "Analista Convidado",
+            partnerCompany: "Empresa do Convidado",
+            areaOfActivity: "Farmácia",
+            registrationAnswers: [],
+          }),
+        ]);
+      });
+    });
+
+    describe("participants list", () => {
+      it("merges legacy answers into the profile columns, falling back to the profile, and keeps admin questions", async () => {
+        const eventId = await createEvent({ modality: "online", isFree: true, registrationForm: [cargo, ...legacyForm] });
+        const admin = await createBareUser({ isAdmin: true });
+        const answered = await createLegacyUser();
+        const oldBundle = await createLegacyUser();
+        await api("POST", `/api/events/${eventId}/subscribe`, {
+          token: answered.token,
+          body: { answers: { "f-cargo": "Gerente", "legacy-occupation": "Diretora", "legacy-partner-company": "Outra", "legacy-area-of-activity": "Vendas" } },
+        });
+        await api("POST", `/api/events/${eventId}/subscribe`, { token: oldBundle.token, body: { answers: { "f-cargo": "Gerente" } } });
+        // An order from before the legacy questions existed: no answers, profile only.
+        await pool.query(
+          `UPDATE orders SET registration_answers = '[{"fieldId":"f-cargo","label":"Cargo","value":"Gerente"}]'::jsonb WHERE user_id = $1`,
+          [oldBundle.id],
+        );
+
+        const res = await api("GET", `/api/admin/events/${eventId}/participants`, { token: admin.token });
+        const byId = new Map<string, any>(res.body.data.map((r: any) => [r.userId, r]));
+
+        expect(byId.get(answered.id)).toMatchObject({
+          occupation: "Diretora",
+          partnerCompany: "Outra",
+          areaOfActivity: "Vendas",
+          registrationAnswers: [{ fieldId: "f-cargo", label: "Cargo", value: "Gerente" }],
+        });
+        expect(byId.get(oldBundle.id)).toMatchObject({
+          occupation: PROFILE.occupation,
+          partnerCompany: PROFILE.company,
+          areaOfActivity: PROFILE.area,
+        });
+      });
+
+      it("leaves the columns empty for a 4-field account with no answer (placeholder is not data)", async () => {
+        const eventId = await createEvent({ modality: "online", isFree: true });
+        const admin = await createBareUser({ isAdmin: true });
+        const user = await createBareUser();
+        await api("POST", `/api/events/${eventId}/subscribe`, { token: user.token, body: {} });
+
+        const res = await api("GET", `/api/admin/events/${eventId}/participants`, { token: admin.token });
+
+        expect(res.body.data[0]).toMatchObject({ occupation: null, partnerCompany: null, areaOfActivity: null });
+      });
+
+      it("an archived legacy question still feeds the same merged column", async () => {
+        const archivedForm = legacyForm.map((f) => ({ ...f, archived: true }));
+        const eventId = await createEvent({ modality: "online", isFree: true, registrationForm: legacyForm });
+        const admin = await createBareUser({ isAdmin: true });
+        const user = await createLegacyUser();
+        await api("POST", `/api/events/${eventId}/subscribe`, { token: user.token, body: {} });
+        await pool.query(`UPDATE events SET registration_form = $2::jsonb WHERE id = $1`, [eventId, JSON.stringify(archivedForm)]);
+        await pool.query(`UPDATE users SET occupation = 'Mudou Depois' WHERE id = $1`, [user.id]);
+
+        const res = await api("GET", `/api/admin/events/${eventId}/participants`, { token: admin.token });
+
+        expect(res.body.data[0]).toMatchObject({ occupation: PROFILE.occupation, registrationAnswers: [] });
+      });
+    });
+
+    describe("sql/adr016_attach_legacy_questions.sql", () => {
+      it("appends the three questions after admin questions, once: second run updates 0 rows", async () => {
+        const SQL = readFileSync(join(__dirname, "../../../sql/adr016_attach_legacy_questions.sql"), "utf8");
+        const withAdmin = await createEvent({ modality: "online", isFree: true, registrationForm: [cargo] });
+        const empty = await createEvent({ modality: "presencial", isFree: false });
+        const already = await createEvent({ modality: "online", isFree: true, registrationForm: legacyForm });
+        const untouched = await createEvent({ modality: "online", isFree: true, registrationForm: [cargo] });
+        const sql = SQL.replaceAll("'13e253d6-14a2-496d-be4d-8a3ca4b0f8df'", `'${withAdmin}'`)
+          .replaceAll("'168193f7-1aa2-45d6-b6e8-ba0ea355efaa'", `'${empty}'`)
+          .replaceAll("'f2ded6cd-1d45-4cb1-ba6a-7bf8616fda60'", `'${already}'`);
+        expect(sql).not.toMatch(/13e253d6|168193f7|f2ded6cd/);
+
+        const first = await pool.query(sql);
+        const second = await pool.query(sql);
+        const forms = async (id: string) =>
+          (await pool.query(`SELECT registration_form AS f FROM events WHERE id = $1`, [id])).rows[0].f as RegistrationField[];
+
+        expect(first.rowCount).toBe(2);
+        expect(second.rowCount).toBe(0);
+        expect((await forms(withAdmin)).map((f) => f.id)).toEqual(["f-cargo", ...LEGACY_QUESTIONS.map((q) => q.id)]);
+        expect((await forms(withAdmin))[1]).toEqual(legacyForm[0]);
+        expect((await forms(empty)).map((f) => f.id)).toEqual(LEGACY_QUESTIONS.map((q) => q.id));
+        expect(await forms(already)).toEqual(legacyForm);
+        expect((await forms(untouched)).map((f) => f.id)).toEqual(["f-cargo"]);
+      });
     });
   });
 });

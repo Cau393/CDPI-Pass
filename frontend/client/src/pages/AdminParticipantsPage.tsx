@@ -52,6 +52,7 @@ interface Participant {
   orderStatus: "paid" | "courtesy" | "cancelled";
   occupation: string | null;
   partnerCompany: string | null;
+  areaOfActivity: string | null;
   amntUsed: number;
   maxUses: number;
   checkedIn: boolean;
@@ -415,10 +416,9 @@ export default function AdminParticipantsPage() {
           email: p.email,
           phone: p.phone,
           address: p.address,
-          cargoQueOcupa:
-            p.orderStatus === "paid" ? "" : (p.occupation ?? ""),
-          empresaQueTrabalha:
-            p.orderStatus === "paid" ? "" : (p.partnerCompany ?? ""),
+          cargoQueOcupa: p.occupation ?? "",
+          empresaQueTrabalha: p.partnerCompany ?? "",
+          areaDeAtuacao: p.areaOfActivity ?? "",
           presenca: p.qrCodeUsed
             ? "Presente"
             : "Não confirmou presença",
