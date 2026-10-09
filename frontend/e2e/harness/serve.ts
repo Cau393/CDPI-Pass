@@ -11,6 +11,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+// @ts-ignore pg ships no types (@types/pg is not a dependency); only Pool/Client are used here
 import pg from "pg";
 import { loadConfig } from "./config";
 
@@ -44,8 +45,13 @@ async function prepareLocalDatabase() {
   console.log(`[e2e] local database ${cfg.dbName} created and schema pushed`);
 }
 
-if (cfg.mode === "local") await prepareLocalDatabase();
-else console.log("[e2e] staging mode: using E2E_DATABASE_URL as is (not printed)");
+async function main() {
+  if (cfg.mode === "local") await prepareLocalDatabase();
+  else console.log("[e2e] staging mode: using E2E_DATABASE_URL as is (not printed)");
+  startServer();
+}
+
+function startServer() {
 
 const child = spawn("pnpm", ["exec", "tsx", "--import", path.join(here, "register.mjs"), "server/index.ts"], {
   cwd: appRoot,
@@ -72,3 +78,9 @@ const child = spawn("pnpm", ["exec", "tsx", "--import", path.join(here, "registe
 });
 child.on("exit", (code) => process.exit(code ?? 0));
 for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => child.kill(sig));
+}
+
+main().catch((e) => {
+  console.error(`[e2e] ${e instanceof Error ? e.message : e}`);
+  process.exit(1);
+});

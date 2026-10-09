@@ -39,7 +39,7 @@ test.describe("courtesy redemption", () => {
          FROM orders o JOIN courtesy_attendees a ON a.id=o.courtesy_attendee_id WHERE o.event_id=$1`,
       [ev.id],
     );
-    expect(row.startsWith("- - ")).toBe(true);
+    expect(row!.startsWith("- - ")).toBe(true);
     expect(row).toContain("Instagram da CDPI");
     await expectNoHorizontalScroll(page, "courtesy success");
   });

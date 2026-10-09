@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+// @ts-ignore pg ships no types (@types/pg is not a dependency); only Pool/Client are used here
 import pg from "pg";
 import { loadConfig } from "../harness/config";
 import { fileURLToPath } from "node:url";
