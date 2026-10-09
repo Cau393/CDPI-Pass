@@ -656,16 +656,23 @@ describe("EventDetailsPage — free courtesy (?cortesia=)", () => {
   });
 
   it("switches an override-price code to the promo purchase path", async () => {
-    vi.stubGlobal(
-      "fetch",
-      mockCourtesyVisit(baseEvent, {
-        status: 200,
-        body: {
-          ...validLink.body,
-          overridePrice: "80.00",
-        },
-      }),
-    );
+    const visit = mockCourtesyVisit(baseEvent, {
+      status: 200,
+      body: {
+        ...validLink.body,
+        overridePrice: "80.00",
+      },
+    });
+    // The promo lookup is a second request, issued after the cortesia one
+    // answered. Slow it down so the test pins the order instead of depending
+    // on how fast the machine is.
+    let courtesyLookups = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/courtesy-links/") && ++courtesyLookups > 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return visit(input, init);
+    });
     renderPage();
 
     await waitFor(() => {
@@ -675,7 +682,7 @@ describe("EventDetailsPage — free courtesy (?cortesia=)", () => {
     });
     expect(await screen.findByText("Comprar Ingresso")).toBeInTheDocument();
     expect(screen.queryByText("Resgatar cortesia")).not.toBeInTheDocument();
-    expect(screen.getByText(/Promoção aplicada/)).toBeInTheDocument();
+    expect(await screen.findByText(/Promoção aplicada/)).toBeInTheDocument();
   });
 });
 
