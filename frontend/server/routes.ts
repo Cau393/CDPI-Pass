@@ -87,6 +87,7 @@ import {
 } from "./utils/profileUpdateSchema";
 import { toPresignedUrl } from "./utils/presignedUrl";
 import { finalizeOrderPaidLikeWebhook } from "./utils/finalizeOrderPaidLikeWebhook";
+import { findOrderForPaidAsaasPayment } from "./utils/findOrderForPaidAsaasPayment";
 import { enqueueEventPrintIfEnabled } from "./utils/enqueueEventPrintIfEnabled";
 import {
   isOnlineEvent,
@@ -3032,9 +3033,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Handle different payment events
       if (eventType === "PAYMENT_CONFIRMED" || eventType === "PAYMENT_RECEIVED") {
-        const order = payment.externalReference
-          ? await storage.getOrder(payment.externalReference)
-          : await storage.getOrderByAsaasPaymentId(payment.id);
+        const order = await findOrderForPaidAsaasPayment(payment);
 
         if (order) {
           const result = await finalizeOrderPaidLikeWebhook(order, {
