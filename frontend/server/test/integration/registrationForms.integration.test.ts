@@ -276,24 +276,18 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
       expect(subscribe.status).toBe(201);
     });
 
-    it("ignores the document and profile fields an old cached client still sends", async () => {
+    it("answers 409 and creates no account for an old full-signup body (cpf or birthDate key)", async () => {
       const email = `forms-signup-old-${randomUUID().slice(0, 8)}@example.test`;
+      const base = { name: "Cliente Antigo", email, phone: "5511987654321", password: "secret1" };
 
-      const { res, row } = await register({
-        name: "Cliente Antigo",
-        email,
-        phone: "5511987654321",
-        password: "secret1",
-        cpf: nextCpf(),
-        birthDate: "11/08/1988",
-        address: ADDRESS,
-        occupation: "Analista",
-        partnerCompany: "Empresa",
-        areaOfActivity: "Farmácia",
-      });
+      const withCpf = await register({ ...base, cpf: nextCpf(), birthDate: "11/08/1988", address: ADDRESS });
+      const emptyCpf = await register({ ...base, cpf: "" });
+      const foreigner = await register({ ...base, phone: "595981123456", isForeigner: true, foreignDocument: "PY123", birthDate: "11/08/1988" });
 
-      expect(res.status).toBe(201);
-      expect(row).toMatchObject({ cpf: null, birth_date: null, address: null });
+      for (const r of [withCpf, emptyCpf, foreigner]) {
+        expect(r.res).toMatchObject({ status: 409, body: { message: "Atualize a página para concluir o cadastro" } });
+        expect(r.row).toBeUndefined();
+      }
     });
 
     it("still rejects a missing or invalid phone and a duplicate e-mail with 400", async () => {

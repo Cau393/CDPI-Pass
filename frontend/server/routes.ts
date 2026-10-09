@@ -206,6 +206,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth routes
   app.post("/api/auth/register", async (req, res) => {
     try {
+      // A tab still running the old full-signup bundle sends the document and
+      // birth date; creating a bare account from it would drop what the user typed.
+      if (req.body && typeof req.body === "object" && ("cpf" in req.body || "birthDate" in req.body)) {
+        return res.status(409).json({ message: "Atualize a página para concluir o cadastro" });
+      }
       // ADR-016: name, e-mail, phone and password only. The document and
       // address are asked at the first inscription that needs them
       // (PUT /api/profile/identity); keys an old client still sends are stripped.
