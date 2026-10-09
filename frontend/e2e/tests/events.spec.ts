@@ -2,6 +2,7 @@ import { test, expect, expectNoHorizontalScroll } from "../support/fixtures";
 import { createEvent, fmtCpf, scalar, sql } from "../support/db";
 import { clickEventCta, createAccount, login, makeUser, orderCount, waitForRegistrationDialog } from "../support/ui";
 import { ADDRESS, completeRegistrationDialog, newPassport, paymentMethods, uniqueCpf } from "../support/flows";
+import { FOREIGN_PAID_CHECKOUT_ENABLED } from "../../shared/foreignCheckout";
 
 test.describe("online free event", () => {
   test("BR 4-field account subscribes without any dialog", async ({ page }) => {
@@ -113,7 +114,43 @@ test.describe("presencial paid event", () => {
     });
   }
 
+  test("foreigner can't buy yet: 'Sou estrangeiro' explains it and saves nothing; a foreign account sees the notice and the API refuses", async ({ page }) => {
+    test.skip(FOREIGN_PAID_CHECKOUT_ENABLED, "foreign paid checkout is enabled");
+    const ev = await createEvent("presencialPaid");
+    const u = makeUser("paidpyoff", { phone: "595981123456" });
+    await createAccount(u);
+    await login(page, u.email);
+    await clickEventCta(page, ev.id);
+    await waitForRegistrationDialog(page);
+    await page.getByTestId("checkbox-foreigner").click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText(/Compras por estrangeiros ainda não estão disponíveis/)).toBeVisible();
+    await page.getByTestId("input-foreign-document").fill(newPassport("PY"));
+    await expect(page.getByTestId("button-confirm-registration")).toBeDisabled();
+    await expectNoHorizontalScroll(page, "foreigner blocked dialog");
+    await dialog.getByRole("button", { name: "Cancelar" }).click();
+    expect(await scalar(`SELECT is_foreigner FROM users WHERE lower(email)=lower($1)`, [u.email])).toBe(false);
+
+    // An account that already is a foreign visitor (e.g. signed up as one).
+    await sql(`UPDATE users SET is_foreigner = true, cpf = NULL, foreign_document = $2 WHERE lower(email)=lower($1)`, [u.email, newPassport("PY")]);
+    await page.goto(`/event/${ev.id}`);
+    await expect(page.getByTestId("foreign-paid-unavailable")).toBeVisible();
+    await expect(page.getByTestId("button-event-cta")).toBeDisabled();
+    await expectNoHorizontalScroll(page, "foreigner blocked event page");
+    const status = await page.evaluate(async (eventId) => {
+      const res = await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
+        body: JSON.stringify({ eventId, paymentMethod: "credit_card", answers: {} }),
+      });
+      return { status: res.status, code: (await res.json()).code };
+    }, ev.id);
+    expect(status).toEqual({ status: 403, code: "foreign_paid_unavailable" });
+    expect(await orderCount(u.email, ev.id)).toBe("0");
+  });
+
   test("foreigner pays by international card only", async ({ page, context }) => {
+    test.skip(!FOREIGN_PAID_CHECKOUT_ENABLED, "Asaas has not enabled foreign payers yet: paid checkout refuses foreigners");
     const ev = await createEvent("presencialPaid");
     const u = makeUser("paidpy", { phone: "595981123456" });
     await createAccount(u);
@@ -134,6 +171,7 @@ test.describe("presencial paid event", () => {
   });
 
   test("foreigner: Asaas 'foreign payers not enabled' shows the 503 message and creates no order", async ({ page }) => {
+    test.skip(!FOREIGN_PAID_CHECKOUT_ENABLED, "Asaas has not enabled foreign payers yet: paid checkout refuses foreigners");
     const ev = await createEvent("presencialPaid");
     const u = makeUser("blocked", { phone: "595981123456" }); // fake Asaas rejects foreign customers whose e-mail starts "blocked."
     expect(u.email.startsWith("blocked.")).toBe(true);

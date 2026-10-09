@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LEGACY_QUESTIONS, type RegistrationField, type SystemField } from "@shared/eventRegistrationForm";
+import { FOREIGN_PAID_CHECKOUT_ENABLED } from "@shared/foreignCheckout";
 
 type Account = {
   id?: string;
@@ -183,7 +184,29 @@ describe("EventRegistrationDialog", () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it("saves a foreign visitor's passport on a paid online event", async () => {
+  it.runIf(!FOREIGN_PAID_CHECKOUT_ENABLED)(
+    "on a paid event, 'Sou estrangeiro' shows that foreigners can't buy yet and never saves the passport",
+    async () => {
+      const fetchMock = mockIdentity();
+      vi.stubGlobal("fetch", fetchMock);
+      const user = userEvent.setup();
+      const { onConfirm } = renderDialog(paidOnline);
+
+      expect(screen.queryByText(/Foreign visitors pay by international credit card/)).not.toBeInTheDocument();
+      await user.click(screen.getByLabelText("Sou estrangeiro / I'm a foreign visitor"));
+      expect(screen.getByRole("alert")).toHaveTextContent(/Compras por estrangeiros ainda não estão disponíveis/);
+      await user.type(screen.getByLabelText("Passaporte / Passport"), "ab123456");
+      expect(screen.getByRole("button", { name: "Continuar" })).toBeDisabled();
+
+      await user.click(screen.getByLabelText("Sou estrangeiro / I'm a foreign visitor"));
+      expect(screen.queryByText(/Compras por estrangeiros ainda não estão disponíveis/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Continuar" })).toBeEnabled();
+      expect(identityBodies(fetchMock)).toEqual([]);
+      expect(onConfirm).not.toHaveBeenCalled();
+    },
+  );
+
+  it.runIf(FOREIGN_PAID_CHECKOUT_ENABLED)("saves a foreign visitor's passport on a paid online event", async () => {
     const fetchMock = mockIdentity();
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
@@ -200,7 +223,7 @@ describe("EventRegistrationDialog", () => {
     });
   });
 
-  it("tells foreign visitors they pay by international card on a paid event", () => {
+  it.runIf(FOREIGN_PAID_CHECKOUT_ENABLED)("tells foreign visitors they pay by international card on a paid event", () => {
     renderDialog(paidOnline);
     expect(
       screen.getByText(

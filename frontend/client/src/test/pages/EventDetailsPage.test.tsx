@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { FOREIGN_PAID_CHECKOUT_ENABLED } from "@shared/foreignCheckout";
 
 const setLocation = vi.fn();
 vi.mock("wouter", () => ({
@@ -774,7 +775,7 @@ describe("EventDetailsPage — registration questions", () => {
     expect(screen.getByTestId("payment-modal")).toHaveAttribute("data-answers", "{}");
   });
 
-  it("saves a foreign visitor's passport before opening the card checkout", async () => {
+  it.runIf(FOREIGN_PAID_CHECKOUT_ENABLED)("saves a foreign visitor's passport before opening the card checkout", async () => {
     authState.user = newAccount;
     const fetchMock = mockApi({ ...baseEvent, modality: "online", registrationForm: [cargo] });
     vi.stubGlobal("fetch", fetchMock);

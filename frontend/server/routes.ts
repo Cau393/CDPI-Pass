@@ -61,6 +61,11 @@ import {
   participantAnswers,
   withoutBuyerAnswers,
 } from "@shared/eventRegistrationForm";
+import {
+  FOREIGN_PAID_UNAVAILABLE_CODE,
+  FOREIGN_PAID_UNAVAILABLE_MESSAGE,
+  foreignPaidCheckoutBlocked,
+} from "@shared/foreignCheckout";
 import { identityRequiredBody, missingIdentityFields } from "./utils/inscriptionIdentity";
 import { validateEmailSubjectTemplateInput } from "./utils/emailSubjectTemplate";
 import { mapCommercialSales } from "./utils/commercialSalesMapper";
@@ -2490,6 +2495,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res
           .status(salesBlockedStatus(purchaseCheck.reason))
           .json({ message: salesBlockedMessage(purchaseCheck.reason) });
+      }
+      if (foreignPaidCheckoutBlocked(req.user)) {
+        return res
+          .status(403)
+          .json({ code: FOREIGN_PAID_UNAVAILABLE_CODE, message: FOREIGN_PAID_UNAVAILABLE_MESSAGE });
       }
 
       // Calculate total amount (event price + convenience fee)

@@ -29,6 +29,11 @@ import {
 } from "@/lib/eventRegistration";
 import { refineAccountDocument, type Event } from "@shared/schema";
 import type { SystemField } from "@shared/eventRegistrationForm";
+import {
+  FOREIGN_PAID_CHECKOUT_ENABLED,
+  FOREIGN_PAID_UNAVAILABLE_MESSAGE,
+  foreignPaidCheckoutBlocked,
+} from "@shared/foreignCheckout";
 
 type DialogEvent = Pick<Event, "title" | "modality" | "isFree" | "registrationForm">;
 
@@ -108,6 +113,10 @@ export function EventRegistrationDialog({
     resolver: zodResolver(identitySchemaFor(questions)),
     defaultValues: { isForeigner: false, cpf: "", foreignDocument: "", address: "" },
   });
+  // A paid event can't be bought by a foreign visitor yet: saving the passport here
+  // would lock the account as foreign (write-once) for a checkout that refuses it.
+  const foreignPaidBlocked =
+    Boolean(event && !event.isFree) && foreignPaidCheckoutBlocked({ isForeigner: form.watch("isForeigner") });
 
   useEffect(() => {
     if (!open || !user) return;
@@ -155,6 +164,10 @@ export function EventRegistrationDialog({
   };
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
+    if (foreignPaidBlocked) {
+      e.preventDefault();
+      return;
+    }
     if (!questions) return;
     // Validate the answers alongside the identity fields so every error shows at once.
     const nextAnswerErrors = registrationAnswerErrors(questions.fields, answers);
@@ -200,12 +213,16 @@ export function EventRegistrationDialog({
             {questions.document ? (
               <div className="space-y-2">
                 <DocumentFields form={form} />
-                {event.isFree ? null : (
+                {foreignPaidBlocked ? (
+                  <p role="alert" className="text-sm font-medium text-destructive">
+                    {FOREIGN_PAID_UNAVAILABLE_MESSAGE}
+                  </p>
+                ) : !event.isFree && FOREIGN_PAID_CHECKOUT_ENABLED ? (
                   <p className="text-sm text-muted-foreground">
                     Estrangeiros pagam apenas com cartão de crédito internacional / Foreign visitors
                     pay by international credit card only
                   </p>
-                )}
+                ) : null}
               </div>
             ) : null}
 
@@ -258,7 +275,7 @@ export function EventRegistrationDialog({
               <Button
                 type="submit"
                 className="min-h-11"
-                disabled={isBusy}
+                disabled={isBusy || foreignPaidBlocked}
                 data-testid="button-confirm-registration"
               >
                 {isBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}

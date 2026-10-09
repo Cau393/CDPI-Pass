@@ -18,6 +18,7 @@ vi.mock("../../hooks/use-toast", () => ({
 
 import EventDetailsPage from "../../pages/EventDetailsPage";
 import { getQueryFn } from "../../lib/queryClient";
+import { FOREIGN_PAID_CHECKOUT_ENABLED } from "@shared/foreignCheckout";
 
 const paidOnlineEvent = {
   id: EVENT_ID,
@@ -49,8 +50,8 @@ const accountBefore = {
 };
 const accountAfter = { ...accountBefore, isForeigner: true, foreignDocument: "AB123456" };
 
-function mockApi() {
-  let account: Record<string, unknown> = accountBefore;
+function mockApi(start: Record<string, unknown> = accountBefore) {
+  let account: Record<string, unknown> = start;
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -76,21 +77,58 @@ describe("EventDetailsPage — foreign visitor checkout", () => {
     localStorage.clear();
   });
 
-  it("offers only the card once the account comes back as a foreign visitor", async () => {
+  function renderPage(fetchMock: ReturnType<typeof mockApi>) {
     localStorage.setItem("token", "test-token");
-    vi.stubGlobal("fetch", mockApi());
+    vi.stubGlobal("fetch", fetchMock);
     const queryClient = new QueryClient({
       defaultOptions: {
         queries: { queryFn: getQueryFn({ on401: "throw" }), retry: false },
         mutations: { retry: false },
       },
     });
-    const user = userEvent.setup();
     render(
       <QueryClientProvider client={queryClient}>
         <EventDetailsPage />
       </QueryClientProvider>,
     );
+    return userEvent.setup();
+  }
+
+  const calls = (fetchMock: ReturnType<typeof mockApi>, method: string, url: string) =>
+    fetchMock.mock.calls.filter(([input, init]) => String(input) === url && (init?.method ?? "GET") === method);
+
+  it.runIf(!FOREIGN_PAID_CHECKOUT_ENABLED)(
+    "ticking 'Sou estrangeiro' on a paid event explains that foreigners cannot buy yet and saves nothing",
+    async () => {
+      const fetchMock = mockApi();
+      const user = renderPage(fetchMock);
+
+      await user.click(await screen.findByTestId("button-event-cta"));
+      await user.click(await screen.findByLabelText("Sou estrangeiro / I'm a foreign visitor"));
+
+      expect(await screen.findByText(/Compras por estrangeiros ainda não estão disponíveis/)).toBeTruthy();
+      expect((screen.getByTestId("button-confirm-registration") as HTMLButtonElement).disabled).toBe(true);
+      await user.type(screen.getByLabelText("Passaporte / Passport"), "ab123456");
+      await user.click(screen.getByTestId("button-confirm-registration"));
+      expect(calls(fetchMock, "PUT", "/api/profile/identity")).toHaveLength(0);
+      expect(screen.queryAllByRole("tab")).toHaveLength(0);
+    },
+  );
+
+  it.runIf(!FOREIGN_PAID_CHECKOUT_ENABLED)(
+    "an account that is already a foreign visitor sees why it cannot buy, and the buy button stays off",
+    async () => {
+      const fetchMock = mockApi(accountAfter);
+      renderPage(fetchMock);
+
+      expect(await screen.findByTestId("foreign-paid-unavailable")).toBeTruthy();
+      expect((screen.getByTestId("button-event-cta") as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.queryByText("Complete sua inscrição")).toBeNull();
+    },
+  );
+
+  it.runIf(FOREIGN_PAID_CHECKOUT_ENABLED)("offers only the card once the account comes back as a foreign visitor", async () => {
+    const user = renderPage(mockApi());
 
     await user.click(await screen.findByTestId("button-event-cta"));
     await user.click(await screen.findByLabelText("Sou estrangeiro / I'm a foreign visitor"));

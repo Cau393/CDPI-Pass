@@ -15,6 +15,7 @@ import { eventDescriptionPlainText } from "@/lib/eventDescriptionHtml";
 import { useFreeSubscribe } from "@/hooks/useFreeSubscribe";
 import { EventRegistrationDialog } from "@/components/EventRegistrationDialog";
 import { needsRegistrationDialog } from "@/lib/eventRegistration";
+import { FOREIGN_PAID_UNAVAILABLE_MESSAGE, foreignPaidCheckoutBlocked } from "@shared/foreignCheckout";
 import type { SystemField } from "@shared/eventRegistrationForm";
 import {
   eventAcquisitionCtaLabel,
@@ -137,6 +138,14 @@ export default function HomePage() {
         variant: "destructive",
       });
       setLocation(`/login?next=${encodeURIComponent(next)}`);
+      return;
+    }
+    if (foreignPaidCheckoutBlocked(user)) {
+      toast({
+        title: "Compra indisponível",
+        description: FOREIGN_PAID_UNAVAILABLE_MESSAGE,
+        variant: "destructive",
+      });
       return;
     }
     if (needsRegistrationDialog(event, user)) {

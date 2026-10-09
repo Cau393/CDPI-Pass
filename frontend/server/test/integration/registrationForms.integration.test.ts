@@ -16,6 +16,7 @@ import { randomUUID } from "crypto";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { LEGACY_QUESTIONS, type RegistrationField } from "@shared/eventRegistrationForm";
+import { FOREIGN_PAID_CHECKOUT_ENABLED } from "@shared/foreignCheckout";
 
 const VERIFY_URL = process.env.VERIFY_DATABASE_URL;
 const enabled = Boolean(VERIFY_URL);
@@ -491,7 +492,38 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
       expect(res).toMatchObject({ status: 400, body: { code: "identity_required", missing: ["document"] } });
     });
 
-    it("keeps foreigners on card only, and their card order reaches the foreign card payment", async () => {
+    it.runIf(!FOREIGN_PAID_CHECKOUT_ENABLED)(
+      "refuses every paid checkout by a foreign visitor with 403 until Asaas enables foreign payers; free events still work",
+      async () => {
+        const paidOnline = await createEvent({ modality: "online", isFree: false });
+        const paidInPerson = await createEvent({ modality: "presencial", isFree: false });
+        const free = await createEvent({ modality: "online", isFree: true });
+        const visitor = await createBareUser({ phone: "595981123456" });
+        await api("PUT", "/api/profile/identity", {
+          token: visitor.token,
+          body: { isForeigner: true, foreignDocument: nextPassport(), address: "Av. España 1000, Asunción" },
+        });
+        const asaasCallsBefore = foreignCardCalls.length;
+
+        for (const eventId of [paidOnline, paidInPerson]) {
+          for (const paymentMethod of ["credit_card", "pix", "boleto"]) {
+            const res = await api("POST", "/api/orders", {
+              token: visitor.token,
+              body: { eventId, paymentMethod, answers: {} },
+            });
+            expect(res).toMatchObject({ status: 403, body: { code: "foreign_paid_unavailable" } });
+          }
+        }
+        const { rows } = await pool.query(`SELECT count(*)::int AS n FROM orders WHERE user_id = $1`, [visitor.id]);
+        expect(rows[0].n).toBe(0);
+        expect(foreignCardCalls.length).toBe(asaasCallsBefore);
+
+        const subscribed = await api("POST", `/api/events/${free}/subscribe`, { token: visitor.token, body: {} });
+        expect(subscribed.status).toBe(201);
+      },
+    );
+
+    it.runIf(FOREIGN_PAID_CHECKOUT_ENABLED)("keeps foreigners on card only, and their card order reaches the foreign card payment", async () => {
       const eventId = await createEvent({ modality: "online", isFree: false });
       const visitor = await createBareUser({ phone: "595981123456" });
       const passport = nextPassport();
@@ -1003,7 +1035,7 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
       );
     });
 
-    it("old bundle: a paid card order WITHOUT answers snapshots the profile (foreigner, Asaas mocked)", async () => {
+    it.runIf(FOREIGN_PAID_CHECKOUT_ENABLED)("old bundle: a paid card order WITHOUT answers snapshots the profile (foreigner, Asaas mocked)", async () => {
       const eventId = await createEvent({ modality: "online", isFree: false, registrationForm: legacyForm });
       const visitor = await createLegacyUser({ foreigner: true });
 
@@ -1195,7 +1227,7 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
         expect(okForeign.status).toBe(201);
       });
 
-      it("/api/orders: 4-field foreigner, no answers key -> 409 reload; with answers key -> 400", async () => {
+      it.runIf(FOREIGN_PAID_CHECKOUT_ENABLED)("/api/orders: 4-field foreigner, no answers key -> 409 reload; with answers key -> 400", async () => {
         const eventId = await createEvent({ modality: "online", isFree: false, registrationForm: legacyForm });
         const visitor = await createBareUser({ phone: "595981123456" });
         await api("PUT", "/api/profile/identity", { token: visitor.token, body: { isForeigner: true, foreignDocument: nextPassport() } });
