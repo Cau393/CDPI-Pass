@@ -63,3 +63,14 @@ D1 ran on a local copy of the prod schema with the 3 events seeded under their p
   - 4-field accounts can log in and browse.
   - They get 400 "Complete seu CPF no perfil…" on subscribe or purchase until they add a CPF, which is the old code's own rule.
 
+## Sandbox webhook + deploy evidence (2026-10-09)
+- Real Asaas sandbox webhook → ngrok → local app (combined code):
+  - PIX, boleto, 4-field PIX paid.
+  - Card link: 3 installments → paid once. Asaas copies the link's `externalReference`.
+  - Foreign invoice: CONFIRMED + RECEIVED → paid once.
+  - Replays did not double count. Wrong token → 401. OVERDUE/DELETED cancel.
+- Fixes before the deploy (PR #13):
+  - `paymentLink` fallback.
+  - Atomic `pending → paid` claim. The reviewer found the double count; a stale-snapshot test reproduced it.
+  - Foreign paid checkout blocked (Asaas not enabled yet).
+- Deployed `f937827` 2026-10-09 20:34 UTC. CI tests and the EC2 deploy were green. The read-only prod smoke passed. No rollback was needed.

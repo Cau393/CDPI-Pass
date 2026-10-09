@@ -1,5 +1,7 @@
 # Prompt: Asaas sandbox webhook test, then deploy ADR-016 (next session)
 
+> **Executed 2026-10-09.** Webhook proven on the sandbox (plus the owner's card-link test), fixes in PR #13, foreign paid checkout blocked until Asaas enables it, PR #4 deployed at 17:34 BRT (`f937827`), prod smoke passed. Results: [[70-Operations/Plan-Event-Registration-Forms]] → Deploy checklist → Progress.
+
 How to use it: open a new Claude Code session at `/Users/cauecasonato/Envs/CDPI-Pass` and say: "Read `.claude/worktrees/combined/CDPI-Pass-Vault/70-Operations/Prompt-ADR-016-Sandbox-Webhook-And-Deploy.md` and execute it."
 
 ## Owner, before starting (5 min)
