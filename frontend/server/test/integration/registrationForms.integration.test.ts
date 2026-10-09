@@ -968,7 +968,7 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
       );
     });
 
-    it("a 4-field account with no profile value still gets 400 without answers, 201 with them", async () => {
+    it("a 4-field account with no profile value gets 409 reload without an answers key, 201 with answers", async () => {
       const eventId = await createEvent({ modality: "online", isFree: true, registrationForm: legacyForm });
       const user = await createBareUser();
 
@@ -1016,7 +1016,7 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
       );
     });
 
-    it("old bundle: a paid PIX order by a Brazilian WITHOUT answers snapshots the profile; 4-field gets 400", async () => {
+    it("old bundle: a paid PIX order by a Brazilian WITHOUT answers snapshots the profile; 4-field without an answers key gets 409", async () => {
       const eventId = await createEvent({ modality: "online", isFree: false, registrationForm: legacyForm });
       const user = await createLegacyUser();
       const bare = await createBareUser();

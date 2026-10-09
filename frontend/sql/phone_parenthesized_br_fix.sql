@@ -33,9 +33,16 @@ END $$;
 
 COMMIT;
 
--- Read-only pre-check (run first; prod expects users 1, courtesy_attendees 3):
--- SELECT 'users' AS t, count(*) FROM users
---  WHERE phone ~ '^\(' AND length(regexp_replace(phone, '\D', '', 'g')) BETWEEN 10 AND 11
+-- Read-only pre-check (run first; prod expects matching = total_parenthesized:
+-- users 1/1, courtesy_attendees 3/3). If the two counts differ for a table, some
+-- "(" phone does not have 10-11 digits, the DO block finds it and THE RUN ROLLS
+-- BACK: fix those rows by hand first.
+-- SELECT 'users' AS t,
+--        count(*) FILTER (WHERE length(regexp_replace(phone, '\D', '', 'g')) BETWEEN 10 AND 11) AS matching,
+--        count(*) AS total_parenthesized
+--   FROM users WHERE phone ~ '^\('
 -- UNION ALL
--- SELECT 'courtesy_attendees', count(*) FROM courtesy_attendees
---  WHERE phone ~ '^\(' AND length(regexp_replace(phone, '\D', '', 'g')) BETWEEN 10 AND 11;
+-- SELECT 'courtesy_attendees',
+--        count(*) FILTER (WHERE length(regexp_replace(phone, '\D', '', 'g')) BETWEEN 10 AND 11),
+--        count(*)
+--   FROM courtesy_attendees WHERE phone ~ '^\(';
