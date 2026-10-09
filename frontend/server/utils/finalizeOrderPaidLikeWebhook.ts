@@ -117,9 +117,7 @@ export async function finalizeOrderPaidLikeWebhook(
   const user = await storage.getUser(order.userId);
 
   if (event && user) {
-    await storage.updateEvent(event.id, {
-      currentAttendees: (event.currentAttendees || 0) + 1,
-    });
+    await storage.incrementEventAttendees(event.id);
 
     const outboundPaymentLabel =
       order.paymentMethod === "courtesy"

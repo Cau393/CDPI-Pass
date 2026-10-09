@@ -6,6 +6,7 @@ const incrementCourtesyLinkUsage = vi.fn();
 const getEvent = vi.fn();
 const getUser = vi.fn();
 const updateEvent = vi.fn();
+const incrementEventAttendees = vi.fn();
 const existsOtherPaidOrderForCpfAndEvent = vi.fn();
 const existsOtherPaidOrderForForeignDocumentAndEvent = vi.fn();
 const existsOtherPaidOrderForUserAndEvent = vi.fn();
@@ -20,6 +21,7 @@ vi.mock("../../storage", () => ({
     getEvent: (...a: unknown[]) => getEvent(...a),
     getUser: (...a: unknown[]) => getUser(...a),
     updateEvent: (...a: unknown[]) => updateEvent(...a),
+    incrementEventAttendees: (...a: unknown[]) => incrementEventAttendees(...a),
     existsOtherPaidOrderForCpfAndEvent: (...a: unknown[]) =>
       existsOtherPaidOrderForCpfAndEvent(...a),
     existsOtherPaidOrderForForeignDocumentAndEvent: (...a: unknown[]) =>
@@ -133,9 +135,9 @@ describe("finalizeOrderPaidLikeWebhook", () => {
     );
     expect(updateOrder).toHaveBeenCalledWith("order-uuid", { status: "paid" });
     expect(incrementCourtesyLinkUsage).toHaveBeenCalledWith("cl-1");
-    expect(updateEvent).toHaveBeenCalledWith("evt-1", {
-      currentAttendees: 2,
-    });
+    // Counter only: a sale is not an edit, so the admin's loaded updatedAt stays valid.
+    expect(incrementEventAttendees).toHaveBeenCalledWith("evt-1");
+    expect(updateEvent).not.toHaveBeenCalled();
   });
 
   it("finalizes free cortesia (pending + courtesy payment method) as paid", async () => {

@@ -7,7 +7,11 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { isOnlineEvent } from "@shared/eventModality";
 import { loginRequiredDescription } from "@/lib/eventCta";
 import { parseApiErrorMessage } from "@/lib/eventForm";
-import { identityRequiredMissing, needsRegistrationDialog } from "@/lib/eventRegistration";
+import {
+  identityRequiredMissing,
+  needsRegistrationDialog,
+  refreshAfterStaleRegistration,
+} from "@/lib/eventRegistration";
 import { EventRegistrationDialog } from "@/components/EventRegistrationDialog";
 import type { Event } from "@shared/schema";
 import type { SystemField } from "@shared/eventRegistrationForm";
@@ -67,6 +71,7 @@ export function useFreeSubscribe() {
       setLocation("/profile");
     },
     onError: (error: Error, input) => {
+      refreshAfterStaleRegistration(error, input.event.id);
       const missing = identityRequiredMissing(error);
       if (missing) {
         // Said inline, so a reopen that asks nothing new is never silent.

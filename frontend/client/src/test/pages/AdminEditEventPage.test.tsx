@@ -35,8 +35,9 @@ vi.mock("wouter", () => ({
   Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
 }));
 
+const toastSpy = vi.hoisted(() => vi.fn());
 vi.mock("../../hooks/use-toast", () => ({
-  useToast: () => ({ toast: vi.fn() }),
+  useToast: () => ({ toast: toastSpy }),
 }));
 
 import AdminEditEventPage from "../../pages/AdminEditEventPage";
@@ -83,6 +84,7 @@ const event = {
   confirmationEmailHtml: null,
   courtesyLimit: null,
   salesClosed: false,
+  updatedAt: "2026-10-01T12:00:00.000Z",
   interestAreas: ["Pesquisa", "Indústria"],
   registrationForm: [activeQuestion, archivedQuestion],
 };
@@ -187,7 +189,40 @@ describe("AdminEditEventPage — Formulário de inscrição", () => {
     await user.click(screen.getByRole("button", { name: /Salvar alterações/ }));
 
     await waitFor(() => expect(patchBodies(fetchMock)).toHaveLength(1));
-    expect(Array.from(patchBodies(fetchMock)[0].keys())).toEqual(["title"]);
+    expect(Array.from(patchBodies(fetchMock)[0].keys())).toEqual(["updated_at", "title"]);
+  });
+
+  it("sends the updatedAt it loaded so the server can detect a concurrent edit", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const title = await screen.findByDisplayValue("Congresso CDPI 2026");
+    await user.type(title, " - edição 2");
+    await user.click(screen.getByRole("button", { name: /Salvar alterações/ }));
+
+    await waitFor(() => expect(patchBodies(fetchMock)).toHaveLength(1));
+    expect(patchBodies(fetchMock)[0].get("updated_at")).toBe("2026-10-01T12:00:00.000Z");
+  });
+
+  it("tells the admin to reload when another person changed the event (409)", async () => {
+    const message = "Este evento foi alterado por outra pessoa. Recarregue a página.";
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const json = (status: number, body: unknown) =>
+        new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      if (String(input).endsWith("/print-settings")) return json(200, { isEnabled: false });
+      if (init?.method === "PATCH") return json(409, { message });
+      return json(200, event);
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    const title = await screen.findByDisplayValue("Congresso CDPI 2026");
+    await user.type(title, " - edição 2");
+    await user.click(screen.getByRole("button", { name: /Salvar alterações/ }));
+
+    await waitFor(() =>
+      expect(toastSpy).toHaveBeenCalledWith(expect.objectContaining({ description: message })),
+    );
   });
 
   it("closes sales without re-sending the form or interest areas", async () => {

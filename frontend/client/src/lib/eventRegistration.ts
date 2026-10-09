@@ -1,5 +1,8 @@
 import {
   legacyProfileValue,
+  REGISTRATION_ANSWER_INVALID_OPTION,
+  REGISTRATION_ANSWER_REQUIRED,
+  REGISTRATION_ANSWER_UNKNOWN_FIELD,
   resolveRegistrationAnswers,
   type LegacyProfile,
   systemFieldsFor,
@@ -7,6 +10,7 @@ import {
   type SystemField,
 } from "@shared/eventRegistrationForm";
 import type { Event, User } from "@shared/schema";
+import { queryClient } from "@/lib/queryClient";
 
 type RegistrationEvent = Pick<Event, "modality" | "isFree" | "registrationForm">;
 type RegistrationAccount = Pick<User, "cpf" | "foreignDocument" | "address">;
@@ -60,6 +64,39 @@ export function identityRequiredMissing(err: unknown): SystemField[] | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Why an inscription 400 says the client's copy of the event or account is
+ * stale (an admin edited the form after it was cached with staleTime
+ * Infinity): "identity" for identity_required, "form" for an answer the
+ * current form rejects (unknown/archived, newly required, changed options).
+ */
+export function staleRegistrationError(err: unknown): "identity" | "form" | null {
+  if (identityRequiredMissing(err)) return "identity";
+  if (!(err instanceof Error)) return null;
+  const match = /^400:\s*([\s\S]*)$/.exec(err.message);
+  if (!match) return null;
+  try {
+    const { message } = JSON.parse(match[1]) as { message?: unknown };
+    if (typeof message !== "string") return null;
+    const staleMessages = [
+      REGISTRATION_ANSWER_UNKNOWN_FIELD,
+      REGISTRATION_ANSWER_REQUIRED,
+      REGISTRATION_ANSWER_INVALID_OPTION,
+    ];
+    return staleMessages.some((known) => message.startsWith(known)) ? "form" : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Drops the cached event (and the account, for identity_required) so a retry uses the fresh form. */
+export function refreshAfterStaleRegistration(err: unknown, eventId: string): void {
+  const stale = staleRegistrationError(err);
+  if (!stale) return;
+  void queryClient.invalidateQueries({ queryKey: [`/api/events/${eventId}`] });
+  if (stale === "identity") void queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
 }
 
 /** Inline error per question, using the same rules (and messages) as the server. */

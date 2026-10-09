@@ -60,8 +60,11 @@ import {
 function buildPatchFormData(
   values: EditEventFormValues,
   dirty: Partial<Record<keyof EditEventFormValues, boolean | object>>,
+  loadedUpdatedAt?: Date | string | null,
 ): FormData {
   const fd = new FormData();
+  // The server answers 409 when someone else saved after this was loaded.
+  if (loadedUpdatedAt) fd.append("updated_at", new Date(loadedUpdatedAt).toISOString());
   if (dirty.title) fd.append("title", values.title.trim());
   if (dirty.description) {
     fd.append("description", sanitizeEventDescriptionHtml(values.description));
@@ -273,7 +276,7 @@ export default function AdminEditEventPage() {
       return;
     }
 
-    const formData = buildPatchFormData(values, dirty);
+    const formData = buildPatchFormData(values, dirty, event?.updatedAt);
 
     try {
       const res = await apiRequest("PATCH", `/api/admin/events/${id}`, formData);

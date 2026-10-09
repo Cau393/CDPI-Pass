@@ -110,6 +110,8 @@ import csv from 'csv-parser';
 import { parse } from 'csv-parse/sync';
 import { Readable } from 'stream';
 import { toTitleCaseName } from "./utils/toTitleCaseName";
+import { toPublicUser } from "./utils/publicUser";
+import { registrationFormsEqual } from "./utils/registrationFormEqual";
 import { decodeCsvBuffer } from "./utils/decodeCsvBuffer";
 import { normalizePhoneE164 } from "./utils/normalizePhoneE164";
 import { checkoutPaymentErrorResponse } from "./utils/asaasErrors";
@@ -172,6 +174,8 @@ const authenticateToken = async (req: any, res: any, next: any) => {
   }
 };
 
+const EVENT_EDIT_CONFLICT = "Este evento foi alterado por outra pessoa. Recarregue a página.";
+
 async function courtesyCapBlocksActivation(eventId: string): Promise<boolean> {
   const event = await storage.getEvent(eventId);
   if (!event) return false;
@@ -206,6 +210,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth routes
   app.post("/api/auth/register", async (req, res) => {
     try {
+      // A tab still running the old full-signup bundle sends the document and
+      // birth date; creating a bare account from it would drop what the user typed.
+      if (req.body && typeof req.body === "object" && ("cpf" in req.body || "birthDate" in req.body)) {
+        return res.status(409).json({ message: "Atualize a página para concluir o cadastro" });
+      }
       // ADR-016: name, e-mail, phone and password only. The document and
       // address are asked at the first inscription that needs them
       // (PUT /api/profile/identity); keys an old client still sends are stripped.
@@ -330,8 +339,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/auth/me", authenticateToken, async (req: any, res) => {
-    const { password, ...userWithoutPassword } = req.user;
-    res.json(userWithoutPassword);
+    res.json(toPublicUser(req.user));
   });
 
   app.get("/api/auth/verify-email", async (req, res) => {
@@ -1114,6 +1122,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         const body = req.body as Record<string, string | undefined>;
+
+        // Optimistic concurrency: the admin client sends the updatedAt it loaded.
+        // Absent (old admin bundle) means no check.
+        let expectedUpdatedAt: Date | undefined;
+        if (body.updated_at !== undefined) {
+          const sent = new Date(String(body.updated_at));
+          if (Number.isNaN(sent.getTime())) {
+            return res.status(400).json({ error: "updated_at must be an ISO date" });
+          }
+          if (!existing.updatedAt || sent.getTime() !== existing.updatedAt.getTime()) {
+            return res.status(409).json({ message: EVENT_EDIT_CONFLICT });
+          }
+          expectedUpdatedAt = sent;
+        }
         const payload: Partial<{
           title: string;
           description: string;
@@ -1280,7 +1302,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!registrationFormParsed.ok) {
             return res.status(400).json({ error: registrationFormParsed.error });
           }
-          if (JSON.stringify(registrationFormParsed.value) !== JSON.stringify(existing.registrationForm)) {
+          if (!registrationFormsEqual(registrationFormParsed.value, existing.registrationForm)) {
             payload.registrationForm = registrationFormParsed.value;
           }
         }
@@ -1326,8 +1348,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(200).json(existing);
         }
 
-        const updated = await storage.updateEvent(eventId, payload as Partial<Event>);
+        const updated = await storage.updateEvent(eventId, payload as Partial<Event>, { expectedUpdatedAt });
         if (!updated) {
+          // The conditional write found the row changed (or gone) since the check above.
+          if (expectedUpdatedAt && (await storage.getEvent(eventId))) {
+            return res.status(409).json({ message: EVENT_EDIT_CONFLICT });
+          }
           return res.status(404).json({ error: "Event not found" });
         }
         if (
@@ -2639,6 +2665,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cpf: string | null = isForeigner ? null : (req.user.cpf ?? null);
       const foreignDocument: string | null = isForeigner ? (req.user.foreignDocument ?? null) : null;
 
+      // Early answer for the common case; createFreeSubscription re-checks under a lock.
       const alreadyRegistered = await storage.isAlreadyRegisteredForEvent({
         eventId,
         userId,
@@ -2662,16 +2689,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Free inscription is immediately confirmed: there is nothing to pay.
-      const order = await storage.createOrder({
-        userId,
-        eventId,
-        cpf,
-        foreignDocument,
-        paymentMethod: "free",
-        amount: "0.00",
-        status: "paid",
-        registrationAnswers: registration.answers,
+      // The duplicate check and the insert are one locked step: concurrent
+      // requests of the same holder cannot both pass the check.
+      const created = await storage.createFreeSubscription({
+        holder: { userId, cpf, foreignDocument, email: req.user.email ?? null },
+        order: {
+          userId,
+          eventId,
+          cpf,
+          foreignDocument,
+          paymentMethod: "free",
+          amount: "0.00",
+          status: "paid",
+          registrationAnswers: registration.answers,
+        },
       });
+      if (!created.ok && created.reason === "event_full") {
+        return res
+          .status(salesBlockedStatus("event_full"))
+          .json({ message: salesBlockedMessage("event_full") });
+      }
+      if (!created.ok) {
+        return res
+          .status(409)
+          .json({ message: "Você já possui inscrição confirmada para este evento." });
+      }
+      const order = created.order;
 
       let qrCodeData = "";
       let updatedOrder = order;
@@ -2683,10 +2726,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
         updatedOrder = (await storage.updateOrder(order.id, { qrCodeData })) ?? order;
       }
-
-      await storage.updateEvent(event.id, {
-        currentAttendees: (event.currentAttendees || 0) + 1,
-      });
 
       try {
         await sendPurchaseConfirmationEmail({
@@ -3123,8 +3162,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Usuário não encontrado" });
       }
 
-      const { password, ...userWithoutPassword } = updatedUser;
-      res.json(userWithoutPassword);
+      res.json(toPublicUser(updatedUser));
     } catch (error) {
       console.error("Update profile error:", error);
       if (isUsersEmailUniqueViolation(error)) {
@@ -3175,8 +3213,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Usuário não encontrado" });
       }
 
-      const { password, ...userWithoutPassword } = result.user;
-      res.json(userWithoutPassword);
+      res.json(toPublicUser(result.user));
     } catch (error) {
       console.error("PUT /api/profile/identity:", error);
       res.status(500).json({ message: "Erro interno do servidor" });
@@ -3363,10 +3400,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const event = await storage.getEvent(link.eventId);
-      
+
+      // Public: the meeting link and password are only sent after redemption.
       res.json({
         ...link,
-        event,
+        event: event ? toPublicEvent(event) : event,
         remainingTickets
       });
     } catch (error) {

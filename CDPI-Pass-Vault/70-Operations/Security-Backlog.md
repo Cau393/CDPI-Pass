@@ -314,3 +314,8 @@ Recorded so they are not re-audited: IMDSv2 required on the instance · root MFA
 ## Resolved
 
 _(move items here with the date and the command output that shows them closed)_
+
+### 2026-10-09 — S1 and S2 from the ADR-016 refuter (code, not infrastructure)
+
+- **S1, user responses leaked `emailVerificationCode`:** `GET /api/auth/me`, `PUT /api/profile` and `PUT /api/profile/identity` returned the user row minus the password only. All three now use `toPublicUser`, which also drops `emailVerificationCode` and `emailVerificationCodeExpiresAt`. Proof: integration tests `user responses carry no secrets (S1)` in `server/test/integration/refuterItems.integration.test.ts` (red before: `emailVerificationCode` present in all three) and the unit test `server/test/utils/publicUser.test.ts`.
+- **S2, `GET /api/courtesy-links/:code` leaked `meetingUrl` / `meetingPassword` to anyone with a code:** it now returns `toPublicEvent(event)`. `CourtesyRedeemPage` only reads `event.id`, `title`, `modality` and `registrationForm`. Proof: integration test `public courtesy link (S2)` (red before: `meetingUrl` present).

@@ -455,22 +455,14 @@ describe.skipIf(!enabled)("free events and sales-closed (real routes + real DB)"
     const invalidPhoneEmail = `bad-phone-${tag}@example.test`;
     const lostCallingCodeEmail = `br-phone-${tag}@example.test`;
 
-    // Same shape RegisterPage sends for a foreigner: the phone picker emits
-    // E.164 digits without "+", and the CPF field is reset to "".
+    // Same shape RegisterPage sends (ADR-016): four fields; the phone picker emits
+    // E.164 digits without "+".
     function foreignerBody(email: string, phone: string, foreignDocument: string) {
       return {
         name: "Participante Estrangeira",
         email,
         password: "senha-segura-1",
-        isForeigner: true,
-        cpf: "",
-        foreignDocument,
-        birthDate: "11/08/1988",
         phone,
-        address: "Calle de prueba 151, San Lorenzo",
-        occupation: "Directora Técnica",
-        partnerCompany: "Empresa de teste",
-        areaOfActivity: "Asuntos Regulatorios",
       };
     }
 
@@ -509,9 +501,6 @@ describe.skipIf(!enabled)("free events and sales-closed (real routes + real DB)"
       const res = await api("POST", "/api/auth/register", {
         body: {
           ...foreignerBody(lostCallingCodeEmail, "11987654321", ""),
-          isForeigner: false,
-          cpf: "529.982.247-25",
-          foreignDocument: "",
         },
       });
       const { rows } = await pool.query(`SELECT phone FROM users WHERE email = $1`, [
