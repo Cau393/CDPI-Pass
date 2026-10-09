@@ -34,6 +34,14 @@ describe("normalizePhoneE164", () => {
     expect(normalizePhoneE164("5511987654321", "BR")).toBe("5511987654321");
   });
 
+  it("reads digits that are invalid as E.164 but valid as a Brazilian number as Brazilian", () => {
+    expect(normalizePhoneE164("11987654321", "BR")).toBe("5511987654321");
+  });
+
+  it("never overrides digits that are a valid E.164 number", () => {
+    expect(normalizePhoneE164("51987654321", "BR")).toBe("51987654321");
+  });
+
   it("throws on empty", () => {
     expect(() => normalizePhoneE164("", "BR")).toThrow("obrigatório");
   });
