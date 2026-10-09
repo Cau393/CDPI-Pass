@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation, useSearch } from "wouter";
-import { getValidatedNextPath } from "@/lib/authRedirect";
+import { authEntryHref, getValidatedNextPath } from "@/lib/authRedirect";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -143,19 +143,20 @@ export default function LoginPage() {
               {loginMutation.isPending ? "Entrando..." : "Entrar"}
             </Button>
             
-            <div className="text-center">
-              <span className="text-gray-600">Não tem conta? </span>
-              <a
-                href={
-                  nextRaw != null && nextRaw !== ""
-                    ? `/register?next=${encodeURIComponent(nextRaw)}`
-                    : "/register"
-                }
-                className="text-primary hover:text-secondary font-medium"
-                data-testid="link-register"
+            <div className="space-y-2 text-center">
+              <p className="text-sm text-gray-600">Não tem conta? É rápido e gratuito.</p>
+              <Button
+                asChild
+                variant="outline"
+                className="w-full min-h-11 border-primary text-primary hover:bg-primary/5 hover:text-primary"
               >
-                Cadastre-se
-              </a>
+                <a
+                  href={authEntryHref("/register", `/login?${search.replace(/^\?/, "")}`)}
+                  data-testid="link-register"
+                >
+                  Criar conta
+                </a>
+              </Button>
             </div>
           </form>
         </CardContent>

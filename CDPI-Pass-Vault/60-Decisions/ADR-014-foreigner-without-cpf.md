@@ -25,7 +25,13 @@ No sandbox key exists on this machine. The probe did **not** create a customer o
 - whether `POST /payments` with `billingType: CREDIT_CARD` and no card number returns `invoiceUrl`
 - the expected failures of `POST /paymentLinks` and `POST /payments` PIX for that customer
 
-The implementation follows the published contract anyway: send the normalized passport as `cpfCnpj`, set `foreignCustomer: true`, look the customer up by `externalReference` (the user id), and create one credit-card charge. If `invoiceUrl` is missing, the pending order is deleted and checkout returns 500. Re-run the probe with a sandbox key before relying on production foreign charges. Production also needs the Asaas foreign-payer permission; until then this call fails in production and Brazilian checkout is unchanged.
+The implementation follows the published contract anyway: send the normalized passport as `cpfCnpj`, set `foreignCustomer: true`, look the customer up by `externalReference` (the user id), and create one credit-card charge. If `invoiceUrl` is missing, the pending order is deleted and checkout returns 500. Since 2026-10-08 an Asaas refusal of foreign payers returns **503** with the CDPI contact (other Asaas errors 502), still deleting the order. Re-run the probe with a sandbox key before relying on production foreign charges. Production also needs the Asaas foreign-payer permission; until then this call fails in production and Brazilian checkout is unchanged.
+
+## Production evidence and probe status (8 Oct 2026)
+
+- Production answered `createForeignCardPayment` on 2026-10-06 with **400**, both errors coded `invalid_object`: "Sua conta não tem permissão para gerar pagadores estrangeiros…" and "O CPF/CNPJ informado é inválido." (the passport is validated as a CPF while the permission is off). The buyer saw a generic 500.
+- `asaasService` now reads `ASAAS_API_URL` (it was hardcoded to production), maps that refusal to 503 and never logs raw Asaas bodies.
+- Sandbox `invoiceUrl` probe: **still blocked**. `frontend/.env` holds only a production key; the probe needs a `$aact_hmlg_…` key against `https://api-sandbox.asaas.com/v3` (customer with `foreignCustomer: true`, then a `CREDIT_CARD` payment). Foreign paid checkout is **not** verified to work in production until Asaas enables foreign payers and this probe passes.
 
 ## Decision
 
@@ -46,5 +52,9 @@ The implementation follows the published contract anyway: send the normalized pa
 - Apply `frontend/sql/users_foreigner.sql` on Neon before deploying.
 - Ask Asaas to enable foreign payers on the production account, then confirm a sandbox (or a tiny production) charge returns `invoiceUrl` for a passport `cpfCnpj`.
 - Profile cannot change CPF, the foreigner flag, or the passport after registration (allowlist strips them).
-- Foreigners usually have a non-BR phone. Phones travel as E.164 digits without `+`, so `normalizePhoneE164` must never parse digits-only input with a default country (fixed 2026-10-07, see [[00-Overview/Lessons-Learned]]). Trade-off: a BR number sent as national digits without `55` is now rejected or, for DDDs that match a country code (`51…` → Peru), read as that country. No client sends that shape (`PhoneInputE164` always includes the country code). A "try BR first for 10–11 digits" guard is wrong because US `12025550100` is also a valid BR national number.
+- Foreigners usually have a non-BR phone. Phones travel as E.164 digits without `+`, so `normalizePhoneE164` must never parse digits-only input with a default country (fixed 2026-10-07, see [[00-Overview/Lessons-Learned]]). Trade-off: a BR number sent as national digits without `55` is now rejected or, for DDDs that match a country code (`51…` → Peru), read as that country. `PhoneInputE164` did send that shape for keyboard users until 2026-10-08 (Tab selected `+55`), so digits that are **not** a valid E.164 number now fall back to BR; a valid E.164 reading always wins. A "try BR first for 10–11 digits" guard is wrong because US `12025550100` is also a valid BR national number.
 - [[60-Decisions/ADR-002-asaas-payments]] still uses Asaas. CPF is required only for Brazilian payers.
+
+## Amendment 2026-10-08 (ADR-016 Phase 3)
+
+The document is no longer chosen at signup only. An account may now exist without one; the CPF or passport is asked at the **first in-person or paid inscription** (and the address at the first in-person one), through `PUT /api/profile/identity`, and is write-once from then on. Accounts created under this ADR keep their document and are never asked again. Free online inscriptions and online courtesy need no document. See [[60-Decisions/ADR-016-event-registration-forms-and-minimal-signup]].

@@ -93,6 +93,16 @@ describe("mapCommercialSales", () => {
     expect(result[0].vendedor).toBe("Maria Vendedora");
   });
 
+  it("never falls back to the redeeming account's CPF or passport for a courtesy attendee row", () => {
+    const [br, foreign] = mapCommercialSales([
+      makeRow({ courtesyAttendeeId: "att-1", attendeeCpf: null, cpf: "111.222.333-44", foreignDocument: null }),
+      makeRow({ courtesyAttendeeId: "att-2", attendeeForeignDocument: null, cpf: null, foreignDocument: "AB123456" }),
+    ]);
+
+    expect(br.cpf).toBe("");
+    expect(foreign.cpf).toBe("");
+  });
+
   it('maps "pending" status to "pendente"', () => {
     const rows = [makeRow({ status: "pending" })];
     const result = mapCommercialSales(rows);

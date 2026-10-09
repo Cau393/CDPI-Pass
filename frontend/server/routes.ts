@@ -1,5 +1,5 @@
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
-import type { Express } from "express";
+import type { Express, Response } from "express";
 import { createServer, type Server } from "http";
 import { randomUUID } from "crypto";
 import { storage } from "./storage";
@@ -22,11 +22,11 @@ import {
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { 
-  insertUserObjectSchema,
-  refineAccountDocument,
+  registerUserSchema,
   loginSchema, 
   insertOrderSchema,
   courtesyRedemptionSchema,
+  onlineCourtesyRedemptionSchema,
   type User,
   type Event,
   events,
@@ -44,7 +44,6 @@ import { validateEmail } from "./utils/validation";
 import { resolveRegisterIdentity, normalizeForeignDocument } from "./utils/registerIdentity";
 import {
   isUsersEmailUniqueViolation,
-  isUsersForeignDocumentUniqueViolation,
 } from "./utils/usersEmailUnique";
 import { parseBrazilEventLocalDateTime } from "./utils/eventDateTime";
 import { sanitizeCourtesyTemplateHtml } from "./utils/courtesyTemplateSanitize";
@@ -55,12 +54,19 @@ import {
   parseCourtesyLimit,
 } from "./utils/courtesyRedeemLimit";
 import {
-  parseInterestAreasField,
-  resolveOrderInterestArea,
-  sameInterestAreas,
-  storedParticipantInterestArea,
-  withoutBuyerInterestArea,
-} from "@shared/interestAreas";
+  parseRegistrationFormField,
+  resolveRegistrationAnswers,
+  withLegacyProfileAnswers,
+  mergeLegacyIntoProfile,
+  participantAnswers,
+  withoutBuyerAnswers,
+} from "@shared/eventRegistrationForm";
+import {
+  FOREIGN_PAID_UNAVAILABLE_CODE,
+  FOREIGN_PAID_UNAVAILABLE_MESSAGE,
+  foreignPaidCheckoutBlocked,
+} from "@shared/foreignCheckout";
+import { identityRequiredBody, missingIdentityFields } from "./utils/inscriptionIdentity";
 import { validateEmailSubjectTemplateInput } from "./utils/emailSubjectTemplate";
 import { mapCommercialSales } from "./utils/commercialSalesMapper";
 import {
@@ -81,10 +87,12 @@ import {
 } from "./utils/eventSalesPolicy";
 import {
   profileUpdateSchema,
+  profileIdentitySchema,
   PROFILE_SENSITIVE_FIELDS,
 } from "./utils/profileUpdateSchema";
 import { toPresignedUrl } from "./utils/presignedUrl";
 import { finalizeOrderPaidLikeWebhook } from "./utils/finalizeOrderPaidLikeWebhook";
+import { findOrderForPaidAsaasPayment } from "./utils/findOrderForPaidAsaasPayment";
 import { enqueueEventPrintIfEnabled } from "./utils/enqueueEventPrintIfEnabled";
 import {
   isOnlineEvent,
@@ -108,8 +116,11 @@ import csv from 'csv-parser';
 import { parse } from 'csv-parse/sync';
 import { Readable } from 'stream';
 import { toTitleCaseName } from "./utils/toTitleCaseName";
+import { toPublicUser } from "./utils/publicUser";
+import { registrationFormsEqual } from "./utils/registrationFormEqual";
 import { decodeCsvBuffer } from "./utils/decodeCsvBuffer";
 import { normalizePhoneE164 } from "./utils/normalizePhoneE164";
+import { checkoutPaymentErrorResponse } from "./utils/asaasErrors";
 import {
   cdpiApoiandoNpsAnswersSchema,
   cdpiEventNpsAnswersSchema,
@@ -169,11 +180,24 @@ const authenticateToken = async (req: any, res: any, next: any) => {
   }
 };
 
+const EVENT_EDIT_CONFLICT = "Este evento foi alterado por outra pessoa. Recarregue a página.";
+
 async function courtesyCapBlocksActivation(eventId: string): Promise<boolean> {
   const event = await storage.getEvent(eventId);
   if (!event) return false;
   const redeemed = await storage.countPaidCourtesyRedeems(eventId);
   return courtesyActivationBlocked(redeemed, event.courtesyLimit ?? null);
+}
+
+/**
+ * Answers that do not resolve. A body without an `answers` key comes from a tab
+ * still on the pre-ADR-016 bundle (new bundles always send it): the person
+ * cannot fix it, so ask for a reload (409) instead of an unexplainable 400.
+ */
+function registrationAnswersFailure(res: Response, body: unknown, message: string) {
+  const sentAnswers = typeof body === "object" && body !== null && "answers" in body;
+  if (sentAnswers) return res.status(400).json({ message });
+  return res.status(409).json({ message: "Atualize a página para concluir a inscrição", code: "reload_required" });
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -203,16 +227,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth routes
   app.post("/api/auth/register", async (req, res) => {
     try {
-      // Create a custom schema for API that accepts string date
-      const apiUserSchema = insertUserObjectSchema.extend({
-        birthDate: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, "Data deve estar no formato dd/mm/aaaa")
-      }).superRefine(refineAccountDocument);
-      
-      const body = apiUserSchema.parse(req.body);
-      const identity = resolveRegisterIdentity(body);
-      if (!identity.ok) {
-        return res.status(400).json({ message: identity.message });
+      // A tab still running the old full-signup bundle sends the document and
+      // birth date; creating a bare account from it would drop what the user typed.
+      if (req.body && typeof req.body === "object" && ("cpf" in req.body || "birthDate" in req.body)) {
+        return res.status(409).json({ message: "Atualize a página para concluir o cadastro" });
       }
+      // ADR-016: name, e-mail, phone and password only. The document and
+      // address are asked at the first inscription that needs them
+      // (PUT /api/profile/identity); keys an old client still sends are stripped.
+      const body = registerUserSchema.parse(req.body);
 
       let phone: string;
       try {
@@ -227,33 +250,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Email já cadastrado" });
       }
 
-      if (identity.cpf) {
-        const existingCpf = await storage.getUserByCpf(identity.cpf);
-        if (existingCpf) {
-          return res.status(400).json({ message: "CPF já cadastrado" });
-        }
-      } else if (identity.foreignDocument) {
-        const existingDocument = await storage.getUserByForeignDocument(identity.foreignDocument);
-        if (existingDocument) {
-          return res.status(400).json({ message: "Documento já cadastrado" });
-        }
-      }
-
-      // Convert birthDate string from dd/mm/yyyy to Date object for database
-      const [day, month, year] = body.birthDate.split('/');
-      const birthDateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-
       // Hash password
       const hashedPassword = await bcrypt.hash(body.password, 10);
 
       // Create user
       const user = await storage.createUser({
-        ...body,
-        birthDate: birthDateObj,
+        email: body.email,
         password: hashedPassword,
-        cpf: identity.cpf,
-        isForeigner: identity.isForeigner,
-        foreignDocument: identity.foreignDocument,
         name: toTitleCaseName(body.name),
         phone,
       });
@@ -273,9 +276,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       if (isUsersEmailUniqueViolation(error)) {
         return res.status(400).json({ message: "Email já cadastrado" });
-      }
-      if (isUsersForeignDocumentUniqueViolation(error)) {
-        return res.status(400).json({ message: "Documento já cadastrado" });
       }
       res.status(500).json({ message: "Erro interno do servidor" });
     }
@@ -356,8 +356,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/auth/me", authenticateToken, async (req: any, res) => {
-    const { password, ...userWithoutPassword } = req.user;
-    res.json(userWithoutPassword);
+    res.json(toPublicUser(req.user));
   });
 
   app.get("/api/auth/verify-email", async (req, res) => {
@@ -626,11 +625,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!courtesyLimitParsed.ok) {
           return res.status(400).json({ error: courtesyLimitParsed.error });
         }
-        const interestAreasParsed = parseInterestAreasField(
-          (req.body as Record<string, unknown>).interest_areas,
+        const registrationFormParsed = parseRegistrationFormField(
+          (req.body as Record<string, unknown>).registration_form,
+          [],
+          randomUUID,
         );
-        if (!interestAreasParsed.ok) {
-          return res.status(400).json({ error: interestAreasParsed.error });
+        if (!registrationFormParsed.ok) {
+          return res.status(400).json({ error: registrationFormParsed.error });
         }
 
         const modalityResolved = resolveCreateModality(
@@ -701,7 +702,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             whatsappGroupUrl: modalityResolved.whatsappGroupUrl,
             confirmationEmailHtml: modalityResolved.confirmationEmailHtml,
             courtesyLimit: courtesyLimitParsed.value,
-            interestAreas: interestAreasParsed.value,
+            registrationForm: registrationFormParsed.value,
           })
           .returning();
 
@@ -1138,6 +1139,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         const body = req.body as Record<string, string | undefined>;
+
+        // Optimistic concurrency: the admin client sends the updatedAt it loaded.
+        // Absent (old admin bundle) means no check.
+        let expectedUpdatedAt: Date | undefined;
+        if (body.updated_at !== undefined) {
+          const sent = new Date(String(body.updated_at));
+          if (Number.isNaN(sent.getTime())) {
+            return res.status(400).json({ error: "updated_at must be an ISO date" });
+          }
+          if (!existing.updatedAt || sent.getTime() !== existing.updatedAt.getTime()) {
+            return res.status(409).json({ message: EVENT_EDIT_CONFLICT });
+          }
+          expectedUpdatedAt = sent;
+        }
         const payload: Partial<{
           title: string;
           description: string;
@@ -1154,7 +1169,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           whatsappGroupUrl: string | null;
           confirmationEmailHtml: string | null;
           courtesyLimit: number | null;
-          interestAreas: string[];
+          registrationForm: Event["registrationForm"];
         }> = {};
 
         if (Object.prototype.hasOwnProperty.call(body, "title")) {
@@ -1292,19 +1307,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
-        // Missing or "[]" stores an empty list. The edit form and the sales
-        // toggle both send the current list, so a real save can clear it
-        // for future buyers without touching existing orders.
-        const interestAreasParsed = parseInterestAreasField(
-          Object.prototype.hasOwnProperty.call(body, "interest_areas")
-            ? body.interest_areas
-            : undefined,
-        );
-        if (!interestAreasParsed.ok) {
-          return res.status(400).json({ error: interestAreasParsed.error });
-        }
-        if (!sameInterestAreas(existing.interestAreas, interestAreasParsed.value)) {
-          payload.interestAreas = interestAreasParsed.value;
+        // Missing leaves the form unchanged (the sales toggle does not send
+        // it). Removed questions are archived, never deleted, so answers
+        // already given keep their export column.
+        if (Object.prototype.hasOwnProperty.call(body, "registration_form")) {
+          const registrationFormParsed = parseRegistrationFormField(
+            body.registration_form,
+            existing.registrationForm,
+            randomUUID,
+          );
+          if (!registrationFormParsed.ok) {
+            return res.status(400).json({ error: registrationFormParsed.error });
+          }
+          if (!registrationFormsEqual(registrationFormParsed.value, existing.registrationForm)) {
+            payload.registrationForm = registrationFormParsed.value;
+          }
         }
 
         const file = req.file as { buffer: Buffer; mimetype: string } | undefined;
@@ -1348,8 +1365,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(200).json(existing);
         }
 
-        const updated = await storage.updateEvent(eventId, payload as Partial<Event>);
+        const updated = await storage.updateEvent(eventId, payload as Partial<Event>, { expectedUpdatedAt });
         if (!updated) {
+          // The conditional write found the row changed (or gone) since the check above.
+          if (expectedUpdatedAt && (await storage.getEvent(eventId))) {
+            return res.status(409).json({ message: EVENT_EDIT_CONFLICT });
+          }
           return res.status(404).json({ error: "Event not found" });
         }
         if (
@@ -1439,12 +1460,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({ qrCodeData });
       }
 
+      const event = await storage.getEvent(eventId);
+      if (!event) {
+        return res.status(404).json({ message: "Evento não encontrado" });
+      }
+
       const rows = await db
         .select({
           userId: users.id,
           name: users.name,
+          attendeeName: courtesyAttendees.name,
+          attendeeEmail: courtesyAttendees.email,
+          attendeePhone: courtesyAttendees.phone,
+          userOccupation: users.occupation,
+          userPartnerCompany: users.partnerCompany,
+          userAreaOfActivity: users.areaOfActivity,
           cpf: users.cpf,
           foreignDocument: users.foreignDocument,
+          userIsForeigner: users.isForeigner,
+          userAddress: users.address,
+          attendeeCpf: courtesyAttendees.cpf,
+          attendeeForeignDocument: courtesyAttendees.foreignDocument,
+          attendeeIsForeigner: courtesyAttendees.isForeigner,
+          attendeeAddress: courtesyAttendees.address,
+          registrationAnswers: orders.registrationAnswers,
           email: users.email,
           phone: users.phone,
           ticketId: orders.id,
@@ -1482,17 +1521,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
           r.paymentMethod === "courtesy" || r.courtesyAttendeeId != null
             ? "courtesy"
             : "paid";
+        const isCourtesyRow = r.courtesyAttendeeId != null;
+        // Profile columns: the order's legacy answer first, else the profile. A
+        // courtesy attendee is not the redeeming account, so only their own
+        // fields apply (no area field exists for them: the answer or nothing).
+        const merged = mergeLegacyIntoProfile(
+          participantAnswers(r.registrationAnswers, r.interestArea),
+          isCourtesyRow
+            ? { occupation: r.occupation, partnerCompany: r.partnerCompany }
+            : {
+                occupation: r.userOccupation,
+                partnerCompany: r.userPartnerCompany,
+                areaOfActivity: r.userAreaOfActivity,
+              },
+        );
         return {
           userId: r.userId,
-          name: r.name,
-          cpf: r.cpf ?? r.foreignDocument ?? "",
-          email: r.email,
-          phone: r.phone,
+          name: isCourtesyRow ? (r.attendeeName ?? r.name) : r.name,
+          // A courtesy row is the attendee: never the redeeming account's document, address or nationality.
+          cpf: isCourtesyRow
+            ? (r.attendeeCpf ?? r.attendeeForeignDocument ?? "")
+            : (r.cpf ?? r.foreignDocument ?? ""),
+          email: isCourtesyRow ? (r.attendeeEmail ?? r.email) : r.email,
+          phone: isCourtesyRow ? (r.attendeePhone ?? r.phone) : r.phone,
           ticketId: r.ticketId,
           orderStatus,
-          occupation: r.occupation ?? null,
-          partnerCompany: r.partnerCompany ?? null,
-          interestArea: storedParticipantInterestArea(r.interestArea),
+          occupation: merged.occupation,
+          partnerCompany: merged.partnerCompany,
+          areaOfActivity: merged.areaOfActivity,
+          address: isCourtesyRow ? (r.attendeeAddress ?? null) : (r.userAddress ?? null),
+          isForeigner: (isCourtesyRow ? r.attendeeIsForeigner : r.userIsForeigner) === true,
+          registrationAnswers: merged.answers,
           amntUsed: used,
           maxUses: maxU,
           checkedIn: used > 0,
@@ -1506,7 +1565,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       });
 
-      res.json({ data, total: data.length });
+      res.json({ data, total: data.length, registrationForm: event.registrationForm });
     } catch (error) {
       console.error("GET /api/admin/events/:eventId/participants:", error);
       res.status(500).json({ message: "Erro ao listar participantes" });
@@ -2437,6 +2496,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .status(salesBlockedStatus(purchaseCheck.reason))
           .json({ message: salesBlockedMessage(purchaseCheck.reason) });
       }
+      if (foreignPaidCheckoutBlocked(req.user)) {
+        return res
+          .status(403)
+          .json({ code: FOREIGN_PAID_UNAVAILABLE_CODE, message: FOREIGN_PAID_UNAVAILABLE_MESSAGE });
+      }
 
       // Calculate total amount (event price + convenience fee)
       let finalPrice = parseFloat(event.price);
@@ -2457,25 +2521,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const totalAmount = computeOrderTotal(event, finalPrice);
 
-      const interest = resolveOrderInterestArea({
-        labels: event.interestAreas,
-        body: req.body ?? {},
-      });
-      if (!interest.ok) {
-        return res.status(400).json({ message: interest.message });
-      }
-
       const isForeigner = req.user.isForeigner === true;
       if (isForeigner && paymentMethod !== "credit_card") {
         return res.status(400).json({
           message: "Estrangeiros pagam apenas com cartão de crédito internacional, sem PIX, boleto ou parcelamento.",
         });
       }
-      if (isForeigner && !req.user.foreignDocument) {
-        return res.status(400).json({ message: "Complete seu documento no cadastro antes de comprar." });
+      // A paid event always needs the document (Asaas cpfCnpj); in-person also the address.
+      const missingIdentity = missingIdentityFields(event, req.user);
+      if (missingIdentity.length > 0) {
+        return res.status(400).json(identityRequiredBody(missingIdentity));
       }
-      if (!isForeigner && !req.user.cpf) {
-        return res.status(400).json({ message: "Complete seu CPF no perfil antes de comprar." });
+      // Old bundles send no answers: the legacy questions fall back to the account's profile.
+      const registration = resolveRegistrationAnswers({
+        fields: event.registrationForm,
+        body: withLegacyProfileAnswers(event.registrationForm, req.body ?? {}, req.user),
+      });
+      if (!registration.ok) {
+        return registrationAnswersFailure(res, req.body, registration.message);
       }
 
       // Create order. Paid checkout stays pending; the label is stored now.
@@ -2488,7 +2551,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         amount: totalAmount.toString(),
         status: "pending",
         courtesyLinkId: promoLinkId,
-        interestArea: interest.interestArea,
+        registrationAnswers: registration.answers,
       });
 
       // Create payment with Asaas
@@ -2497,7 +2560,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? await asaasService.createForeignCardPayment({
               name: req.user.name,
               email: req.user.email,
-              cpfCnpj: req.user.foreignDocument!,
               phone: req.user.phone?.replace(/\D/g, '') || '',
               userId,
               value: totalAmount,
@@ -2541,7 +2603,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Prepare response with payment details
         const response: any = {
-          order: updatedOrder ? withoutBuyerInterestArea(updatedOrder) : updatedOrder,
+          order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
           payment: {
             id: paymentData.id,
             link: paymentData.paymentLink,
@@ -2575,10 +2637,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         res.status(201).json(response);
       } catch (paymentError) {
-        console.error("Payment creation error:", paymentError);
+        console.error(`Payment creation error (order ${order.id}):`, paymentError);
         // Delete the order if payment creation fails
         await storage.deleteOrder(order.id);
-        res.status(500).json({ message: "Erro ao processar pagamento. Tente novamente." });
+        const failure = checkoutPaymentErrorResponse(paymentError);
+        res.status(failure.status).json(failure.body);
       }
     } catch (error) {
       console.error("Create order error:", error);
@@ -2617,49 +2680,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .json({ message: salesBlockedMessage(check.reason) });
       }
 
+      // In-person needs document + address; free online needs neither.
+      const missingIdentity = missingIdentityFields(event, req.user);
+      if (missingIdentity.length > 0) {
+        return res.status(400).json(identityRequiredBody(missingIdentity));
+      }
       const isForeigner = req.user.isForeigner === true;
-      const cpf = isForeigner ? null : req.user.cpf;
-      const foreignDocument = isForeigner ? req.user.foreignDocument : null;
-      if (!isForeigner && !cpf) {
-        return res
-          .status(400)
-          .json({ message: "Complete seu CPF no perfil antes de se inscrever." });
-      }
-      if (isForeigner && !foreignDocument) {
-        return res
-          .status(400)
-          .json({ message: "Complete seu documento no cadastro antes de se inscrever." });
-      }
+      const cpf: string | null = isForeigner ? null : (req.user.cpf ?? null);
+      const foreignDocument: string | null = isForeigner ? (req.user.foreignDocument ?? null) : null;
 
-      const alreadyRegistered = isForeigner
-        ? (await storage.isForeignDocumentAlreadyRegisteredForEvent(foreignDocument!, eventId))
-          || (await storage.isUserAlreadyRegisteredForEvent(userId, eventId))
-        : await storage.isCpfAlreadyRegisteredForEvent(cpf!, eventId);
+      // Early answer for the common case; createFreeSubscription re-checks under a lock.
+      const alreadyRegistered = await storage.isAlreadyRegisteredForEvent({
+        eventId,
+        userId,
+        cpf,
+        foreignDocument,
+        email: req.user.email ?? null,
+      });
       if (alreadyRegistered) {
         return res
           .status(409)
           .json({ message: "Você já possui inscrição confirmada para este evento." });
       }
 
-      const interest = resolveOrderInterestArea({
-        labels: event.interestAreas,
-        body: req.body ?? {},
+      // Old bundles send no answers: the legacy questions fall back to the account's profile.
+      const registration = resolveRegistrationAnswers({
+        fields: event.registrationForm,
+        body: withLegacyProfileAnswers(event.registrationForm, req.body ?? {}, req.user),
       });
-      if (!interest.ok) {
-        return res.status(400).json({ message: interest.message });
+      if (!registration.ok) {
+        return registrationAnswersFailure(res, req.body, registration.message);
       }
 
       // Free inscription is immediately confirmed: there is nothing to pay.
-      const order = await storage.createOrder({
-        userId,
-        eventId,
-        cpf,
-        foreignDocument,
-        paymentMethod: "free",
-        amount: "0.00",
-        status: "paid",
-        interestArea: interest.interestArea,
+      // The duplicate check and the insert are one locked step: concurrent
+      // requests of the same holder cannot both pass the check.
+      const created = await storage.createFreeSubscription({
+        holder: { userId, cpf, foreignDocument, email: req.user.email ?? null },
+        order: {
+          userId,
+          eventId,
+          cpf,
+          foreignDocument,
+          paymentMethod: "free",
+          amount: "0.00",
+          status: "paid",
+          registrationAnswers: registration.answers,
+        },
       });
+      if (!created.ok && created.reason === "event_full") {
+        return res
+          .status(salesBlockedStatus("event_full"))
+          .json({ message: salesBlockedMessage("event_full") });
+      }
+      if (!created.ok) {
+        return res
+          .status(409)
+          .json({ message: "Você já possui inscrição confirmada para este evento." });
+      }
+      const order = created.order;
 
       let qrCodeData = "";
       let updatedOrder = order;
@@ -2671,10 +2750,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
         updatedOrder = (await storage.updateOrder(order.id, { qrCodeData })) ?? order;
       }
-
-      await storage.updateEvent(event.id, {
-        currentAttendees: (event.currentAttendees || 0) + 1,
-      });
 
       try {
         await sendPurchaseConfirmationEmail({
@@ -2698,7 +2773,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       return res.status(201).json({
         message: "Inscrição confirmada!",
-        order: withoutBuyerInterestArea(updatedOrder ?? order),
+        order: withoutBuyerAnswers(updatedOrder ?? order),
         qrCode: qrCodeData || undefined,
         whatsappGroupUrl: links?.whatsappGroupUrl ?? null,
       });
@@ -2739,7 +2814,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Pedido não encontrado" });
       }
 
-      res.json(withoutBuyerInterestArea(order));
+      res.json(withoutBuyerAnswers(order));
     } catch (error) {
       console.error("Get order error:", error);
       res.status(500).json({ message: "Erro interno do servidor" });
@@ -2779,7 +2854,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const updatedOrder = await storage.getOrder(id);
           return res.json({
             message: "Pagamento confirmado!",
-            order: updatedOrder ? withoutBuyerInterestArea(updatedOrder) : updatedOrder,
+            order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
           });
         }
 
@@ -2788,7 +2863,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(409).json({
             message:
               "Já existe ingresso confirmado para este evento. Este pagamento duplicado foi descartado; o estorno será processado quando possível.",
-            order: updatedOrder ? withoutBuyerInterestArea(updatedOrder) : updatedOrder,
+            order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
           });
         }
 
@@ -2796,26 +2871,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const updatedOrder = await storage.getOrder(id);
           return res.json({
             message: "Pagamento já estava confirmado.",
-            order: updatedOrder ? withoutBuyerInterestArea(updatedOrder) : updatedOrder,
+            order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
           });
         }
 
         return res.status(400).json({
           message: "Não foi possível confirmar o pagamento deste pedido.",
-          order: withoutBuyerInterestArea(order),
+          order: withoutBuyerAnswers(order),
         });
       } else if ((payment.status === 'OVERDUE' || payment.status === 'CANCELED') && order.status === 'pending') {
         await storage.updateOrder(id, { status: 'cancelled' });
         const updatedOrder = await storage.getOrder(id);
         return res.json({ 
           message: "Pagamento cancelado", 
-          order: updatedOrder ? withoutBuyerInterestArea(updatedOrder) : updatedOrder,
+          order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
         });
       }
 
       res.json({ 
         message: `Status do pagamento: ${payment.status}`, 
-        order: withoutBuyerInterestArea(order),
+        order: withoutBuyerAnswers(order),
         paymentStatus: payment.status 
       });
     } catch (error) {
@@ -2968,9 +3043,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Handle different payment events
       if (eventType === "PAYMENT_CONFIRMED" || eventType === "PAYMENT_RECEIVED") {
-        const order = payment.externalReference
-          ? await storage.getOrder(payment.externalReference)
-          : await storage.getOrderByAsaasPaymentId(payment.id);
+        const order = await findOrderForPaidAsaasPayment(payment);
 
         if (order) {
           const result = await finalizeOrderPaidLikeWebhook(order, {
@@ -2984,6 +3057,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
       } else if (eventType === "PAYMENT_OVERDUE" || eventType === "PAYMENT_DELETED") {
+        // Only the charge the order currently holds may cancel it: an older charge of the
+        // same order, or one payment generated by a card link, never does.
         const order = await storage.getOrderByAsaasPaymentId(payment.id);
         
         if (order && order.status === "pending") {
@@ -3111,13 +3186,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Usuário não encontrado" });
       }
 
-      const { password, ...userWithoutPassword } = updatedUser;
-      res.json(userWithoutPassword);
+      res.json(toPublicUser(updatedUser));
     } catch (error) {
       console.error("Update profile error:", error);
       if (isUsersEmailUniqueViolation(error)) {
         return res.status(400).json({ message: "Email já cadastrado" });
       }
+      res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+
+  /**
+   * ADR-016: CPF or passport, asked at the first in-person or paid
+   * inscription, plus the address for in-person events. The document is
+   * write-once (support changes it); PUT /api/profile keeps stripping it.
+   */
+  app.put("/api/profile/identity", authenticateToken, async (req: any, res) => {
+    try {
+      const parsed = profileIdentitySchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Dados inválidos" });
+      }
+      const { isForeigner, cpf, foreignDocument, address } = parsed.data;
+      const sendsDocument = isForeigner === true || cpf !== undefined || foreignDocument !== undefined;
+      if (!sendsDocument && address === undefined) {
+        return res.status(400).json({ message: "Informe o documento ou o endereço." });
+      }
+
+      let document: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null } | undefined;
+      if (sendsDocument) {
+        const identity = resolveRegisterIdentity({ isForeigner, cpf, foreignDocument });
+        if (!identity.ok) {
+          return res.status(400).json({ message: identity.message });
+        }
+        document = {
+          isForeigner: identity.isForeigner,
+          cpf: identity.cpf,
+          foreignDocument: identity.foreignDocument,
+        };
+      }
+
+      const result = await storage.setUserIdentity(req.user.id, { document, address });
+      if (!result.ok) {
+        if (result.reason === "document_already_set") {
+          return res.status(409).json({ message: "Documento já informado; fale com o suporte para alterar." });
+        }
+        if (result.reason === "document_taken") {
+          return res.status(409).json({ message: "Este documento já está cadastrado em outra conta." });
+        }
+        return res.status(404).json({ message: "Usuário não encontrado" });
+      }
+
+      res.json(toPublicUser(result.user));
+    } catch (error) {
+      console.error("PUT /api/profile/identity:", error);
       res.status(500).json({ message: "Erro interno do servidor" });
     }
   });
@@ -3302,10 +3424,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const event = await storage.getEvent(link.eventId);
-      
+
+      // Public: the meeting link and password are only sent after redemption.
       res.json({
         ...link,
-        event,
+        event: event ? toPublicEvent(event) : event,
         remainingTickets
       });
     } catch (error) {
@@ -3317,16 +3440,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/courtesy/redeem", authenticateToken, async (req: any, res) => {
     try {
       const userId = req.user.id;
-      const { code, ...userData } = req.body;
-
-      // Validate redemption data
-      const validationResult = courtesyRedemptionSchema.safeParse(userData);
-      if (!validationResult.success) {
-        return res.status(400).json({ 
-          message: "Dados inválidos", 
-          errors: validationResult.error.errors 
-        });
-      }
+      const { code, ...userData } = req.body ?? {};
 
       // Get courtesy link
       const link = await storage.getCourtesyLinkByCode(code);
@@ -3354,34 +3468,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Evento não encontrado" });
       }
 
-      const interest = resolveOrderInterestArea({
-        labels: event.interestAreas,
-        body: req.body ?? {},
-      });
-      if (!interest.ok) {
-        return res.status(400).json({ message: interest.message });
+      // Online courtesy asks no document, birth date or address (ADR-016).
+      const online = isOnlineEvent(event);
+      const validationResult = (online ? onlineCourtesyRedemptionSchema : courtesyRedemptionSchema).safeParse(userData);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Dados inválidos", 
+          errors: validationResult.error.errors 
+        });
       }
 
-      const isForeigner = userData.isForeigner === true;
+      // The attendee may not be the redeeming account: the legacy questions
+      // come from the attendee's own form fields, never from req.user's profile.
+      const registration = resolveRegistrationAnswers({
+        fields: event.registrationForm,
+        body: withLegacyProfileAnswers(event.registrationForm, req.body ?? {}, {
+          occupation: userData.occupation,
+          partnerCompany: userData.partnerCompany,
+        }),
+      });
+      if (!registration.ok) {
+        return registrationAnswersFailure(res, req.body, registration.message);
+      }
+
+      const isForeigner = !online && userData.isForeigner === true;
       const foreignDocument = isForeigner
         ? normalizeForeignDocument(userData.foreignDocument ?? "")
         : null;
-      const attendeeCpf = isForeigner ? null : (userData.cpf ?? null);
+      const attendeeCpf: string | null = online || isForeigner ? null : (userData.cpf ?? null);
       if (isForeigner && !foreignDocument) {
         return res.status(400).json({ message: "Documento estrangeiro inválido" });
       }
-      if (!isForeigner && !attendeeCpf) {
+      if (!online && !isForeigner && !attendeeCpf) {
         return res.status(400).json({ message: "CPF inválido" });
       }
 
-      const alreadyRegistered = isForeigner
-        ? await storage.isForeignDocumentAlreadyRegisteredForEvent(foreignDocument!, link.eventId)
-        : await storage.isCpfAlreadyRegisteredForEvent(attendeeCpf!, link.eventId);
+      // By the attendee, never the redeeming account (one account may redeem
+      // for several attendees): in-person by document, as before; online has
+      // no document, so by the attendee's e-mail.
+      const alreadyRegistered = await storage.isAlreadyRegisteredForEvent({
+        eventId: link.eventId,
+        userId: null,
+        cpf: attendeeCpf,
+        foreignDocument,
+        email: online ? userData.email : null,
+      });
       if (alreadyRegistered) {
         return res.status(400).json({
           message: isForeigner
             ? "Documento já cadastrado para este evento"
-            : "CPF já cadastrado para este evento",
+            : attendeeCpf
+              ? "CPF já cadastrado para este evento"
+              : "E-mail já inscrito neste evento.",
         });
       }
 
@@ -3396,7 +3534,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Update user information with courtesy data
-      const birthDateObj = new Date(userData.birthDate);
+      const birthDateObj = online ? null : new Date(userData.birthDate);
 
       let phoneNorm: string;
       let nameNorm: string;
@@ -3411,7 +3549,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         eventId: link.eventId,
         linkId: link.id,
         userId,
-        interestArea: interest.interestArea,
+        registrationAnswers: registration.answers,
         attendee: {
           name: nameNorm,
           email: userData.email,
@@ -3420,7 +3558,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           foreignDocument,
           phone: phoneNorm,
           birthDate: birthDateObj,
-          address: userData.address,
+          address: online ? null : userData.address,
           partnerCompany: userData.partnerCompany,
           occupation: userData.occupation,
           eventTitle: event.title,
@@ -3486,7 +3624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.error("Could not retrieve final order details for courtesy redemption:", order.id);
           return res.status(201).json({
             message: "Cortesia resgatada com sucesso! Ocorreu um erro ao enviar o email do ingresso.",
-            order: withoutBuyerInterestArea(order),
+            order: withoutBuyerAnswers(order),
             qrCode: qrCodeData
           });
         }
@@ -3509,7 +3647,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(201).json({
         message: "Cortesia resgatada com sucesso!",
-        order: withoutBuyerInterestArea(updatedOrder),
+        order: withoutBuyerAnswers(updatedOrder),
         qrCode: qrCodeData || undefined,
       });
     } catch (error) {

@@ -16,6 +16,7 @@
     "test": "pnpm run test:frontend && pnpm run test:backend && pnpm run test:integration",
     "test:frontend": "vitest run --config vitest.client.config.ts",
     "test:backend": "vitest run --config vitest.server.config.ts",
+    "test:e2e": "playwright test",
     "test:integration": "bash scripts/run-integration-tests.sh",
     "db:push": "drizzle-kit push",
     "db:diff": "tsx scripts/db-diff.ts",
@@ -130,6 +131,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.0",
     "@replit/vite-plugin-cartographer": "^0.3.0",
     "@replit/vite-plugin-runtime-error-modal": "^0.0.3",
     "@tailwindcss/typography": "^0.5.15",

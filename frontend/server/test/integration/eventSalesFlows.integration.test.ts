@@ -23,6 +23,7 @@ import type { Server } from "http";
 import jwt from "jsonwebtoken";
 import { Pool } from "pg";
 import { randomUUID } from "crypto";
+import { FOREIGN_PAID_CHECKOUT_ENABLED } from "@shared/foreignCheckout";
 
 const VERIFY_URL = process.env.VERIFY_DATABASE_URL;
 const enabled = Boolean(VERIFY_URL);
@@ -65,22 +66,38 @@ vi.mock("../../services/emailService", () => ({
 }));
 
 const asaasCalls: unknown[] = [];
-vi.mock("../../services/asaasService", () => ({
-  asaasService: {
-    // If a free event ever reaches Asaas, this records it and the test fails.
-    createPayment: vi.fn(async (payload: unknown) => {
-      asaasCalls.push(payload);
-      return {
-        id: `pay_${randomUUID()}`,
-        paymentLink: "https://asaas.test/pay",
-        status: "PENDING",
-        value: 0,
-      };
-    }),
-    cancelPayment: vi.fn(async () => ({})),
-    getPayment: vi.fn(async () => ({})),
-  },
-}));
+vi.mock("../../services/asaasService", async () => {
+  const { AsaasApiError } = await import("../../utils/asaasErrors");
+  return {
+    asaasService: {
+      // Production answer of 2026-10-06 while the account has no foreign-payer permission.
+      createForeignCardPayment: vi.fn(async () => {
+        throw new AsaasApiError(400, {
+          errors: [
+            {
+              code: "invalid_object",
+              description:
+                "Sua conta não tem permissão para gerar pagadores estrangeiros. Para mais informações, entre em contato com seu Gerente de Contas.",
+            },
+            { code: "invalid_object", description: "O CPF/CNPJ informado é inválido." },
+          ],
+        });
+      }),
+      // If a free event ever reaches Asaas, this records it and the test fails.
+      createPayment: vi.fn(async (payload: unknown) => {
+        asaasCalls.push(payload);
+        return {
+          id: `pay_${randomUUID()}`,
+          paymentLink: "https://asaas.test/pay",
+          status: "PENDING",
+          value: 0,
+        };
+      }),
+      cancelPayment: vi.fn(async () => ({})),
+      getPayment: vi.fn(async () => ({})),
+    },
+  };
+});
 
 vi.mock("../../services/s3Service", () => ({
   s3Service: {
@@ -159,6 +176,18 @@ async function createUser(): Promise<{ id: string; token: string; cpf: string }>
   );
   createdUserIds.push(id);
   return { id, token: jwt.sign({ userId: id }, JWT_SECRET), cpf };
+}
+
+/** ADR-014 foreign account: passport instead of CPF, Paraguay phone. */
+async function createForeignUser(): Promise<{ id: string; token: string }> {
+  const id = randomUUID();
+  await pool.query(
+    `INSERT INTO users (id, email, email_verified, password, name, cpf, is_foreigner, foreign_document, phone, birth_date, address, occupation, partner_company, area_of_activity, is_admin)
+     VALUES ($1,$2,true,'x',$3,NULL,true,$4,'595981123456',$5,'Calle de prueba 151, Asunción','Nao aplicavel','Nao aplicavel','Nao aplicavel',false)`,
+    [id, `foreign-${id.slice(0, 8)}@example.test`, "Participante Estrangeira", `PY${id.slice(0, 8).toUpperCase()}`, new Date("1990-01-01")],
+  );
+  createdUserIds.push(id);
+  return { id, token: jwt.sign({ userId: id }, JWT_SECRET) };
 }
 
 describe.skipIf(!enabled)("free events and sales-closed (real routes + real DB)", () => {
@@ -384,6 +413,27 @@ describe.skipIf(!enabled)("free events and sales-closed (real routes + real DB)"
     });
   });
 
+  describe("foreign card checkout while Asaas refuses foreign payers", () => {
+    it.runIf(FOREIGN_PAID_CHECKOUT_ENABLED)("answers 503 with the CDPI contact and leaves no order behind", async () => {
+      const eventId = await createEvent({ price: "100.00" });
+      const foreigner = await createForeignUser();
+
+      const res = await api("POST", "/api/orders", {
+        token: foreigner.token,
+        body: { eventId, paymentMethod: "credit_card" },
+      });
+      const { rows } = await pool.query(`SELECT count(*)::int AS n FROM orders WHERE user_id = $1`, [
+        foreigner.id,
+      ]);
+
+      expect({ status: res.status, code: res.body?.code, orders: rows[0].n }).toEqual({
+        status: 503,
+        code: "foreign_payment_unavailable",
+        orders: 0,
+      });
+    });
+  });
+
   describe("paid events are unaffected", () => {
     it("still creates a charge with the R$5 convenience fee", async () => {
       const eventId = await createEvent({ price: "100.00" });
@@ -404,29 +454,22 @@ describe.skipIf(!enabled)("free events and sales-closed (real routes + real DB)"
     const tag = randomUUID().slice(0, 8);
     const foreignEmail = `foreign-${tag}@example.test`;
     const invalidPhoneEmail = `bad-phone-${tag}@example.test`;
+    const lostCallingCodeEmail = `br-phone-${tag}@example.test`;
 
-    // Same shape RegisterPage sends for a foreigner: the phone picker emits
-    // E.164 digits without "+", and the CPF field is reset to "".
+    // Same shape RegisterPage sends (ADR-016): four fields; the phone picker emits
+    // E.164 digits without "+".
     function foreignerBody(email: string, phone: string, foreignDocument: string) {
       return {
         name: "Participante Estrangeira",
         email,
         password: "senha-segura-1",
-        isForeigner: true,
-        cpf: "",
-        foreignDocument,
-        birthDate: "11/08/1988",
         phone,
-        address: "Calle de prueba 151, San Lorenzo",
-        occupation: "Directora Técnica",
-        partnerCompany: "Empresa de teste",
-        areaOfActivity: "Asuntos Regulatorios",
       };
     }
 
     afterAll(async () => {
       await pool.query(`DELETE FROM users WHERE email = ANY($1)`, [
-        [foreignEmail, invalidPhoneEmail],
+        [foreignEmail, invalidPhoneEmail, lostCallingCodeEmail],
       ]);
     });
 
@@ -452,6 +495,23 @@ describe.skipIf(!enabled)("free events and sales-closed (real routes + real DB)"
       });
 
       expect(res).toMatchObject({ status: 400, body: { message: "Telefone inválido" } });
+    });
+
+    // A client whose phone field lost "+55" (keyboard Tab bug) sends national digits.
+    it("stores national Brazilian digits that are no valid E.164 number as +55", async () => {
+      const res = await api("POST", "/api/auth/register", {
+        body: {
+          ...foreignerBody(lostCallingCodeEmail, "11987654321", ""),
+        },
+      });
+      const { rows } = await pool.query(`SELECT phone FROM users WHERE email = $1`, [
+        lostCallingCodeEmail,
+      ]);
+
+      expect({ status: res.status, phone: rows[0]?.phone }).toEqual({
+        status: 201,
+        phone: "5511987654321",
+      });
     });
   });
 });

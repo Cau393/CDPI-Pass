@@ -6,3 +6,7 @@ frontend/CLAUDE.md
 frontend/.dockerignore
 .gitignore
 Documentation/
+# Playwright e2e output
+frontend/e2e/.state/
+frontend/e2e/.output/
+frontend/playwright-report/

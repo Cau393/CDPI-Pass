@@ -13,9 +13,11 @@ import {
   index,
   uniqueIndex,
   check,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import type { RegistrationAnswer, RegistrationField } from "./eventRegistrationForm";
 
 /**
  * Account mailbox: trim and lowercase before format check.
@@ -28,6 +30,9 @@ export const accountEmailSchema = z
   .email("Email inválido");
 
 // Users table
+/** DB default for the work fields an account never filled in (shown as empty). */
+export const NOT_APPLICABLE_PROFILE_VALUE = "Nao aplicavel";
+
 export const users = pgTable(
   "users",
   {
@@ -46,11 +51,13 @@ export const users = pgTable(
     /** Passport or other foreign id. Null for Brazilian accounts. */
     foreignDocument: varchar("foreign_document", { length: 32 }),
     phone: varchar("phone", { length: 20 }).notNull(),
-    birthDate: timestamp("birth_date").notNull(),
-    address: text("address").notNull(),
-    occupation: varchar("occupation", { length: 255 }).notNull().default("Nao aplicavel"),
-    partnerCompany: varchar("partner_company", { length: 255 }).notNull().default("Nao aplicavel"),
-    areaOfActivity: varchar("area_of_activity", { length: 255 }).notNull().default("Nao aplicavel"),
+    /** Profile-only since ADR-016; null until the user fills the profile. */
+    birthDate: timestamp("birth_date"),
+    /** Asked by in-person inscriptions (ADR-016); null until then. */
+    address: text("address"),
+    occupation: varchar("occupation", { length: 255 }).notNull().default(NOT_APPLICABLE_PROFILE_VALUE),
+    partnerCompany: varchar("partner_company", { length: 255 }).notNull().default(NOT_APPLICABLE_PROFILE_VALUE),
+    areaOfActivity: varchar("area_of_activity", { length: 255 }).notNull().default(NOT_APPLICABLE_PROFILE_VALUE),
     isAdmin: boolean("is_admin").default(false).notNull(),
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
@@ -62,10 +69,12 @@ export const users = pgTable(
     uniqueIndex("users_foreign_document_unique")
       .on(table.foreignDocument)
       .where(sql`${table.foreignDocument} is not null`),
+    // ADR-016: a Brazilian account may have no CPF until its first in-person
+    // or paid inscription. Never re-tighten once such rows exist.
     check(
       "users_identity_document_chk",
       sql`(
-        (${table.isForeigner} = false AND ${table.cpf} IS NOT NULL AND ${table.foreignDocument} IS NULL)
+        (${table.isForeigner} = false AND ${table.foreignDocument} IS NULL)
         OR
         (${table.isForeigner} = true AND ${table.cpf} IS NULL AND ${table.foreignDocument} IS NOT NULL)
       )`,
@@ -148,11 +157,19 @@ export const events = pgTable("events", {
   /**
    * Optional closed list of "Área de Interesse" labels, in insertion order.
    * Empty means inscription does not ask. Not users.area_of_activity.
+   * @deprecated ADR-016: copied into registration_form by
+   * sql/backfill_interest_areas_into_registration_form.sql. Read-only until a
+   * separately approved step drops it.
    */
   interestAreas: text("interest_areas")
     .array()
     .notNull()
     .default([]),
+  /** Creator-defined questions (ADR-016). Locked document/address questions are not stored here. */
+  registrationForm: jsonb("registration_form")
+    .$type<RegistrationField[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
 }, (table) => [
   check("events_courtesy_limit_chk", sql`${table.courtesyLimit} IS NULL OR ${table.courtesyLimit} >= 1`),
   check("events_free_price_zero_chk", sql`${table.isFree} = false OR ${table.price} = 0`),
@@ -331,16 +348,19 @@ export const orders = pgTable("orders", {
    * Snapshot of the event interest-area label chosen at order creation.
    * Null when the event list was empty. Not a foreign key: later edits to
    * events.interest_areas do not change this value.
+   * @deprecated ADR-016: replaced by registration_answers; kept read-only.
    */
   interestArea: varchar("interest_area", { length: 255 }),
+  /** Snapshot of the registration-form answers at inscription (ADR-016). */
+  registrationAnswers: jsonb("registration_answers")
+    .$type<RegistrationAnswer[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
 }, (table) => [
+  // ADR-016: an online order may carry no document; never both.
   check(
     "orders_identity_document_chk",
-    sql`(
-      (${table.cpf} IS NOT NULL AND ${table.foreignDocument} IS NULL)
-      OR
-      (${table.cpf} IS NULL AND ${table.foreignDocument} IS NOT NULL)
-    )`,
+    sql`NOT (${table.cpf} IS NOT NULL AND ${table.foreignDocument} IS NOT NULL)`,
   ),
 ]);
 
@@ -367,8 +387,9 @@ export const courtesyAttendees = pgTable("courtesy_attendees", {
   isForeigner: boolean("is_foreigner").notNull().default(false),
   foreignDocument: varchar("foreign_document", { length: 32 }),
   phone: varchar("phone", { length: 20 }).notNull(),
-  birthDate: timestamp("birth_date").notNull(),
-  address: text("address").notNull(),
+  /** Asked only on in-person courtesy events (ADR-016). */
+  birthDate: timestamp("birth_date"),
+  address: text("address"),
   partnerCompany: varchar("partner_company", { length: 255 }),
   occupation: varchar("occupation", { length: 255 }),
   eventTitle: varchar("event_title", { length: 255 }).notNull(),
@@ -378,7 +399,7 @@ export const courtesyAttendees = pgTable("courtesy_attendees", {
   check(
     "courtesy_attendees_identity_document_chk",
     sql`(
-      (${table.isForeigner} = false AND ${table.cpf} IS NOT NULL AND ${table.foreignDocument} IS NULL)
+      (${table.isForeigner} = false AND ${table.foreignDocument} IS NULL)
       OR
       (${table.isForeigner} = true AND ${table.cpf} IS NULL AND ${table.foreignDocument} IS NOT NULL)
     )`,
@@ -666,11 +687,13 @@ export const insertUserObjectSchema = createInsertSchema(users, {
     .regex(/^\d{8,15}$/, "Telefone deve conter 8 a 15 dígitos (código do país sem +)"),
   password: z.string().min(6, "Senha deve ter pelo menos 6 caracteres"),
   name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
-  address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),
-  birthDate: z.date({ required_error: "Data de nascimento é obrigatória" }),
-  partnerCompany: z.string().trim().min(2, "Empresa que trabalha é obrigatória").max(255),
-  occupation: z.string().trim().min(2, "Cargo que ocupa é obrigatório").max(255),
-  areaOfActivity: z.string().trim().min(2, "Área de Atuação é obrigatória").max(255),
+  // ADR-016: signup asks only name, e-mail, phone and password. The document
+  // and address are asked at the first inscription that needs them.
+  address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres").nullable().optional(),
+  birthDate: z.date().nullable().optional(),
+  partnerCompany: z.string().trim().min(2, "Empresa que trabalha é obrigatória").max(255).optional(),
+  occupation: z.string().trim().min(2, "Cargo que ocupa é obrigatório").max(255).optional(),
+  areaOfActivity: z.string().trim().min(2, "Área de Atuação é obrigatória").max(255).optional(),
 }).omit({
   id: true,
   createdAt: true,
@@ -679,7 +702,17 @@ export const insertUserObjectSchema = createInsertSchema(users, {
   isAdmin: true,
 });
 
-export const insertUserSchema = insertUserObjectSchema.superRefine(refineAccountDocument);
+export const insertUserSchema = insertUserObjectSchema;
+
+/** POST /api/auth/register (ADR-016 Phase 4). Every other key is stripped. */
+export const registerUserSchema = z.object({
+  name: z.string().trim().min(2, "Nome deve ter pelo menos 2 caracteres").max(255),
+  email: accountEmailSchema,
+  phone: z
+    .string({ required_error: "Telefone é obrigatório" })
+    .regex(/^\d{8,15}$/, "Telefone deve conter 8 a 15 dígitos (código do país sem +)"),
+  password: z.string().min(6, "Senha deve ter pelo menos 6 caracteres"),
+});
 
 export const insertEventSchema = createInsertSchema(events).omit({
   id: true,
@@ -762,24 +795,38 @@ export const loginSchema = z.object({
 
 export type LoginRequest = z.infer<typeof loginSchema>;
 
-// Courtesy redemption schema
-export const courtesyRedemptionSchema = z.object({
+// Courtesy redemption schemas. Online courtesy asks no document, birth date
+// or address (ADR-016); in-person keeps the full form.
+const courtesyContactSchema = z.object({
   name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
   email: accountEmailSchema,
   emailConfirm: accountEmailSchema,
-  isForeigner: z.boolean().optional(),
-  cpf: z.string().optional(),
-  foreignDocument: z.string().optional(),
   partnerCompany: z.string().min(2, "Empresa que atua é obrigatória"),
   occupation: z.string().min(2, "Cargo é obrigatório"),
-  birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
-  address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),
   phone: z
     .string()
     .regex(/^\d{8,15}$/, "Telefone deve conter 8 a 15 dígitos (código do país sem +)"),
-}).refine((data) => data.email === data.emailConfirm, {
-  message: "Os emails não coincidem",
-  path: ["emailConfirm"],
-}).superRefine(refineAccountDocument);
+});
+
+const courtesyEmailsMatch = (data: { email: string; emailConfirm: string }) =>
+  data.email === data.emailConfirm;
+const COURTESY_EMAILS_MISMATCH = { message: "Os emails não coincidem", path: ["emailConfirm"] };
+
+export const onlineCourtesyRedemptionSchema = courtesyContactSchema.refine(
+  courtesyEmailsMatch,
+  COURTESY_EMAILS_MISMATCH,
+);
+
+export const courtesyRedemptionSchema = courtesyContactSchema
+  .extend({
+    isForeigner: z.boolean().optional(),
+    cpf: z.string().optional(),
+    foreignDocument: z.string().optional(),
+    birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
+    address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),
+  })
+  .refine(courtesyEmailsMatch, COURTESY_EMAILS_MISMATCH)
+  .superRefine(refineAccountDocument);
 
 export type CourtesyRedemption = z.infer<typeof courtesyRedemptionSchema>;
+export type OnlineCourtesyRedemption = z.infer<typeof onlineCourtesyRedemptionSchema>;

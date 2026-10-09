@@ -47,9 +47,10 @@ import {
   editEventSchema,
   eventDateToFormString,
   parseApiErrorMessage,
+  registrationFormPayload,
+  toRegistrationFormRows,
   type EditEventFormValues,
 } from "@/lib/eventForm";
-import { interestAreasMultipartValue } from "@shared/interestAreas";
 import type { Event } from "@shared/schema";
 import {
   normalizeDescriptionForEditor,
@@ -59,8 +60,11 @@ import {
 function buildPatchFormData(
   values: EditEventFormValues,
   dirty: Partial<Record<keyof EditEventFormValues, boolean | object>>,
+  loadedUpdatedAt?: Date | string | null,
 ): FormData {
   const fd = new FormData();
+  // The server answers 409 when someone else saved after this was loaded.
+  if (loadedUpdatedAt) fd.append("updated_at", new Date(loadedUpdatedAt).toISOString());
   if (dirty.title) fd.append("title", values.title.trim());
   if (dirty.description) {
     fd.append("description", sanitizeEventDescriptionHtml(values.description));
@@ -89,10 +93,10 @@ function buildPatchFormData(
   if (dirty.courtesyLimit) {
     fd.append("courtesy_limit", values.courtesyLimit?.trim() ?? "");
   }
-  fd.append(
-    "interest_areas",
-    interestAreasMultipartValue(values.interestAreas),
-  );
+  // Omitted, the server keeps the saved form as is.
+  if (dirty.registrationForm) {
+    fd.append("registration_form", registrationFormPayload(values.registrationForm));
+  }
   if (dirty.coverImage && values.coverImage?.[0]) {
     fd.append("coverImage", values.coverImage[0]);
   }
@@ -166,10 +170,6 @@ export default function AdminEditEventPage() {
       // being valid or dirty.
       const fd = new FormData();
       fd.append("sales_closed", String(salesClosed));
-      fd.append(
-        "interest_areas",
-        interestAreasMultipartValue(event?.interestAreas),
-      );
       const res = await apiRequest("PATCH", `/api/admin/events/${id}`, fd);
       return res.json() as Promise<Event>;
     },
@@ -208,7 +208,7 @@ export default function AdminEditEventPage() {
       whatsappGroupUrl: "",
       confirmationEmailHtml: "",
       courtesyLimit: "",
-      interestAreas: [],
+      registrationForm: [],
     },
   });
 
@@ -232,7 +232,7 @@ export default function AdminEditEventPage() {
       confirmationEmailHtml: event.confirmationEmailHtml ?? "",
       courtesyLimit:
         event.courtesyLimit == null ? "" : String(event.courtesyLimit),
-      interestAreas: event.interestAreas ?? [],
+      registrationForm: toRegistrationFormRows(event.registrationForm),
     });
   }, [event, form]);
 
@@ -266,7 +266,7 @@ export default function AdminEditEventPage() {
       dirty.whatsappGroupUrl ||
       dirty.confirmationEmailHtml ||
       dirty.courtesyLimit ||
-      dirty.interestAreas;
+      dirty.registrationForm;
 
     if (!hasTextDirty && !hasNewCover) {
       toast({
@@ -276,7 +276,7 @@ export default function AdminEditEventPage() {
       return;
     }
 
-    const formData = buildPatchFormData(values, dirty);
+    const formData = buildPatchFormData(values, dirty, event?.updatedAt);
 
     try {
       const res = await apiRequest("PATCH", `/api/admin/events/${id}`, formData);
@@ -300,7 +300,7 @@ export default function AdminEditEventPage() {
         confirmationEmailHtml: updated.confirmationEmailHtml ?? "",
         courtesyLimit:
           updated.courtesyLimit == null ? "" : String(updated.courtesyLimit),
-        interestAreas: updated.interestAreas ?? [],
+        registrationForm: toRegistrationFormRows(updated.registrationForm),
         coverImage: undefined,
       });
       if (fileInputRef.current) fileInputRef.current.value = "";

@@ -1,3 +1,12 @@
+import { AsaasApiError } from "../utils/asaasErrors";
+
+const DEFAULT_ASAAS_API_URL = "https://api.asaas.com/v3";
+
+/** Production unless ASAAS_API_URL points elsewhere (sandbox: https://api-sandbox.asaas.com/v3). */
+export function asaasBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  return (env.ASAAS_API_URL || DEFAULT_ASAAS_API_URL).replace(/\/+$/, "");
+}
+
 interface AsaasCustomer {
   name: string;
   email: string;
@@ -33,13 +42,13 @@ interface AsaasPaymentResponse {
   bankSlipUrl?: string;
 }
 
-class AsaasService {
+export class AsaasService {
   private apiKey: string;
   private baseUrl: string;
 
   constructor() {
     this.apiKey = process.env.ASAAS_API_KEY || "";
-    this.baseUrl = "https://api.asaas.com/v3"; // Use production API
+    this.baseUrl = asaasBaseUrl();
     
     if (!process.env.ASAAS_API_KEY) {
       console.error("ASAAS_API_KEY environment variable is required for payment processing");
@@ -63,15 +72,13 @@ class AsaasService {
 
     try {
       const response = await fetch(url, options);
-      const responseData = await response.json();
-
       if (!response.ok) {
-        throw new Error(`Asaas API error: ${response.status} - ${JSON.stringify(responseData)}`);
+        throw new AsaasApiError(response.status, await response.json().catch(() => null));
       }
-
-      return responseData;
+      return await response.json();
     } catch (error) {
-      console.error("Asaas API request failed:", error);
+      // Path only: the query string can carry a CPF or passport.
+      console.error(`Asaas API request failed (${method} ${endpoint.split("?")[0]}):`, error);
       throw error;
     }
   }
@@ -173,12 +180,13 @@ class AsaasService {
    * One-off international card charge. Asaas does not allow payment links,
    * installments, PIX, or boleto for foreignCustomer. Lookup is by
    * externalReference (our user id), not by document, so a passport cannot
-   * collide with a Brazilian CPF.
+   * collide with a Brazilian CPF. The passport is never sent: Asaas validates
+   * `cpfCnpj` as a Brazilian document even with `foreignCustomer: true` and
+   * answers 400 "O CPF/CNPJ informado é inválido" (sandbox, 2026-10-09).
    */
   async createForeignCardPayment(params: {
     name: string;
     email: string;
-    cpfCnpj: string;
     phone: string;
     userId: string;
     value: number;
@@ -195,7 +203,6 @@ class AsaasService {
         : await this.makeRequest("/customers", "POST", {
             name: params.name,
             email: params.email,
-            cpfCnpj: params.cpfCnpj,
             phone: params.phone,
             mobilePhone: params.phone,
             foreignCustomer: true,

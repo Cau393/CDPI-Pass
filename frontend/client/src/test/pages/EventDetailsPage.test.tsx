@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { FOREIGN_PAID_CHECKOUT_ENABLED } from "@shared/foreignCheckout";
 
 const setLocation = vi.fn();
 vi.mock("wouter", () => ({
@@ -9,7 +10,13 @@ vi.mock("wouter", () => ({
   useLocation: () => ["/event/11111111-1111-1111-1111-111111111111", setLocation],
 }));
 
-const authState = { isAuthenticated: true };
+type Account = {
+  cpf: string | null;
+  foreignDocument: string | null;
+  isForeigner: boolean;
+  address: string | null;
+};
+const authState: { isAuthenticated: boolean; user?: Account } = { isAuthenticated: true };
 vi.mock("../../hooks/useAuth", () => ({
   useAuth: () => authState,
 }));
@@ -21,7 +28,23 @@ vi.mock("../../hooks/use-toast", () => ({
 
 // The payment modal is the paid path; a free event must never open it.
 vi.mock("../../components/PaymentModal", () => ({
-  default: () => <div data-testid="payment-modal" />,
+  default: (props: {
+    isOpen: boolean;
+    answers: Record<string, string>;
+    onIdentityRequired: (missing: string[], message: string) => void;
+  }) =>
+    props.isOpen ? (
+      <div data-testid="payment-modal" data-answers={JSON.stringify(props.answers)}>
+        <button
+          type="button"
+          onClick={() =>
+            props.onIdentityRequired(["address"], "Informe seu endereço para continuar.")
+          }
+        >
+          simular identity_required
+        </button>
+      </div>
+    ) : null,
 }));
 
 import EventDetailsPage from "../../pages/EventDetailsPage";
@@ -634,16 +657,23 @@ describe("EventDetailsPage — free courtesy (?cortesia=)", () => {
   });
 
   it("switches an override-price code to the promo purchase path", async () => {
-    vi.stubGlobal(
-      "fetch",
-      mockCourtesyVisit(baseEvent, {
-        status: 200,
-        body: {
-          ...validLink.body,
-          overridePrice: "80.00",
-        },
-      }),
-    );
+    const visit = mockCourtesyVisit(baseEvent, {
+      status: 200,
+      body: {
+        ...validLink.body,
+        overridePrice: "80.00",
+      },
+    });
+    // The promo lookup is a second request, issued after the cortesia one
+    // answered. Slow it down so the test pins the order instead of depending
+    // on how fast the machine is.
+    let courtesyLookups = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/courtesy-links/") && ++courtesyLookups > 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return visit(input, init);
+    });
     renderPage();
 
     await waitFor(() => {
@@ -653,6 +683,176 @@ describe("EventDetailsPage — free courtesy (?cortesia=)", () => {
     });
     expect(await screen.findByText("Comprar Ingresso")).toBeInTheDocument();
     expect(screen.queryByText("Resgatar cortesia")).not.toBeInTheDocument();
-    expect(screen.getByText(/Promoção aplicada/)).toBeInTheDocument();
+    expect(await screen.findByText(/Promoção aplicada/)).toBeInTheDocument();
+  });
+});
+
+describe("EventDetailsPage — registration questions", () => {
+  const cargo = {
+    id: "q-cargo",
+    type: "text",
+    label: "Cargo",
+    options: [],
+    required: true,
+    archived: false,
+  };
+  const brazilian: Account = {
+    cpf: "123.456.789-09",
+    foreignDocument: null,
+    isForeigner: false,
+    address: "Rua A, 100, São Paulo",
+  };
+  const newAccount: Account = { cpf: null, foreignDocument: null, isForeigner: false, address: null };
+
+  function requests(fetchMock: ReturnType<typeof vi.fn>, method: string, path: string): unknown[] {
+    return fetchMock.mock.calls
+      .filter(([input, init]) => String(input) === path && (init as RequestInit | undefined)?.method === method)
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+  }
+
+  beforeEach(() => {
+    localStorage.setItem("token", "test-token");
+  });
+  afterEach(() => {
+    authState.user = undefined;
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("asks the event's questions before a free subscription and sends the answers", async () => {
+    authState.user = brazilian;
+    const fetchMock = mockApi({
+      ...baseEvent,
+      price: "0.00",
+      isFree: true,
+      modality: "online",
+      registrationForm: [cargo],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-event-cta"));
+    await user.type(await screen.findByLabelText(/Cargo/), "Farmacêutica");
+    await user.click(screen.getByTestId("button-confirm-registration"));
+
+    await waitFor(() => {
+      expect(requests(fetchMock, "POST", `/api/events/${EVENT_ID}/subscribe`)).toEqual([
+        { answers: { "q-cargo": "Farmacêutica" } },
+      ]);
+    });
+  });
+
+  it("asks a new account for the document when the free subscription answers identity_required", async () => {
+    authState.user = newAccount;
+    vi.stubGlobal(
+      "fetch",
+      mockApi(
+        { ...baseEvent, price: "0.00", isFree: true, modality: "online" },
+        {
+          status: 400,
+          body: { code: "identity_required", missing: ["document"], message: "Complete seus dados" },
+        },
+      ),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-event-cta"));
+
+    expect(await screen.findByLabelText("CPF")).toBeInTheDocument();
+  });
+
+  it("opens the payment directly when nothing needs asking", async () => {
+    authState.user = brazilian;
+    vi.stubGlobal("fetch", mockApi({ ...baseEvent, modality: "presencial", registrationForm: [] }));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-event-cta"));
+
+    expect(screen.getByTestId("payment-modal")).toHaveAttribute("data-answers", "{}");
+  });
+
+  it.runIf(FOREIGN_PAID_CHECKOUT_ENABLED)("saves a foreign visitor's passport before opening the card checkout", async () => {
+    authState.user = newAccount;
+    const fetchMock = mockApi({ ...baseEvent, modality: "online", registrationForm: [cargo] });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-event-cta"));
+    expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
+    await user.click(await screen.findByLabelText("Sou estrangeiro / I'm a foreign visitor"));
+    await user.type(screen.getByLabelText("Passaporte / Passport"), "ab123456");
+    await user.type(screen.getByLabelText(/Cargo/), "Pharmacist");
+    await user.click(screen.getByTestId("button-confirm-registration"));
+
+    expect(await screen.findByTestId("payment-modal")).toHaveAttribute(
+      "data-answers",
+      JSON.stringify({ "q-cargo": "Pharmacist" }),
+    );
+    expect(requests(fetchMock, "PUT", "/api/profile/identity")).toEqual([
+      { isForeigner: true, foreignDocument: "AB123456" },
+    ]);
+  });
+
+  it("shows the server's message when identity_required asks nothing new", async () => {
+    authState.user = brazilian;
+    vi.stubGlobal(
+      "fetch",
+      mockApi(
+        { ...baseEvent, price: "0.00", isFree: true, modality: "online", registrationForm: [cargo] },
+        {
+          status: 400,
+          body: {
+            code: "identity_required",
+            missing: [],
+            message: "Seu cadastro precisa ser revisado pelo suporte.",
+          },
+        },
+      ),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-event-cta"));
+    await user.type(await screen.findByLabelText(/Cargo/), "Farmacêutica");
+    await user.click(screen.getByTestId("button-confirm-registration"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Seu cadastro precisa ser revisado pelo suporte.",
+    );
+  });
+
+  it("keeps the answers and says why when the order sends the buyer back", async () => {
+    authState.user = brazilian;
+    vi.stubGlobal("fetch", mockApi({ ...baseEvent, modality: "presencial", registrationForm: [cargo] }));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-event-cta"));
+    await user.type(await screen.findByLabelText(/Cargo/), "Farmacêutica");
+    await user.click(screen.getByTestId("button-confirm-registration"));
+    await user.click(await screen.findByRole("button", { name: "simular identity_required" }));
+
+    expect({
+      alert: (await screen.findByRole("alert")).textContent,
+      cargo: (screen.getByLabelText(/Cargo/) as HTMLInputElement).value,
+    }).toEqual({ alert: "Informe seu endereço para continuar.", cargo: "Farmacêutica" });
+  });
+
+  it("reopens the questions when the order answers identity_required", async () => {
+    authState.user = brazilian;
+    vi.stubGlobal("fetch", mockApi({ ...baseEvent, modality: "presencial", registrationForm: [] }));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-event-cta"));
+    await user.click(screen.getByRole("button", { name: "simular identity_required" }));
+
+    expect(await screen.findByLabelText("Endereço")).toHaveValue("Rua A, 100, São Paulo");
+    expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
   });
 });

@@ -29,7 +29,9 @@ import {
   type CommunicateRecipientMode,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ne, desc, sql, asc, count, and, isNull } from "drizzle-orm";
+import { isEventFull } from "./utils/eventSalesPolicy";
+import { eq, ne, desc, sql, asc, count, and, isNull, or, inArray } from "drizzle-orm";
+import type { RegistrationAnswer } from "@shared/eventRegistrationForm";
 import { s3Service } from "./services/s3Service";
 import { buildUndoCheckInPatch } from "./utils/undoCheckInUpdate";
 import { validateCourtesyTicketCountUpdate } from "./utils/courtesyTicketCountUpdate";
@@ -68,22 +70,68 @@ export interface IStorage {
   ): Promise<{ events: Event[]; total: number }>;
   getEvent(id: string): Promise<Event | undefined>;
   createEvent(event: InsertEvent): Promise<Event>;
-  updateEvent(id: string, updates: Partial<Event>): Promise<Event | undefined>;
+  /**
+   * `touchUpdatedAt: false` for counter-only changes (attendee count): a sale
+   * is not an edit and must not invalidate the `updatedAt` an admin loaded.
+   * `expectedUpdatedAt` makes the write conditional (admin edits): undefined
+   * is returned when the row changed since, or is gone.
+   */
+  updateEvent(
+    id: string,
+    updates: Partial<Event>,
+    opts?: { touchUpdatedAt?: boolean; expectedUpdatedAt?: Date },
+  ): Promise<Event | undefined>;
   /** Deletes event and dependent orders, courtesy links, and certificates. */
   deleteEvent(id: string): Promise<boolean>;
 
   // Order operations
   getOrder(id: string): Promise<Order | undefined>;
-  getOrdersByUser(userId: string, page: number, limit: number): Promise<{ orders: Order[]; total: number }>;
+  /** "Meus ingressos": buyer-facing, so registration answers are not selected (ADR-016). */
+  getOrdersByUser(userId: string, page: number, limit: number): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }>;
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
+  /** pending -> paid in one statement; false when the order was no longer pending. */
+  markPendingOrderPaid(id: string): Promise<boolean>;
   getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined>;
-  isCpfAlreadyRegisteredForEvent(cpf: string, eventId: string): Promise<boolean>;
-  isForeignDocumentAlreadyRegisteredForEvent(
-    foreignDocument: string,
-    eventId: string,
-  ): Promise<boolean>;
-  isUserAlreadyRegisteredForEvent(userId: string, eventId: string): Promise<boolean>;
+  /**
+   * True when the event already has a paid order for this holder: the
+   * account's own inscription (`userId`; courtesies it redeemed for other
+   * people do not count), the document, or the e-mail (a courtesy attendee
+   * with it, or the own inscription of the account with it).
+   */
+  isAlreadyRegisteredForEvent(params: {
+    eventId: string;
+    userId: string | null;
+    cpf: string | null;
+    foreignDocument: string | null;
+    email: string | null;
+  }): Promise<boolean>;
+  /**
+   * Free inscription: the already-registered check and the paid zero-value
+   * order are written under one lock on the event row, so concurrent requests
+   * of the same holder create one order. Also counts the attendee.
+   */
+  createFreeSubscription(params: {
+    holder: { userId: string; cpf: string | null; foreignDocument: string | null; email: string | null };
+    order: InsertOrder;
+  }): Promise<{ ok: true; order: Order } | { ok: false; reason: "already_registered" | "event_full" }>;
+  /** Atomic `current_attendees + 1`; not an edit, so `updated_at` stays. */
+  incrementEventAttendees(eventId: string): Promise<void>;
+  /**
+   * ADR-016 write-once document (+ editable address). A different document
+   * than the one on file is `document_already_set`; a document owned by
+   * another account is `document_taken`.
+   */
+  setUserIdentity(
+    userId: string,
+    identity: {
+      document?: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null };
+      address?: string;
+    },
+  ): Promise<
+    | { ok: true; user: User }
+    | { ok: false; reason: "document_already_set" | "document_taken" | "not_found" }
+  >;
   /** True when another order (not excludeOrderId) is already paid for cpf+event. */
   existsOtherPaidOrderForCpfAndEvent(
     excludeOrderId: string,
@@ -128,7 +176,7 @@ export interface IStorage {
     eventId: string;
     linkId: string;
     userId: string;
-    interestArea: string | null;
+    registrationAnswers: RegistrationAnswer[];
     attendee: InsertCourtesyAttendee;
   }): Promise<
     | { ok: false }
@@ -298,11 +346,24 @@ export class DatabaseStorage implements IStorage {
     return event;
   }
 
-  async updateEvent(id: string, updates: Partial<Event>): Promise<Event | undefined> {
+  async updateEvent(
+    id: string,
+    updates: Partial<Event>,
+    opts: { touchUpdatedAt?: boolean; expectedUpdatedAt?: Date } = {},
+  ): Promise<Event | undefined> {
+    const touch = opts.touchUpdatedAt !== false;
     const [event] = await db
       .update(events)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(events.id, id))
+      .set(touch ? { ...updates, updatedAt: new Date() } : updates)
+      .where(
+        opts.expectedUpdatedAt
+          ? // date_trunc: rows never saved by the app keep now()'s microseconds, JS only has ms.
+            and(
+              eq(events.id, id),
+              sql`date_trunc('milliseconds', ${events.updatedAt}) = ${opts.expectedUpdatedAt.toISOString()}::timestamp`,
+            )
+          : eq(events.id, id),
+      )
       .returning();
     return event;
   }
@@ -323,7 +384,7 @@ export class DatabaseStorage implements IStorage {
     return order;
   }
 
-  async getOrdersByUser(userId: string, page: number = 1, limit: number = 10): Promise<{ orders: Order[]; total: number }> {
+  async getOrdersByUser(userId: string, page: number = 1, limit: number = 10): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }> {
     const offset = (page - 1) * limit;
     
     const ordersQuery = db
@@ -345,7 +406,6 @@ export class DatabaseStorage implements IStorage {
         maxUses: orders.maxUses,
         amntUsed: orders.amntUsed,
         qrCodeUsedAt: orders.qrCodeUsedAt,
-        interestArea: orders.interestArea,
         createdAt: orders.createdAt,
         updatedAt: orders.updatedAt,
         event: {
@@ -412,6 +472,15 @@ export class DatabaseStorage implements IStorage {
     return order;
   }
 
+  async markPendingOrderPaid(id: string): Promise<boolean> {
+    const claimed = await db
+      .update(orders)
+      .set({ status: "paid", updatedAt: new Date() })
+      .where(and(eq(orders.id, id), eq(orders.status, "pending")))
+      .returning({ id: orders.id });
+    return claimed.length > 0;
+  }
+
   async getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined> {
     const [order] = await db
       .select()
@@ -420,54 +489,119 @@ export class DatabaseStorage implements IStorage {
     return order;
   }
 
-  /** True when this CPF already has a confirmed (paid) inscription for the event. */
-  async isCpfAlreadyRegisteredForEvent(cpf: string, eventId: string): Promise<boolean> {
-    const existingOrder = await db
-      .select()
-      .from(orders)
-      .where(
-        and(
-          eq(orders.cpf, cpf),
-          eq(orders.eventId, eventId),
-          eq(orders.status, "paid"),
-        ),
-      )
-      .limit(1);
-
-    return existingOrder.length > 0;
-  }
-
-  async isForeignDocumentAlreadyRegisteredForEvent(
-    foreignDocument: string,
-    eventId: string,
+  async isAlreadyRegisteredForEvent(
+    params: {
+      eventId: string;
+      userId: string | null;
+      cpf: string | null;
+      foreignDocument: string | null;
+      email: string | null;
+    },
+    executor: Pick<typeof db, "select"> = db,
   ): Promise<boolean> {
-    const existingOrder = await db
+    const sameHolder = [];
+    if (params.userId) {
+      sameHolder.push(and(eq(orders.userId, params.userId), isNull(orders.courtesyAttendeeId)));
+    }
+    if (params.cpf) sameHolder.push(eq(orders.cpf, params.cpf));
+    if (params.foreignDocument) sameHolder.push(eq(orders.foreignDocument, params.foreignDocument));
+    if (params.email) {
+      const email = params.email.trim().toLowerCase();
+      sameHolder.push(
+        inArray(
+          orders.courtesyAttendeeId,
+          executor.select({ id: courtesyAttendees.id }).from(courtesyAttendees).where(sql`lower(${courtesyAttendees.email}) = ${email}`),
+        ),
+        and(
+          isNull(orders.courtesyAttendeeId),
+          inArray(orders.userId, executor.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = ${email}`)),
+        ),
+      );
+    }
+    if (sameHolder.length === 0) return false;
+    const existing = await executor
       .select({ id: orders.id })
       .from(orders)
-      .where(
-        and(
-          eq(orders.foreignDocument, foreignDocument),
-          eq(orders.eventId, eventId),
-          eq(orders.status, "paid"),
-        ),
-      )
+      .where(and(eq(orders.eventId, params.eventId), eq(orders.status, "paid"), or(...sameHolder)))
       .limit(1);
-    return existingOrder.length > 0;
+    return existing.length > 0;
   }
 
-  async isUserAlreadyRegisteredForEvent(userId: string, eventId: string): Promise<boolean> {
-    const existingOrder = await db
-      .select({ id: orders.id })
-      .from(orders)
-      .where(
-        and(
-          eq(orders.userId, userId),
-          eq(orders.eventId, eventId),
-          eq(orders.status, "paid"),
-        ),
-      )
-      .limit(1);
-    return existingOrder.length > 0;
+  async incrementEventAttendees(eventId: string): Promise<void> {
+    await db
+      .update(events)
+      .set({ currentAttendees: sql`COALESCE(${events.currentAttendees}, 0) + 1` })
+      .where(eq(events.id, eventId));
+  }
+
+  async createFreeSubscription(params: {
+    holder: { userId: string; cpf: string | null; foreignDocument: string | null; email: string | null };
+    order: InsertOrder;
+  }): Promise<{ ok: true; order: Order } | { ok: false; reason: "already_registered" | "event_full" }> {
+    return db.transaction(async (tx) => {
+      // Same pattern as claimCourtesyRedeem: the event row lock serializes
+      // inscriptions of one event, so the check below cannot be raced.
+      const [locked] = await tx
+        .select({ currentAttendees: events.currentAttendees, maxAttendees: events.maxAttendees })
+        .from(events)
+        .where(eq(events.id, params.order.eventId))
+        .for("update");
+      // Capacity is re-checked on the locked row: the route's read is older.
+      if (locked && isEventFull({ price: "0", ...locked })) return { ok: false as const, reason: "event_full" as const };
+      const alreadyRegistered = await this.isAlreadyRegisteredForEvent(
+        { eventId: params.order.eventId, ...params.holder },
+        tx,
+      );
+      if (alreadyRegistered) return { ok: false as const, reason: "already_registered" as const };
+
+      const [order] = await tx
+        .insert(orders)
+        .values({ ...params.order, createdAt: new Date(), updatedAt: new Date() })
+        .returning();
+      await tx
+        .update(events)
+        .set({ currentAttendees: sql`COALESCE(${events.currentAttendees}, 0) + 1` })
+        .where(eq(events.id, params.order.eventId));
+      return { ok: true as const, order };
+    });
+  }
+
+  async setUserIdentity(
+    userId: string,
+    identity: {
+      document?: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null };
+      address?: string;
+    },
+  ): Promise<
+    | { ok: true; user: User }
+    | { ok: false; reason: "document_already_set" | "document_taken" | "not_found" }
+  > {
+    const addressPatch = identity.address !== undefined ? { address: identity.address } : {};
+    try {
+      if (identity.document) {
+        const [claimed] = await db
+          .update(users)
+          .set({ ...identity.document, ...addressPatch, updatedAt: new Date() })
+          .where(and(eq(users.id, userId), isNull(users.cpf), isNull(users.foreignDocument)))
+          .returning();
+        if (claimed) return { ok: true, user: claimed };
+
+        const current = await this.getUser(userId);
+        if (!current) return { ok: false, reason: "not_found" };
+        const { isForeigner, cpf, foreignDocument } = identity.document;
+        const sameDocument = isForeigner
+          ? current.isForeigner === true && current.foreignDocument === foreignDocument
+          : current.isForeigner !== true && current.cpf?.replace(/\D/g, "") === cpf?.replace(/\D/g, "");
+        if (!sameDocument) return { ok: false, reason: "document_already_set" };
+      }
+      const user = await this.updateUser(userId, addressPatch);
+      return user ? { ok: true, user } : { ok: false, reason: "not_found" };
+    } catch (error) {
+      const code = (error as { code?: string; cause?: { code?: string } })?.code
+        ?? (error as { cause?: { code?: string } })?.cause?.code;
+      if (code === "23505") return { ok: false, reason: "document_taken" };
+      throw error;
+    }
   }
 
   async existsOtherPaidOrderForCpfAndEvent(
@@ -690,7 +824,7 @@ export class DatabaseStorage implements IStorage {
     eventId: string;
     linkId: string;
     userId: string;
-    interestArea: string | null;
+    registrationAnswers: RegistrationAnswer[];
     attendee: InsertCourtesyAttendee;
   }): Promise<
     | { ok: false }
@@ -742,7 +876,7 @@ export class DatabaseStorage implements IStorage {
           status: "paid",
           courtesyLinkId: params.linkId,
           courtesyAttendeeId: attendee.id,
-          interestArea: params.interestArea,
+          registrationAnswers: params.registrationAnswers,
           createdAt: new Date(),
           updatedAt: new Date(),
         })
@@ -759,8 +893,8 @@ export class DatabaseStorage implements IStorage {
       await tx
         .update(events)
         .set({
-          currentAttendees: (locked.currentAttendees || 0) + 1,
-          updatedAt: new Date(),
+          // Counter only: not an edit, so updated_at stays (see updateEvent).
+          currentAttendees: sql`COALESCE(${events.currentAttendees}, 0) + 1`,
         })
         .where(eq(events.id, params.eventId));
 

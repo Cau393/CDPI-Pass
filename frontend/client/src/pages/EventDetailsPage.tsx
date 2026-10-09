@@ -16,6 +16,10 @@ import { cn } from "@/lib/utils";
 import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
 import SiteFooter from "@/components/SiteFooter";
 import { useFreeSubscribe } from "@/hooks/useFreeSubscribe";
+import { EventRegistrationDialog } from "@/components/EventRegistrationDialog";
+import { needsRegistrationDialog } from "@/lib/eventRegistration";
+import type { SystemField } from "@shared/eventRegistrationForm";
+import { FOREIGN_PAID_UNAVAILABLE_MESSAGE, foreignPaidCheckoutBlocked } from "@shared/foreignCheckout";
 import {
   COURTESY_CODE_INVALID_COPY,
   courtesyLoginRequiredDescription,
@@ -37,13 +41,19 @@ interface EventWithPromo extends Event {
 export default function EventDetailsPage() {
   const { id } = useParams();
   const [, setLocation] = useLocation();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const { toast } = useToast();
 
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [promoCode, setPromoCode] = useState<string | null>(null);
   const [courtesyCode, setCourtesyCode] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<EventWithPromo | null>(null);
+  // Paid path: registration questions first, then the payment modal.
+  const [registrationPrompt, setRegistrationPrompt] = useState<{
+    missing?: SystemField[];
+    message?: string;
+  } | null>(null);
+  const [checkoutAnswers, setCheckoutAnswers] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -122,7 +132,11 @@ export default function EventDetailsPage() {
     setLocation(`/event/${id}?promo=${encodeURIComponent(code)}`);
   }, [courtesyCode, courtesyLink, id, setLocation]);
 
-  const { subscribe, isPending: isSubscribePending } = useFreeSubscribe();
+  const {
+    subscribe,
+    isPending: isSubscribePending,
+    registrationDialog,
+  } = useFreeSubscribe();
 
   const displayPrice = promoLink?.overridePrice 
     ? parseFloat(promoLink.overridePrice) 
@@ -146,6 +160,8 @@ export default function EventDetailsPage() {
       : null;
   const feeLabel =
     event && !showCourtesyOffer ? eventFeeLabel(event, "detailed") : null;
+  // Paid checkout (a promo price included); free sign-up and courtesy redeem stay open.
+  const foreignPaidBlocked = !isFree && !showCourtesyOffer && foreignPaidCheckoutBlocked(user);
 
   const handleFreeSubscribe = () => {
     if (!event) return;
@@ -188,15 +204,32 @@ export default function EventDetailsPage() {
 
     if (!event) return;
     if (isFreeEvent(event)) return;
+    if (foreignPaidCheckoutBlocked(user)) {
+      toast({
+        title: "Compra indisponível",
+        description: FOREIGN_PAID_UNAVAILABLE_MESSAGE,
+        variant: "destructive",
+      });
+      return;
+    }
 
+    // Store the event and promo in state
+    setSelectedEvent({ ...selected, promoCode: code });
+    if (needsRegistrationDialog(event, user)) {
+      setRegistrationPrompt({});
+      return;
+    }
+    openCheckout({});
+  };
+
+  const openCheckout = (answers: Record<string, string>) => {
+    if (!event) return;
+    setCheckoutAnswers(answers);
     setModalData({
       event: event,
       promoCode: promoCode,
       price: displayPrice,
     });
-
-    // Store the event and promo in state
-    setSelectedEvent({ ...selected, promoCode: code });
     setIsPaymentModalOpen(true);
   };
 
@@ -381,7 +414,8 @@ export default function EventDetailsPage() {
                     : soldOut ||
                       hasPaidForEvent ||
                       salesClosed ||
-                      isSubscribePending
+                      isSubscribePending ||
+                      foreignPaidBlocked
                 }
                 data-testid="button-event-cta"
               >
@@ -405,6 +439,14 @@ export default function EventDetailsPage() {
               {hasPaidForEvent && (
                 <p className="text-sm text-muted-foreground text-center sm:text-right w-full sm:w-auto">
                   Você já possui inscrição confirmada para este evento.
+                </p>
+              )}
+              {!hasPaidForEvent && !salesClosed && !soldOut && foreignPaidBlocked && (
+                <p
+                  className="text-sm text-muted-foreground text-center sm:text-right w-full sm:w-auto"
+                  data-testid="foreign-paid-unavailable"
+                >
+                  {FOREIGN_PAID_UNAVAILABLE_MESSAGE}
                 </p>
               )}
               {courtesyErrorMessage && (
@@ -433,8 +475,13 @@ export default function EventDetailsPage() {
           event={modalData.event}
           promoCode={modalData.promoCode}
           displayPrice={modalData.price}           
+          answers={checkoutAnswers}
           isOpen={isPaymentModalOpen}
           onClose={() => setIsPaymentModalOpen(false)}
+          onIdentityRequired={(missing, message) => {
+            setIsPaymentModalOpen(false);
+            setRegistrationPrompt({ missing, message });
+          }}
           onSuccess={() => {
             toast({
               title: "Pagamento iniciado!",
@@ -446,6 +493,19 @@ export default function EventDetailsPage() {
           }}
         />
       )}
+      <EventRegistrationDialog
+        open={registrationPrompt != null}
+        event={event}
+        missing={registrationPrompt?.missing}
+        error={registrationPrompt?.message}
+        confirmLabel="Continuar para pagamento"
+        onCancel={() => setRegistrationPrompt(null)}
+        onConfirm={(answers) => {
+          setRegistrationPrompt(null);
+          openCheckout(answers);
+        }}
+      />
+      {registrationDialog}
     </div>
       <SiteFooter />
     </>

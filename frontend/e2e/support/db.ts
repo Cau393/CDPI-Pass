@@ -1,0 +1,297 @@
+import { randomUUID } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import path from "node:path";
+// @ts-ignore pg ships no types (@types/pg is not a dependency); only Pool/Client are used here
+import pg from "pg";
+import { loadConfig } from "../harness/config";
+import { fileURLToPath } from "node:url";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const prodEvents = JSON.parse(readFileSync(path.join(HERE, "../fixtures/prod-events.json"), "utf8")) as {
+  events: { id: string; courtesyLimit: number | null; key: string; title: string; description: string; daysFromNow: number; location: string; price: string; isFree: boolean; modality: string; meetingUrl: string | null; meetingPassword: string | null; maxAttendees: number | null; salesClosed: boolean; registrationForm: RegistrationField[] }[];
+};
+
+export const cfg = loadConfig();
+export const PASSWORD = "Senha@E2E2026";
+
+const pool = new pg.Pool({ connectionString: cfg.databaseUrl, max: 4 });
+
+export async function sql<T extends Record<string, any> = Record<string, any>>(
+  text: string,
+  params: unknown[] = [],
+): Promise<T[]> {
+  const res = await pool.query(text, params);
+  return res.rows as T[];
+}
+export async function scalar<T = string>(text: string, params: unknown[] = []): Promise<T | null> {
+  const rows = await sql(text, params);
+  if (rows.length === 0) return null;
+  return Object.values(rows[0])[0] as T;
+}
+export async function closePool() {
+  await pool.end();
+}
+
+// Everything the suite creates is recorded so staging cleanup deletes exactly that.
+const STATE_DIR = path.resolve(HERE, "../.state");
+export const serverLogPath = () => path.join(STATE_DIR, `server-${cfg.run}.log`);
+export const trackFile = () => path.join(STATE_DIR, `created-${cfg.run}.ndjson`);
+function track(kind: "event" | "userEmail" | "courtesyCode" | "counter", value: string) {
+  mkdirSync(STATE_DIR, { recursive: true });
+  appendFileSync(trackFile(), JSON.stringify({ kind, value }) + "\n");
+}
+export interface Tracked {
+  events: string[];
+  emails: string[];
+  courtesyCodes: string[];
+  /** current_attendees of pre-existing events at global setup: eventId -> value. */
+  counters: Record<string, number>;
+}
+
+export function readTracked(): Tracked {
+  const file = trackFile();
+  const out: Tracked = { events: [], emails: [], courtesyCodes: [], counters: {} };
+  if (!existsSync(file)) return out;
+  for (const line of readFileSync(file, "utf8").split("\n").filter(Boolean)) {
+    const { kind, value } = JSON.parse(line);
+    if (kind === "counter") {
+      const c = JSON.parse(value) as { eventId: string; value: number };
+      if (!(c.eventId in out.counters)) out.counters[c.eventId] = c.value; // first snapshot wins
+    } else {
+      (kind === "event" ? out.events : kind === "userEmail" ? out.emails : out.courtesyCodes).push(value);
+    }
+  }
+  return out;
+}
+
+export interface RegistrationField {
+  id: string;
+  type: "text" | "radio" | "select" | "checkbox" | string;
+  label: string;
+  options: string[];
+  required: boolean;
+  archived: boolean;
+}
+export const question = (id: string, label: string, over: Partial<RegistrationField> = {}): RegistrationField => ({
+  id,
+  type: "text",
+  label,
+  options: [],
+  required: true,
+  archived: false,
+  ...over,
+});
+
+export type ProdEventKey = "onlineFree" | "presencialFree" | "presencialPaid";
+export interface SeededEvent {
+  id: string;
+  title: string;
+  isFree: boolean;
+  modality: "online" | "presencial";
+}
+
+type FixtureEvent = (typeof prodEvents.events)[number];
+export const fixtureEvent = (key: ProdEventKey): FixtureEvent => {
+  const base = prodEvents.events.find((e) => e.key === key);
+  if (!base) throw new Error(`no fixture event ${key}`);
+  return base;
+};
+
+async function insertEvent(
+  base: FixtureEvent,
+  opts: { id: string; title: string; isFree?: boolean; price?: string; salesClosed: boolean; registrationForm: RegistrationField[]; onConflictDoNothing?: boolean },
+): Promise<boolean> {
+  const date = new Date(Date.now() + base.daysFromNow * 86400_000);
+  const rows = await sql(
+    `INSERT INTO events (id,title,description,date,location,price,is_free,modality,meeting_url,meeting_password,max_attendees,sales_closed,courtesy_limit,registration_form)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     ${opts.onConflictDoNothing ? "ON CONFLICT (id) DO NOTHING" : ""} RETURNING id`,
+    [
+      opts.id, opts.title, base.description, date, base.location,
+      opts.price ?? (opts.isFree === false && base.isFree ? "100.00" : base.price),
+      opts.isFree ?? base.isFree, base.modality, base.meetingUrl, base.meetingPassword, base.maxAttendees,
+      opts.salesClosed, base.courtesyLimit, JSON.stringify(opts.registrationForm),
+    ],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Inserts a copy of one of the live prod events (fixtures/prod-events.json) with a fresh id, the
+ * run's title prefix and OPEN sales. `over.registrationForm` extends the form.
+ */
+export async function createEvent(
+  key: ProdEventKey,
+  over: { registrationForm?: RegistrationField[]; titleSuffix?: string; salesClosed?: boolean; isFree?: boolean; price?: string } = {},
+): Promise<SeededEvent> {
+  const base = fixtureEvent(key);
+  const id = randomUUID();
+  const title = `${cfg.namePrefix}${base.title}${over.titleSuffix ? ` ${over.titleSuffix}` : ""} ${cfg.run}-${id.slice(0, 5)}`;
+  track("event", id);
+  await insertEvent(base, {
+    id, title, isFree: over.isFree, price: over.price,
+    salesClosed: over.salesClosed ?? false,
+    registrationForm: over.registrationForm ?? base.registrationForm,
+  });
+  return { id, title, isFree: over.isFree ?? base.isFree, modality: base.modality as "online" | "presencial" };
+}
+
+/**
+ * Global setup: the three events with their REAL prod ids (the legacy-questions SQL targets them).
+ * Existing rows are never touched; only the ones inserted here are tracked for cleanup.
+ * Returns the keys this run inserted.
+ */
+export async function seedProdIdEvents(): Promise<ProdEventKey[]> {
+  const inserted: ProdEventKey[] = [];
+  for (const base of prodEvents.events) {
+    const ok = await insertEvent(base, {
+      id: base.id,
+      title: `${cfg.namePrefix}${base.title}`,
+      salesClosed: base.salesClosed,
+      registrationForm: base.registrationForm,
+      onConflictDoNothing: true,
+    });
+    if (ok) {
+      track("event", base.id);
+      inserted.push(base.key as ProdEventKey);
+    }
+  }
+  return inserted;
+}
+
+export const prodEventIds = () => prodEvents.events.map((e) => e.id);
+export const prodId = (key: ProdEventKey) => fixtureEvent(key).id;
+
+/** True when the three prod-id events carry the three legacy questions (C1). */
+export async function legacyQuestionsAttached(): Promise<boolean> {
+  const rows = await sql<{ n: string }>(
+    `SELECT count(*) AS n FROM events e WHERE e.id = ANY($1) AND (
+       SELECT count(*) FROM jsonb_array_elements(e.registration_form) f
+        WHERE f->>'id' IN ('legacy-occupation','legacy-partner-company','legacy-area-of-activity')) = 3`,
+    [prodEvents.events.map((e) => e.id)],
+  );
+  return Number(rows[0].n) === 3;
+}
+
+/**
+ * Global setup: remember `current_attendees` of events that existed before this run (never inserted by it).
+ * Teardown restores each to at most this value, which undoes exactly what the run's own app-created
+ * orders added and nothing else (the app only ever increments; SQL-seeded orders never touch it).
+ */
+export async function snapshotAttendeeCounters(eventIds: string[]) {
+  const rows = await sql<{ id: string; current_attendees: number | null }>(
+    `SELECT id, current_attendees FROM events WHERE id = ANY($1)`,
+    [eventIds],
+  );
+  for (const r of rows) track("counter", JSON.stringify({ eventId: r.id, value: r.current_attendees ?? 0 }));
+}
+
+/** A courtesy link for any event (also pre-existing ones); recorded so cleanup removes only this link. */
+export async function createCourtesyLink(eventId: string, adminEmail: string, tickets = 5): Promise<string> {
+  const code = `E2E${randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+  const adminId = await scalar<string>(`SELECT id FROM users WHERE lower(email)=lower($1)`, [adminEmail]);
+  track("courtesyCode", code);
+  await sql(
+    `INSERT INTO courtesy_links (event_id, code, ticket_count, used_count, is_active, created_by) VALUES ($1,$2,$3,0,true,$4)`,
+    [eventId, code, tickets, adminId],
+  );
+  return code;
+}
+
+/** A unique e-mail for this run; recorded for staging cleanup. */
+export function newEmail(tag: string): string {
+  const email = `${tag}.${cfg.run}.${randomUUID().slice(0, 6)}@e2e.test`;
+  track("userEmail", email.toLowerCase());
+  return email;
+}
+
+export const personName = (name: string) => `${cfg.namePrefix}${name}`;
+
+/**
+ * Staging cleanup: deletes only rows this run recorded (event ids, user e-mails, courtesy codes),
+ * in FK order, each statement on its own. Leftovers are reported, not thrown, and keep the
+ * `.state` file so a re-run of the teardown can finish. Safe to call in local mode too.
+ * Returns the list of problems (empty when everything went).
+ */
+export async function cleanupTracked(tracked: Tracked = readTracked()): Promise<string[]> {
+  const { events, emails, courtesyCodes, counters } = tracked;
+  const problems: string[] = [];
+  const attempt = async (label: string, text: string, params: unknown[]) => {
+    try {
+      return await sql(text, params);
+    } catch (e) {
+      problems.push(`${label}: ${e instanceof Error ? e.message.split("\n")[0] : e}`);
+      return null;
+    }
+  };
+  const users = emails.length ? (await attempt("select users", `SELECT id FROM users WHERE lower(email) = ANY($1)`, [emails])) ?? [] : [];
+  const userIds = users.map((u) => u.id as string);
+  const orders =
+    (await attempt(
+      "select orders",
+      `SELECT id, event_id, status, courtesy_attendee_id FROM orders WHERE event_id = ANY($1) OR user_id = ANY($2)`,
+      [events, userIds],
+    )) ?? [];
+  const orderIds = orders.map((o) => o.id as string);
+  const attendeeIds = orders.map((o) => o.courtesy_attendee_id).filter(Boolean) as string[];
+  const del = async (label: string, text: string, params: unknown[]) => attempt(label, text, params);
+  // Children first.
+  await del("print_jobs", `DELETE FROM print_jobs WHERE order_id = ANY($1) OR event_id = ANY($2)`, [orderIds, events]);
+  await del("certificates", `DELETE FROM certificates WHERE user_id = ANY($1) OR event_id = ANY($2)`, [userIds, events]);
+  await del("nps_cdpi_event_responses", `DELETE FROM nps_cdpi_event_responses WHERE user_id = ANY($1) OR event_id = ANY($2)`, [userIds, events]);
+  await del("nps_cdpi_apoiando_responses", `DELETE FROM nps_cdpi_apoiando_responses WHERE user_id = ANY($1) OR event_id = ANY($2)`, [userIds, events]);
+  await del("communicate_jobs", `DELETE FROM communicate_jobs WHERE created_by = ANY($1) OR event_id = ANY($2)`, [userIds, events]);
+  await del("reminder_jobs", `DELETE FROM reminder_jobs WHERE created_by = ANY($1) OR event_id = ANY($2)`, [userIds, events]);
+  await del("mass_send_jobs", `DELETE FROM mass_send_jobs WHERE created_by = ANY($1)`, [userIds]);
+  await del("communicate_templates", `DELETE FROM communicate_templates WHERE event_id = ANY($1)`, [events]);
+  await del("reminder_templates", `DELETE FROM reminder_templates WHERE event_id = ANY($1)`, [events]);
+  await del("event_print_settings", `DELETE FROM event_print_settings WHERE event_id = ANY($1)`, [events]);
+  const deletedOrders = await del("orders", `DELETE FROM orders WHERE id = ANY($1)`, [orderIds]);
+  await del("courtesy_attendees", `DELETE FROM courtesy_attendees WHERE id = ANY($1)`, [attendeeIds]);
+  await del("courtesy_links", `DELETE FROM courtesy_links WHERE code = ANY($1) OR created_by = ANY($2)`, [courtesyCodes, userIds]);
+  await del("email_queue", `DELETE FROM email_queue WHERE lower("to") = ANY($1)`, [emails]);
+  // Counters of pre-existing events: never above the value seen at setup. LEAST is atomic and a no-op when the
+  // counter did not move. Only once our orders are really gone.
+  if (deletedOrders) {
+    for (const [eventId, snapshot] of Object.entries(counters)) {
+      if (events.includes(eventId)) continue;
+      await del("current_attendees", `UPDATE events SET current_attendees = LEAST(COALESCE(current_attendees, 0), $2) WHERE id = $1`, [eventId, snapshot]);
+    }
+  }
+  await del("events", `DELETE FROM events WHERE id = ANY($1)`, [events]);
+  await del("users", `DELETE FROM users WHERE id = ANY($1)`, [userIds]);
+
+  // Leftovers that are ours.
+  const left = async (label: string, text: string, params: unknown[]) => {
+    const rows = await attempt(`leftover ${label}`, text, params);
+    if (rows && rows.length) problems.push(`leftover ${label}: ${rows.length}`);
+  };
+  await left("events", `SELECT id FROM events WHERE id = ANY($1)`, [events]);
+  await left("users", `SELECT id FROM users WHERE lower(email) = ANY($1)`, [emails]);
+  await left("courtesy_links", `SELECT id FROM courtesy_links WHERE code = ANY($1)`, [courtesyCodes]);
+  await left("orders", `SELECT id FROM orders WHERE id = ANY($1)`, [orderIds]);
+  return problems;
+}
+
+/** Removes the state file once the cleanup left nothing behind. */
+export function dropTrackFile() {
+  rmSync(trackFile(), { force: true });
+}
+
+/** Valid CPF digits from a numeric seed. */
+export function cpfDigits(seed: number | string): string {
+  const n = String(seed).padStart(9, "0").slice(-9).split("").map(Number);
+  const d = (len: number) => {
+    const s = n.slice(0, len).reduce((a, v, i) => a + v * (len + 1 - i), 0);
+    const r = (s * 10) % 11;
+    return r === 10 ? 0 : r;
+  };
+  n.push(d(9));
+  n.push(d(10));
+  return n.join("");
+}
+export const fmtCpf = (d: string) => `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+let cpfCounter = 0;
+/** A CPF unlikely to collide across parallel workers and runs. */
+export const uniqueCpf = () =>
+  cpfDigits((Date.now() * 7 + process.pid * 131 + ++cpfCounter * 7919) % 1_000_000_000);

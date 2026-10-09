@@ -1,10 +1,19 @@
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, type FormEvent, type ReactNode } from "react";
 import { useLocation, useSearch } from "wouter";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { z } from "zod";
-import { courtesyRedemptionSchema } from "@shared/schema";
+import { courtesyRedemptionSchema, onlineCourtesyRedemptionSchema } from "@shared/schema";
+import { isOnlineEvent } from "@shared/eventModality";
+import { COURTESY_FILLED_LEGACY_IDS, type RegistrationField } from "@shared/eventRegistrationForm";
+import { RegistrationFields } from "@/components/RegistrationFields";
+import { parseApiErrorMessage } from "@/lib/eventForm";
+import {
+  registrationAnswerErrors,
+  registrationAnswersPayload,
+  staleRegistrationError,
+} from "@/lib/eventRegistration";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -61,9 +70,36 @@ export default function CourtesyRedeemPage() {
   const [isResolvingCode, setIsResolvingCode] = useState(false);
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // Fetch courtesy link details
+  const { data: linkData, isLoading: linkLoading, error: linkError } = useQuery({
+    queryKey: ["/api/courtesy-links", code],
+    queryFn: async () => {
+      if (!code) return null;
+      const response = await fetch(`/api/courtesy-links/${code}`);
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || "Link inválido");
+      }
+      return response.json();
+    },
+    enabled: !!code && !authLoading,
+  });
+
+  // Online courtesy asks no document, birth date or address (ADR-016).
+  const isOnline = isOnlineEvent(linkData?.event ?? {});
+  // Cargo and company legacy questions are the attendee's own form fields above (the server fills them).
+  const questions = ((linkData?.event?.registrationForm ?? []) as RegistrationField[]).filter(
+    (field) => !field.archived && !COURTESY_FILLED_LEGACY_IDS.includes(field.id),
+  );
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answerErrors, setAnswerErrors] = useState<Record<string, string>>({});
 
   const form = useForm<RedemptionFormData>({
-    resolver: zodResolver(courtesyRedemptionSchema),
+    resolver: (isOnline
+      ? zodResolver(onlineCourtesyRedemptionSchema)
+      : zodResolver(courtesyRedemptionSchema)) as Resolver<RedemptionFormData>,
     defaultValues: {
       name: "",
       email: "",
@@ -112,20 +148,6 @@ export default function CourtesyRedeemPage() {
     }
   }, [authLoading, isAuthenticated, code, setLocation]);
 
-  // Fetch courtesy link details
-  const { data: linkData, isLoading: linkLoading, error: linkError } = useQuery({
-    queryKey: ["/api/courtesy-links", code],
-    queryFn: async () => {
-      if (!code) return null;
-      const response = await fetch(`/api/courtesy-links/${code}`);
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || "Link inválido");
-      }
-      return response.json();
-    },
-    enabled: !!code && !authLoading,
-  });
 
   useEffect(() => {
     if (authLoading || isAuthenticated || !code || !linkData?.event?.id) return;
@@ -136,7 +158,9 @@ export default function CourtesyRedeemPage() {
 
   // Redeem courtesy mutation
   const redeemMutation = useMutation({
-    mutationFn: async (data: RedemptionFormData & { code: string }) => {
+    mutationFn: async (
+      data: RedemptionFormData & { code: string; answers: Record<string, string> },
+    ) => {
       return await apiRequest("POST", "/api/courtesy/redeem", data);
     },
     onSuccess: () => {
@@ -147,9 +171,14 @@ export default function CourtesyRedeemPage() {
       });
     },
     onError: (error: Error) => {
+      // The admin may have edited the form since this page loaded the link.
+      if (staleRegistrationError(error)) {
+        void queryClient.invalidateQueries({ queryKey: ["/api/courtesy-links", code] });
+        void queryClient.invalidateQueries({ queryKey: ["/api/events"] });
+      }
       toast({
         title: "Erro ao resgatar cortesia",
-        description: error.message,
+        description: parseApiErrorMessage(error),
         variant: "destructive",
       });
     },
@@ -173,7 +202,21 @@ export default function CourtesyRedeemPage() {
       return;
     }
 
-    redeemMutation.mutate({ ...data, code });
+    redeemMutation.mutate({
+      ...data,
+      code,
+      answers: registrationAnswersPayload(questions, answers),
+    });
+  };
+
+  const handleRedeemSubmit = (e: FormEvent<HTMLFormElement>) => {
+    // Validate the answers alongside the form so every error shows at once.
+    const nextAnswerErrors = registrationAnswerErrors(questions, answers);
+    setAnswerErrors(nextAnswerErrors);
+    void form.handleSubmit((data) => {
+      if (Object.keys(nextAnswerErrors).length > 0) return;
+      onSubmit(data);
+    })(e);
   };
 
   if (authLoading) {
@@ -373,7 +416,8 @@ export default function CourtesyRedeemPage() {
           
           <CardContent>
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <form onSubmit={handleRedeemSubmit} className="space-y-4">
+                {isOnline ? null : (
                 <FormField
                   control={form.control}
                   name="isForeigner"
@@ -395,6 +439,7 @@ export default function CourtesyRedeemPage() {
                     </FormItem>
                   )}
                 />
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
@@ -410,7 +455,7 @@ export default function CourtesyRedeemPage() {
                     )}
                   />
 
-                  {form.watch("isForeigner") === true ? (
+                  {isOnline ? null : form.watch("isForeigner") === true ? (
                   <FormField
                     control={form.control}
                     name="foreignDocument"
@@ -502,6 +547,7 @@ export default function CourtesyRedeemPage() {
                     )}
                   />
 
+                  {isOnline ? null : (
                   <FormField
                     control={form.control}
                     name="birthDate"
@@ -515,6 +561,7 @@ export default function CourtesyRedeemPage() {
                       </FormItem>
                     )}
                   />
+                  )}
 
                   <FormField
                     control={form.control}
@@ -544,6 +591,7 @@ export default function CourtesyRedeemPage() {
                     )}
                   />
 
+                  {isOnline ? null : (
                   <FormField
                     control={form.control}
                     name="address"
@@ -557,7 +605,17 @@ export default function CourtesyRedeemPage() {
                       </FormItem>
                     )}
                   />
+                  )}
                 </div>
+
+                <RegistrationFields
+                  fields={questions}
+                  values={answers}
+                  errors={answerErrors}
+                  onChange={(fieldId, value) =>
+                    setAnswers((prev) => ({ ...prev, [fieldId]: value }))
+                  }
+                />
 
                 <div className="pt-4">
                   <Button

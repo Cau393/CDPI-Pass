@@ -1,6 +1,12 @@
 import * as z from "zod";
 import { format, isValid, parse } from "date-fns";
 import { hasMeaningfulEventDescription } from "@/lib/eventDescriptionHtml";
+import {
+  parseRegistrationFormField,
+  registrationFormMultipartValue,
+  REGISTRATION_FIELD_OPTIONS_INVALID,
+  type RegistrationField,
+} from "@shared/eventRegistrationForm";
 
 const npsTypeSchema = z.enum(["cdpi_event", "cdpi_apoiando"]);
 const modalitySchema = z.enum(["presencial", "online"]);
@@ -135,6 +141,60 @@ const coverFileListSchema = z
     "Image must be smaller than 5MB.",
   );
 
+/**
+ * One row of the "Formulário de inscrição" builder. `fieldId` is the server's
+ * id (null until saved); options are edited one per line.
+ */
+const registrationFormRowSchema = z
+  .object({
+    fieldId: z.string().nullable(),
+    type: z.enum(["text", "select", "radio"]),
+    label: z.string(),
+    optionsText: z.string(),
+    required: z.boolean(),
+  })
+  .superRefine((row, ctx) => {
+    // Same parser as the server, so the admin sees its message next to the row.
+    const result = parseRegistrationFormField(registrationFormPayload([row]), [], () => "draft");
+    if (result.ok) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [result.error === REGISTRATION_FIELD_OPTIONS_INVALID ? "optionsText" : "label"],
+      message: result.error,
+    });
+  });
+
+export type RegistrationFormRow = z.infer<typeof registrationFormRowSchema>;
+
+export function toRegistrationFormRows(
+  fields: readonly RegistrationField[] | null | undefined,
+): RegistrationFormRow[] {
+  return (fields ?? [])
+    .filter((field) => !field.archived)
+    .map((field) => ({
+      fieldId: field.id,
+      type: field.type,
+      label: field.label,
+      optionsText: field.options.join("\n"),
+      required: field.required,
+    }));
+}
+
+/** `registration_form` multipart value: active questions in display order. */
+export function registrationFormPayload(rows: readonly RegistrationFormRow[]): string {
+  const fields = rows.map((row) => ({
+    ...(row.fieldId ? { id: row.fieldId } : {}),
+    type: row.type,
+    label: row.label.trim(),
+    options:
+      row.type === "text"
+        ? []
+        : row.optionsText.split("\n").map((option) => option.trim()).filter(Boolean),
+    required: row.required,
+  }));
+  return registrationFormMultipartValue(fields);
+}
+
 const courtesyLimitField = z
   .string()
   .optional()
@@ -169,7 +229,7 @@ export const createEventSchema = z.object({
   whatsappGroupUrl: z.string().optional().default(""),
   confirmationEmailHtml: z.string().optional().default(""),
   courtesyLimit: courtesyLimitField,
-  interestAreas: z.array(z.string()).default([]),
+  registrationForm: z.array(registrationFormRowSchema).default([]),
   coverImage: z
     .custom<FileList | undefined>((v) => v === undefined || v instanceof FileList)
     .refine(
@@ -216,7 +276,7 @@ export const editEventSchema = z.object({
   whatsappGroupUrl: z.string().optional().default(""),
   confirmationEmailHtml: z.string().optional().default(""),
   courtesyLimit: courtesyLimitField,
-  interestAreas: z.array(z.string()).default([]),
+  registrationForm: z.array(registrationFormRowSchema).default([]),
   coverImage: coverFileListSchema,
 }).superRefine(refineOnlineMeetingUrl).superRefine(refineOptionalWhatsappUrl).superRefine(refineMeetingPassword);
 

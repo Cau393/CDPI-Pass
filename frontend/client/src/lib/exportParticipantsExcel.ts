@@ -1,25 +1,34 @@
 import * as XLSX from "xlsx";
+import { isLegacyFieldId, type RegistrationAnswer, type RegistrationField } from "@shared/eventRegistrationForm";
 
 export type ParticipantExportRow = {
   name: string;
+  /** CPF or passport: the API keeps one column for both. */
   cpf: string | null;
+  isForeigner: boolean;
   email: string;
   phone: string;
+  address: string | null;
   cargoQueOcupa: string;
   empresaQueTrabalha: string;
+  areaDeAtuacao: string;
   presenca: string;
   orderStatus: "paid" | "courtesy" | "cancelled";
+  registrationAnswers: RegistrationAnswer[];
 };
 
-const HEADERS = [
+const FIXED_HEADERS = [
   "Nome",
-  "CPF",
+  "CPF / Passaporte",
+  "Estrangeiro",
   "E-mail",
   "Telefone",
+  "Endereço",
   "Cargo que ocupa",
   "Empresa que trabalha",
   "Presença",
   "Status",
+  "Área de atuação",
 ] as const;
 
 /** Rótulos de Status para Excel: apenas pagamento e cortesia (demais ficam em branco). */
@@ -31,24 +40,71 @@ export function statusLabelForExcel(
   return "";
 }
 
-/** Linhas prontas para `json_to_sheet` (mesmas chaves dos cabeçalhos PT-BR). */
-export function buildParticipantSheetRows(
-  participants: ParticipantExportRow[],
-): Record<(typeof HEADERS)[number], string>[] {
-  return participants.map((p) => ({
-    Nome: p.name,
-    CPF: p.cpf ?? "",
-    "E-mail": p.email,
-    Telefone: p.phone,
-    "Cargo que ocupa": p.cargoQueOcupa,
-    "Empresa que trabalha": p.empresaQueTrabalha,
-    Presença: p.presenca,
-    Status: statusLabelForExcel(p.orderStatus),
-  }));
+/**
+ * Header row plus one row per participant, ready for `aoa_to_sheet`.
+ * Question columns: active questions in form order, then removed questions
+ * (archived, or no longer on the event at all) that still have answers, so an
+ * edit to the form never hides answers already given.
+ */
+export function buildParticipantSheet(
+  participants: readonly ParticipantExportRow[],
+  registrationForm: readonly RegistrationField[],
+): string[][] {
+  const questions = questionColumns(participants, registrationForm);
+  const taken = new Set<string>(FIXED_HEADERS);
+  const questionHeaders = questions.map(({ label }) => {
+    let header = label;
+    for (let n = 2; taken.has(header); n++) header = `${label} (${n})`;
+    taken.add(header);
+    return header;
+  });
+
+  const rows = participants.map((p) => {
+    const answers = new Map(p.registrationAnswers.map((a) => [a.fieldId, a.value]));
+    return [
+      p.name,
+      p.cpf ?? "",
+      p.isForeigner ? "Sim" : "Não",
+      p.email,
+      p.phone,
+      p.address ?? "",
+      p.cargoQueOcupa,
+      p.empresaQueTrabalha,
+      p.presenca,
+      statusLabelForExcel(p.orderStatus),
+      p.areaDeAtuacao,
+      ...questions.map(({ fieldId }) => answers.get(fieldId) ?? ""),
+    ];
+  });
+
+  return [[...FIXED_HEADERS, ...questionHeaders], ...rows];
 }
 
-export function participantExcelHeaders(): readonly string[] {
-  return HEADERS;
+function questionColumns(
+  participants: readonly ParticipantExportRow[],
+  registrationForm: readonly RegistrationField[],
+): { fieldId: string; label: string }[] {
+  // The legacy questions feed the profile columns above, never columns of their own.
+  const answeredLabels = new Map<string, string>();
+  for (const p of participants) {
+    for (const answer of p.registrationAnswers) {
+      if (isLegacyFieldId(answer.fieldId)) continue;
+      if (!answeredLabels.has(answer.fieldId)) answeredLabels.set(answer.fieldId, answer.label);
+    }
+  }
+
+  const form = registrationForm.filter((field) => !isLegacyFieldId(field.id));
+  const active = form
+    .filter((field) => !field.archived)
+    .map((field) => ({ fieldId: field.id, label: field.label }));
+  const archived = form
+    .filter((field) => field.archived && answeredLabels.has(field.id))
+    .map((field) => ({ fieldId: field.id, label: `${field.label} (removida)` }));
+  const known = new Set(registrationForm.map((field) => field.id));
+  const orphaned = Array.from(answeredLabels)
+    .filter(([fieldId]) => !known.has(fieldId))
+    .map(([fieldId, label]) => ({ fieldId, label: `${label} (removida)` }));
+  return [...active, ...archived, ...orphaned];
 }
 
 function sanitizeFilenameSegment(title: string): string {
@@ -62,20 +118,15 @@ function sanitizeFilenameSegment(title: string): string {
 
 /**
  * Gera e baixa um `.xlsx` no navegador.
- * Lista vazia ainda inclui apenas a linha de cabeçalhos.
+ * Lista vazia ainda inclui a linha de cabeçalhos.
  */
 export function exportParticipantsToXlsx(
-  participants: ParticipantExportRow[],
+  participants: readonly ParticipantExportRow[],
+  registrationForm: readonly RegistrationField[],
   eventTitle?: string | null,
 ): void {
   const wb = XLSX.utils.book_new();
-  let ws: XLSX.WorkSheet;
-  if (participants.length === 0) {
-    ws = XLSX.utils.aoa_to_sheet([[...HEADERS]]);
-  } else {
-    const rows = buildParticipantSheetRows(participants);
-    ws = XLSX.utils.json_to_sheet(rows);
-  }
+  const ws = XLSX.utils.aoa_to_sheet(buildParticipantSheet(participants, registrationForm));
   XLSX.utils.book_append_sheet(wb, ws, "Participantes");
   const date = new Date().toISOString().slice(0, 10);
   const base = sanitizeFilenameSegment(eventTitle ?? "participantes");

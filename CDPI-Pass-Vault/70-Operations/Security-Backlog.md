@@ -149,6 +149,8 @@ ASAAS_API_URL=https://sandbox.asaas.com/api/v3
 ```
 This is the local `.env`; the EC2 copy could not be checked (item 9), but `infra/README.md` records no orders in 30 days and no upcoming events, so the outage is currently invisible. It will not be once ticket sales resume. The webhook side (`ASAAS_WEBHOOK_TOKEN`) is proven working and is a separate credential.
 
+**Correction (2026-10-08):** `asaasService` never read `ASAAS_API_URL`; it was hardcoded to `https://api.asaas.com/v3`, so the sandbox value above had no effect. `fix/foreign-card-checkout` makes it read the variable, so the EC2 value must be the production host **before** that PR merges, or every paid checkout goes to sandbox with a production key (401 → 502).
+
 **Fix**: generate a new key in the Asaas dashboard for the environment actually used in prod, set `ASAAS_API_URL` to match, update the EC2 `.env`, restart, and place one real R$1 test order end to end before the next event goes on sale. Store the key in SSM Parameter Store once item 4 lands.
 
 ### 6. `JWT_SECRET` fallback `"your-secret-key"`
@@ -300,6 +302,52 @@ aws iam list-access-keys --user-name cdpi-pass-deployer --query 'AccessKeyMetada
 
 ---
 
+### 14. Outbound webhooks the owner does not recognise (found 2026-10-09, ADR-016 rollout)
+
+The owner said on 2026-10-09 that the server's only webhook is Asaas's, which is inbound. The code also **sends** data out in two places:
+- **Make.com, hardcoded and live:** `server/utils/finalizeOrderPaidLikeWebhook.ts` (`MAKE_WEBHOOK_URL = https://hook.us2.make.com/…`, added 2025-10-22 "Real time sells updates added"). On every order that becomes paid, including courtesies, it posts the buyer's name and e-mail, the event's title, date, location, modality and **`meetingUrl`**, and the order's id, amount, status and method. **The repo `Cau393/CDPI-Pass` is public (checked 2026-10-09), so the hook URL is in public git history:** anyone can post fake "paid order" events into that scenario, and the payload carries PII and the online meeting link.
+- **`COURTESY_WEBHOOK_URL`, env-gated:** `server/routes.ts`, courtesy redeem (added 2025-10-20 "Added Real Time Automation for Courtesy Redeems"). When the variable is set, it posts the full courtesy attendee: name, e-mail, phone, CPF/passport, birth date, address, cargo and empresa.
+
+```bash
+# on EC2, in the app directory: prints a count, never the value
+grep -c '^COURTESY_WEBHOOK_URL=' .env
+```
+
+**Checked 2026-10-09: the count is 1, so `COURTESY_WEBHOOK_URL` is set in prod.** Every courtesy redemption posts the attendee's CPF, birth date, address, e-mail and phone to it. The owner does not know the consumer. To identify it without exposing the token in the path, print only the scheme and host: `grep '^COURTESY_WEBHOOK_URL=' .env | cut -d/ -f1-3`. After ADR-016, online courtesies send null CPF, birth date and address; the call is fire-and-forget, so this cannot break a redemption.
+
+**Fix**:
+1. Identify the consumer from the host. If nobody uses it, remove the variable from `.env` and delete the block; it is a PII path.
+2. For Make.com, find who owns the scenario.
+   - **If it is unused:** delete the call.
+   - **If it is used:** regenerate the hook URL in Make (the current one is public), put the new one in an env var, and drop `meetingUrl` from the payload unless the scenario needs it.
+
+---
+
+### 15. Login rate limiter keyed on a client-controlled header (found 2026-10-09, ADR-016 rollout review)
+
+`server/routes.ts` `authLimiter.keyGenerator` (added 2025-11-12 "Limit individual ips") uses the **first** `X-Forwarded-For` entry. nginx appends the real client IP at the end, so the first entry is whatever the client sent. Sending a random `X-Forwarded-For` per request bypasses the 100-per-15-minutes limit on `/api/auth/*`, the brute-force guard for login.
+
+```bash
+grep -n "x-forwarded-for" -A4 frontend/server/routes.ts
+grep -n "trust proxy" frontend/server/index.ts   # app.set('trust proxy', 1)
+```
+
+**Fix**: key on `req.ip`. With `trust proxy` set to 1, that is the address nginx saw. Add an integration test that 101 requests with rotating `X-Forwarded-For` values get a 429. The ADR-016 Playwright suite rotates that header to stay under the limiter, so switch it to a per-test limiter reset or a test-only higher limit.
+
+---
+
+### 16. Login does not require a verified e-mail (found 2026-10-09, ADR-016 refuter round 2)
+
+`POST /api/auth/login` (`server/routes.ts`, comment "Skip email verification check for MVP") lets an unverified account log in. Before ADR-016 the signup's CPF uniqueness limited throwaway accounts. With the 4-field signup, anyone can create unverified accounts and subscribe them to free online events. Each subscription sends the confirmation and meeting e-mails to whatever address was typed, which makes it a spam relay and inflates attendance.
+
+**Fix (owner decision)**:
+- Require `emailVerified` for `/subscribe` and `/api/orders`, answering 403 "Confirme seu e-mail" with a resend link, or require it at login.
+- Count unverified accounts with orders first, so existing customers are not locked out.
+
+Related: the three legacy questions (`legacy-*` ids) are not locked in the form builder. An admin who removes one and adds it back creates a new id, so the profile fallback and the Excel merge stop applying to it. [[70-Operations/Operator-Guides]] says not to. Locking those rows in the builder would enforce it.
+
+---
+
 ## Out of scope but seen
 
 - Three other IAM users with long-lived keys belong to other projects in the same account (`rachae-backend`, `cdpi-lesson-editor-backend`, `cdpi-pass-deployer`). A blast-radius review of the whole account is worth doing once items 2 and 3 are closed.
@@ -312,3 +360,8 @@ Recorded so they are not re-audited: IMDSv2 required on the instance · root MFA
 ## Resolved
 
 _(move items here with the date and the command output that shows them closed)_
+
+### 2026-10-09 — S1 and S2 from the ADR-016 refuter (code, not infrastructure)
+
+- **S1, user responses leaked `emailVerificationCode`:** `GET /api/auth/me`, `PUT /api/profile` and `PUT /api/profile/identity` returned the user row minus the password only. All three now use `toPublicUser`, which also drops `emailVerificationCode` and `emailVerificationCodeExpiresAt`. Proof: integration tests `user responses carry no secrets (S1)` in `server/test/integration/refuterItems.integration.test.ts` (red before: `emailVerificationCode` present in all three) and the unit test `server/test/utils/publicUser.test.ts`.
+- **S2, `GET /api/courtesy-links/:code` leaked `meetingUrl` / `meetingPassword` to anyone with a code:** it now returns `toPublicEvent(event)`. `CourtesyRedeemPage` only reads `event.id`, `title`, `modality` and `registrationForm`. Proof: integration test `public courtesy link (S2)` (red before: `meetingUrl` present).
