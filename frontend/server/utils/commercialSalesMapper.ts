@@ -57,7 +57,7 @@ export function mapCommercialSales(
         ? (row.attendeeName ?? row.buyerName)
         : row.buyerName,
       cpf: isCourtesyAttendee
-        ? (row.attendeeCpf ?? row.attendeeForeignDocument ?? row.cpf ?? row.foreignDocument ?? "")
+        ? (row.attendeeCpf ?? row.attendeeForeignDocument ?? "")
         : (row.cpf ?? row.foreignDocument ?? ""),
       email: isCourtesyAttendee
         ? (row.attendeeEmail ?? row.buyerEmail)

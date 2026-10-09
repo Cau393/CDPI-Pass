@@ -283,17 +283,21 @@ Every new test must **fail before** its change. Gates per PR: `pnpm run check`, 
 
 Merge #4 only after every step before it has observed output. The why behind each step is in [[70-Operations/ADR-016-Rollout-Plan]].
 
-1. **EC2 webhook check:** `grep -c '^COURTESY_WEBHOOK_URL=' .env` in the app directory. Expected `0`, which means the courtesy webhook is dead code; see [[70-Operations/Security-Backlog]] #14. A `1` means someone consumes it: find them before the deploy, because online courtesies now send null birth date and address.
-2. **Owner approves the exact prod SQL:** `frontend/sql/adr016_attach_legacy_questions.sql` (3 event ids) and the re-run of `frontend/sql/phone_e164_backfill.sql`.
+1. **EC2 env checks** (in the app directory):
+   - `grep '^ASAAS_API_URL=' .env`. It must print nothing, or exactly `ASAAS_API_URL=https://api.asaas.com/v3`. The new code reads this variable; any other value, even `https://api.asaas.com` without `/v3`, makes every paid checkout fail with 502. The value is a URL, not a secret.
+   - **Webhook:** `grep -c '^COURTESY_WEBHOOK_URL=' .env`. Expected `0`, which means the courtesy webhook is dead code; see [[70-Operations/Security-Backlog]] #14. A `1` means someone consumes it: find them before the deploy, because online courtesies now send null birth date and address.
+2. **Owner approves the exact prod SQL:** `frontend/sql/adr016_attach_legacy_questions.sql` (3 event ids) and `frontend/sql/phone_parenthesized_br_fix.sql`. **Never re-run `phone_e164_backfill.sql`:** it would put `55` in front of valid foreign numbers (refuter round 2).
 3. **Neon backup branch of prod:** `backup-pre-adr016-rollout-<date>`, parent `br-lucky-rice-acakvihn`.
 4. **Backfill on prod.** The live code ignores the column, so this is safe before the merge. Then run the file's verification query: expect `legacy_ids_present = 3` for each of the 3 events. A re-run must change nothing.
-5. **Phone normalisation on prod.** Expect 1 `users` row and 3 `courtesy_attendees` rows. The sanity gate inside the file rolls back on any bad row.
+5. **Phone fix on prod:** `phone_parenthesized_br_fix.sql`. First run its read-only pre-check; expect 1 `users` row and 3 `courtesy_attendees` rows in the `(00) 00000-0000` shape. It touches only that shape, and rolls back if any is left.
 6. **Merge #4 into `hotfix-frontend-update` off-peak, and not on an event day.** The Jornada is on 2026-10-13. The deploy workflow runs and never touches the DB.
 7. **Post-deploy smoke test** (prod, real accounts, no purchase):
    - Logged out, the header shows *Cadastre-se*. A 4-field signup sends the verification e-mail.
    - Each live event's CTA. Jornada (online free): the dialog shows the 3 questions, prefilled for a full-profile account. Peptídeos (sales closed): the courtesy link asks for "Área de atuação" only, next to the attendee's own Cargo and Empresa fields. Emagrecimento (paid): the dialog opens, then the payment modal; stop before paying.
    - Admin: the participants Excel for Jornada has "Área de atuação" as the last fixed column, and the old rows show the profile values.
-8. **Rollback:** revert the merge commit on `hotfix-frontend-update`. The backfill is additive and the old code ignores it (rehearsed). 4-field accounts created in the meantime can log in, but the old code asks them for a CPF before they subscribe.
+8. **Rollback: prefer rolling forward.** Reverting the merge commit is safe for the data: the backfill is additive and the old code ignores it (rehearsed). But **4-field accounts created after the deploy cannot inscribe anywhere on the old code.** It requires a CPF, its profile has no way to set one, and their profile save fails with 400 (`address: null`).
+   - Count them before deciding: `SELECT count(*) FROM users WHERE cpf IS NULL AND foreign_document IS NULL;`.
+   - If you do revert, support has to set each person's document by hand, once they have given it, using write-once SQL per account (the same rule as `PUT /api/profile/identity`).
 9. **Real Asaas charge:** a low-value charge, only after the owner confirms Asaas enabled foreign payers (gate b).
 10. **After the deploy (owner's choice):**
     - Remove the superseded worktrees and branches `register-cta-visibility`, `registration-forms-db`, `registration-form-builder`, `minimal-signup`, `phone-input-keyboard`, `foreign-card-checkout`, the `adr016-*` rollout worktrees and `prod-b0a6359`.
