@@ -1,5 +1,7 @@
 # Prompt: finish and roll out ADR-016 safely (multi-agent)
 
+> **Status 2026-10-09: executed.** PRs #5–#11 merged into `feat/registration-forms-all` (3eb3d5a), rehearsals done, two refuter rounds resolved. What remains is owner-only: the **Deploy checklist (Phase 6)** in [[70-Operations/Plan-Event-Registration-Forms]]. Don't re-run this prompt; it is kept as the record.
+
 Paste everything below the line into a new Claude Code session opened at `/Users/cauecasonato/Envs/CDPI-Pass`. It orchestrates subagents; each declares its model. Background: [[60-Decisions/ADR-016-event-registration-forms-and-minimal-signup]], runbook [[70-Operations/Plan-Event-Registration-Forms]].
 
 ---
