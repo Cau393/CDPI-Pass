@@ -321,6 +321,19 @@ grep -c '^COURTESY_WEBHOOK_URL=' .env
 
 ---
 
+### 15. Login rate limiter keyed on a client-controlled header (found 2026-10-09, ADR-016 rollout review)
+
+`server/routes.ts` `authLimiter.keyGenerator` (added 2025-11-12 "Limit individual ips") uses the **first** `X-Forwarded-For` entry. nginx appends the real client IP at the end, so the first entry is whatever the client sent. Sending a random `X-Forwarded-For` per request bypasses the 100-per-15-minutes limit on `/api/auth/*`, the brute-force guard for login.
+
+```bash
+grep -n "x-forwarded-for" -A4 frontend/server/routes.ts
+grep -n "trust proxy" frontend/server/index.ts   # app.set('trust proxy', 1)
+```
+
+**Fix**: key on `req.ip`. With `trust proxy` set to 1, that is the address nginx saw. Add an integration test that 101 requests with rotating `X-Forwarded-For` values get a 429. The ADR-016 Playwright suite rotates that header to stay under the limiter, so switch it to a per-test limiter reset or a test-only higher limit.
+
+---
+
 ## Out of scope but seen
 
 - Three other IAM users with long-lived keys belong to other projects in the same account (`rachae-backend`, `cdpi-lesson-editor-backend`, `cdpi-pass-deployer`). A blast-radius review of the whole account is worth doing once items 2 and 3 are closed.
