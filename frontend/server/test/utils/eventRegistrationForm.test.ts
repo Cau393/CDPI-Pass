@@ -320,6 +320,18 @@ describe("legacy questions (ADR-016 legacy profile fields)", () => {
     });
   });
 
+  it("withLegacyProfileAnswers: fallback for absent or blank+required; optional blank and explicit stay as sent", () => {
+    const profile = { occupation: "Médica", partnerCompany: "Acme", areaOfActivity: "Pesquisa" };
+    const occ = (required: boolean): RegistrationField[] => [{ ...legacyFields[0], required }];
+    const run = (required: boolean, answers?: Record<string, string>) =>
+      withLegacyProfileAnswers(occ(required), answers ? { answers } : {}, profile);
+    expect(run(true)).toEqual({ answers: { "legacy-occupation": "Médica" } });
+    expect(run(false)).toEqual({ answers: { "legacy-occupation": "Médica" } });
+    expect(run(true, { "legacy-occupation": " " })).toEqual({ answers: { "legacy-occupation": "Médica" } });
+    expect(run(false, { "legacy-occupation": " " })).toEqual({ answers: { "legacy-occupation": " " } });
+    expect(run(false, { "legacy-occupation": "Chefe" })).toEqual({ answers: { "legacy-occupation": "Chefe" } });
+  });
+
   it("withLegacyProfileAnswers leaves the body alone when the profile has no real value or the field is archived", () => {
     const none = withLegacyProfileAnswers(legacyFields, {}, { occupation: "Nao aplicavel" });
     expect(resolveRegistrationAnswers({ fields: legacyFields, body: none }).ok).toBe(false);

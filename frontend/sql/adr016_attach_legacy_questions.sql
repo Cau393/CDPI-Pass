@@ -4,8 +4,13 @@
 -- LEGACY_QUESTIONS): the prefill, the server fallback for old bundles and the
 -- participants export key on them. Admins must not delete or retype them.
 --
--- BEFORE RUNNING: replace the three placeholders in the target CTE with the
--- production event ids (events.id), keeping the quotes.
+-- Targets: the 3 upcoming prod events of 2026-10-09 (read-only snapshot, ADR-016
+-- rollout A2). Staging rehearsal seeds events with these same ids.
+--
+-- An event that already has only SOME of the three ids (1 or 2) is skipped too (0
+-- rows) and shows legacy_ids_present 1-2 in the verification query: repair it by
+-- hand. This only happens if someone edited the questions: archiving keeps the ids
+-- in the form, so it needs manual SQL.
 --
 -- Safe to re-run: only events whose registration_form has none of the three ids
 -- are touched (0 rows the second time). The questions are APPENDED after any
@@ -17,9 +22,9 @@
 
 WITH target(id) AS (
   VALUES
-    ('<EVENT_ID_1>'),
-    ('<EVENT_ID_2>'),
-    ('<EVENT_ID_3>')
+    ('13e253d6-14a2-496d-be4d-8a3ca4b0f8df'), -- Jornada Analítica & Regulatória (online, free, 2026-10-13)
+    ('168193f7-1aa2-45d6-b6e8-ba0ea355efaa'), -- Workshop Peptídeos (presencial, free, 2026-10-20)
+    ('f2ded6cd-1d45-4cb1-ba6a-7bf8616fda60')  -- Workshop Emagrecimento (presencial, paid, 2026-10-22)
 )
 UPDATE events e
 SET registration_form = COALESCE(e.registration_form, '[]'::jsonb) || jsonb_build_array(
@@ -43,4 +48,4 @@ WHERE e.id = t.id
 --        (SELECT count(*) FROM jsonb_array_elements(e.registration_form) AS f
 --          WHERE f ->> 'id' IN ('legacy-occupation', 'legacy-partner-company', 'legacy-area-of-activity')) AS legacy_ids_present
 --   FROM events e
---  WHERE e.id IN ('<EVENT_ID_1>', '<EVENT_ID_2>', '<EVENT_ID_3>');
+--  WHERE e.id IN ('13e253d6-14a2-496d-be4d-8a3ca4b0f8df', '168193f7-1aa2-45d6-b6e8-ba0ea355efaa', 'f2ded6cd-1d45-4cb1-ba6a-7bf8616fda60');

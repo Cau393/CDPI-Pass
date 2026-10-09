@@ -15,9 +15,9 @@ const FIXED_HEADERS = [
   "Endereço",
   "Cargo que ocupa",
   "Empresa que trabalha",
-  "Área de atuação",
   "Presença",
   "Status",
+  "Área de atuação",
 ];
 
 function field(overrides: Partial<RegistrationField> & Pick<RegistrationField, "id" | "label">): RegistrationField {
@@ -77,9 +77,9 @@ describe("buildParticipantSheet", () => {
       "Rua A, 100, São Paulo",
       "",
       "",
-      "",
       "Não confirmou presença",
       "Pago",
+      "",
     ]);
   });
 
@@ -99,7 +99,8 @@ describe("buildParticipantSheet", () => {
       [...legacyForm, field({ id: "q-turno", label: "Turno" })],
     );
     expect(sheet[0]).toEqual([...FIXED_HEADERS, "Turno"]);
-    expect(sheet[1].slice(6, 9)).toEqual(["Médica", "Clínica Aurora", "Pesquisa"]);
+    expect(sheet[1].slice(6, 8)).toEqual(["Médica", "Clínica Aurora"]);
+    expect(sheet[1][10]).toBe("Pesquisa");
     expect(sheet[1][11]).toBe("Tarde");
   });
 

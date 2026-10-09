@@ -26,9 +26,9 @@ const FIXED_HEADERS = [
   "Endereço",
   "Cargo que ocupa",
   "Empresa que trabalha",
-  "Área de atuação",
   "Presença",
   "Status",
+  "Área de atuação",
 ] as const;
 
 /** Rótulos de Status para Excel: apenas pagamento e cortesia (demais ficam em branco). */
@@ -70,9 +70,9 @@ export function buildParticipantSheet(
       p.address ?? "",
       p.cargoQueOcupa,
       p.empresaQueTrabalha,
-      p.areaDeAtuacao,
       p.presenca,
       statusLabelForExcel(p.orderStatus),
+      p.areaDeAtuacao,
       ...questions.map(({ fieldId }) => answers.get(fieldId) ?? ""),
     ];
   });

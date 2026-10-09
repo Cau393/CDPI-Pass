@@ -1187,10 +1187,10 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
         const empty = await createEvent({ modality: "presencial", isFree: false });
         const already = await createEvent({ modality: "online", isFree: true, registrationForm: legacyForm });
         const untouched = await createEvent({ modality: "online", isFree: true, registrationForm: [cargo] });
-        const sql = SQL.replaceAll("'<EVENT_ID_1>'", `'${withAdmin}'`)
-          .replaceAll("'<EVENT_ID_2>'", `'${empty}'`)
-          .replaceAll("'<EVENT_ID_3>'", `'${already}'`);
-        expect(sql).not.toContain("<EVENT_ID");
+        const sql = SQL.replaceAll("'13e253d6-14a2-496d-be4d-8a3ca4b0f8df'", `'${withAdmin}'`)
+          .replaceAll("'168193f7-1aa2-45d6-b6e8-ba0ea355efaa'", `'${empty}'`)
+          .replaceAll("'f2ded6cd-1d45-4cb1-ba6a-7bf8616fda60'", `'${already}'`);
+        expect(sql).not.toMatch(/13e253d6|168193f7|f2ded6cd/);
 
         const first = await pool.query(sql);
         const second = await pool.query(sql);

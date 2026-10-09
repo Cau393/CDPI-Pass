@@ -268,7 +268,8 @@ export function legacyProfileValue(fieldId: string, profile: LegacyProfile | nul
 
 /**
  * Mixed-version safety: a body without answers for an active legacy question
- * gets the profile's real value. Explicit (non-blank) answers always win.
+ * gets the profile's real value (also a blank one, when the question is required).
+ * Anything else the client sent, including a blank optional answer, stays as sent.
  * Returns a copy; a malformed `answers` is left for resolveRegistrationAnswers to reject.
  */
 export function withLegacyProfileAnswers<B extends object>(
@@ -282,8 +283,9 @@ export function withLegacyProfileAnswers<B extends object>(
   let changed = false;
   for (const field of fields ?? []) {
     if (field.archived || !isLegacyFieldId(field.id)) continue;
-    const explicit = typeof given[field.id] === "string" && (given[field.id] as string).trim() !== "";
-    if (explicit) continue;
+    // Explicit answers win: fall back only when the key is absent, or blank on a required question.
+    const sent = given[field.id];
+    if (sent !== undefined && sent !== null && !(field.required && (typeof sent !== "string" || sent.trim() === ""))) continue;
     const fallback = legacyProfileValue(field.id, profile);
     if (fallback === null) continue;
     given[field.id] = fallback;

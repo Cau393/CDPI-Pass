@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LEGACY_QUESTIONS, type RegistrationField, type SystemField } from "@shared/eventRegistrationForm";
 
 type Account = {
+  id?: string;
   cpf: string | null;
   foreignDocument: string | null;
   isForeigner: boolean;
@@ -278,6 +279,20 @@ describe("EventRegistrationDialog", () => {
           "legacy-area-of-activity": "Pesquisa",
         }),
       );
+    });
+
+    it("prefills when the account arrives after the dialog opened, keeping a typed draft", async () => {
+      authState.user = undefined;
+      const user = userEvent.setup();
+      const { rerender } = renderDialog(legacyEvent);
+      await user.type(screen.getByLabelText(/Empresa que trabalha/), "Rascunho");
+
+      authState.user = { ...newAccount, id: "u1", occupation: "Médica", partnerCompany: "Clínica", areaOfActivity: "Pesquisa" };
+      rerender({});
+
+      await waitFor(() => expect(screen.getByLabelText(/Cargo que ocupa/)).toHaveValue("Médica"));
+      expect(screen.getByLabelText(/Empresa que trabalha/)).toHaveValue("Rascunho");
+      expect(screen.getByLabelText(/Área de atuação/)).toHaveValue("Pesquisa");
     });
 
     it("leaves a 4-field account's questions empty (the placeholder is not a value)", async () => {
