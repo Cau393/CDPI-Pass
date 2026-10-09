@@ -22,6 +22,8 @@ class PaymentStatusService {
         const result = await finalizeOrderPaidLikeWebhook(order, {
           billingType: payment.billingType || "unknown",
           value: payment.value ?? null,
+          paymentId: payment.id ?? null,
+          installment: payment.installment ?? null,
         });
         if (result.ok) {
           console.log(`Payment confirmed for order ${orderId}`);
@@ -31,7 +33,7 @@ class PaymentStatusService {
           );
         }
       } else if (payment.status === "OVERDUE" || payment.status === "CANCELED") {
-        await storage.updateOrder(orderId, { status: "cancelled" });
+        await storage.cancelPendingOrder(orderId);
         console.log(`Payment cancelled for order ${orderId}`);
       }
     } catch (error) {

@@ -50,7 +50,7 @@ CONTAINER_ID=$(docker run -d --name "${CONTAINER_NAME}" \
   -e POSTGRES_PASSWORD="${DB_PASS}" \
   -e POSTGRES_DB="${DB_NAME}" \
   -p "${DB_PORT}:5432" \
-  postgres:16-alpine)
+  public.ecr.aws/docker/library/postgres:16-alpine)
 
 # Wait for Postgres to accept connections
 echo "Waiting for Postgres to be ready..."
