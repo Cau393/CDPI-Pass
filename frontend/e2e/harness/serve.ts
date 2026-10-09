@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-ignore pg ships no types (@types/pg is not a dependency); only Pool/Client are used here
 import pg from "pg";
-import { loadConfig } from "./config";
+import { loadConfig, mayChangeSchema } from "./config";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "../..");
@@ -25,6 +25,7 @@ if (existsSync(path.join(appRoot, ".env"))) {
 }
 
 async function prepareLocalDatabase() {
+  if (!mayChangeSchema(cfg.mode)) throw new Error("refusing DDL (create/drop database, db:push) outside local mode");
   const admin = new pg.Client({ connectionString: cfg.databaseUrl.replace(/\/[^/]+$/, "/postgres") });
   await admin.connect();
   try {

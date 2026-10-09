@@ -1,8 +1,7 @@
-import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { test, expect, expectNoHorizontalScroll } from "../support/fixtures";
-import { cfg, fmtCpf, legacyQuestionsAttached, PASSWORD, prodId, scalar, sql, uniqueCpf } from "../support/db";
+import { cfg, createCourtesyLink, fmtCpf, legacyQuestionsAttached, PASSWORD, prodId, scalar, sql, uniqueCpf } from "../support/db";
 import { clickEventCta, createAccount, login, makeUser, orderCount, waitForRegistrationDialog } from "../support/ui";
 import { ADDRESS, paymentMethods } from "../support/flows";
 
@@ -17,7 +16,10 @@ const OLD_PROFILE = { occupation: "Farmacêutica Sênior", company: "Laboratóri
 
 /** The prod ids carry the three legacy questions (global setup applied sql/adr016_attach_legacy_questions.sql). */
 test.beforeAll(async () => {
-  test.skip(!(await legacyQuestionsAttached()), "legacy questions are not attached to the prod-id events in this database");
+  test.skip(
+    !(await legacyQuestionsAttached()),
+    "a prod-id event exists without the 3 legacy questions (legacy-occupation / legacy-partner-company / legacy-area-of-activity); apply sql/adr016_attach_legacy_questions.sql to it",
+  );
 });
 
 /** An account made by the OLD full signup: document, address and the three work fields set. */
@@ -129,9 +131,7 @@ test.describe("legacy questions (C1)", () => {
     await createAccount(admin, { admin: true });
     const guest = makeUser("legguest");
     await createAccount(guest);
-    const code = `E2E${randomBytes(4).toString("hex").toUpperCase()}`;
-    const adminId = await scalar<string>(`SELECT id FROM users WHERE lower(email)=lower($1)`, [admin.email]);
-    await sql(`INSERT INTO courtesy_links (event_id, code, ticket_count, used_count, is_active, created_by) VALUES ($1,$2,5,0,true,$3)`, [eventId, code, adminId]);
+    const code = await createCourtesyLink(eventId, admin.email);
     await login(page, guest.email);
     await page.goto(`/cortesia?code=${code}`);
     await page.getByTestId("input-name").waitFor({ timeout: 30_000 });

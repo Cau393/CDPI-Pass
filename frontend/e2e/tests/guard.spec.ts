@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { assertStagingDatabaseUrl, loadConfig, PROD_ENDPOINT, STAGING_ENDPOINT } from "../harness/config";
+import { assertStagingDatabaseUrl, loadConfig, mayChangeSchema, PROD_ENDPOINT, STAGING_ENDPOINT } from "../harness/config";
 
 const url = (endpoint: string) => `postgresql://u:secret-pass@${endpoint}.c-3.sa-east-1.aws.neon.tech/db?sslmode=require`;
 
@@ -33,5 +33,9 @@ test.describe("database guard (dry run, no connection made)", () => {
     expect(() => loadConfig({ E2E_MODE: "prod" })).toThrow(/must be/);
     expect(() => loadConfig({ E2E_DB_NAME: "cdpi" })).toThrow(/c3_/);
     expect(() => loadConfig({ E2E_PORT: "5060" })).toThrow(/5060/);
+  });
+  test("DDL (database drop/create, db:push) is allowed in local mode only", () => {
+    expect(mayChangeSchema("local")).toBe(true);
+    expect(mayChangeSchema("staging")).toBe(false);
   });
 });

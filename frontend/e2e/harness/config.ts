@@ -75,3 +75,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): E2EConfig {
     run: env.E2E_RUN ?? "run",
   };
 }
+
+/**
+ * Only local mode may create/drop databases or run `db:push` (DDL). Staging is used as it is.
+ * serve.ts calls this before touching the database.
+ */
+export function mayChangeSchema(mode: E2EMode): boolean {
+  return mode === "local";
+}

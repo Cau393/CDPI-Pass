@@ -22,7 +22,7 @@ the app (`harness/serve.ts`, port 5057). Never use 5060 (Chromium blocks it).
 
 `E2E_MODE=staging`: uses `E2E_DATABASE_URL` (never printed). `harness/config.ts` parses the host and refuses
 to run unless it contains `ep-summer-sun-acft18c1` (staging), and always refuses `ep-curly-star-ac4ugpbh`
-(prod). The schema is not pushed and nothing is dropped. Every event title and user name is prefixed
+(prod). Staging never gets DDL: no database drop/create, no `db:push` (`mayChangeSchema`, dry-run tested). The three prod-id events must already exist there (global setup fails loudly if not) and are never inserted, modified or deleted by the suite; the legacy group runs against them when they carry the 3 legacy ids, otherwise it skips with a reason. Every event title and user name is prefixed
 `[REHEARSAL]`; every created event id and e-mail is recorded in `e2e/.state/` and the global teardown deletes
 exactly those rows. The guard is dry-run tested by `tests/guard.spec.ts` (project `guard`, no connection).
 

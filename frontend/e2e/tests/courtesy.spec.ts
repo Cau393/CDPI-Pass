@@ -1,18 +1,9 @@
-import { randomBytes } from "node:crypto";
 import { test, expect, expectNoHorizontalScroll } from "../support/fixtures";
-import { createEvent, question, scalar, sql, uniqueCpf, fmtCpf } from "../support/db";
+import { createCourtesyLink, createEvent, question, scalar, sql, uniqueCpf, fmtCpf } from "../support/db";
 import { createAccount, login, makeUser } from "../support/ui";
 import { ADDRESS, newPassport } from "../support/flows";
 
-async function courtesyLink(eventId: string, adminEmail: string) {
-  const code = `E2E${randomBytes(4).toString("hex").toUpperCase()}`;
-  const adminId = await scalar<string>(`SELECT id FROM users WHERE lower(email)=lower($1)`, [adminEmail]);
-  await sql(
-    `INSERT INTO courtesy_links (event_id, code, ticket_count, used_count, is_active, created_by) VALUES ($1,$2,5,0,true,$3)`,
-    [eventId, code, adminId],
-  );
-  return code;
-}
+const courtesyLink = createCourtesyLink;
 
 test.describe("courtesy redemption", () => {
   test("online (+595, 4-field account): no CPF / birth date / address, question answered", async ({ page }) => {

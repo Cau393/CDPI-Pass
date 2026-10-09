@@ -35,17 +35,17 @@ export async function closePool() {
 // Everything the suite creates is recorded so staging cleanup deletes exactly that.
 const STATE_DIR = path.resolve(HERE, "../.state");
 export const trackFile = () => path.join(STATE_DIR, `created-${cfg.run}.ndjson`);
-function track(kind: "event" | "userEmail", value: string) {
+function track(kind: "event" | "userEmail" | "courtesyCode", value: string) {
   mkdirSync(STATE_DIR, { recursive: true });
   appendFileSync(trackFile(), JSON.stringify({ kind, value }) + "\n");
 }
-export function readTracked(): { events: string[]; emails: string[] } {
+export function readTracked(): { events: string[]; emails: string[]; courtesyCodes: string[] } {
   const file = trackFile();
-  const out = { events: [] as string[], emails: [] as string[] };
+  const out = { events: [] as string[], emails: [] as string[], courtesyCodes: [] as string[] };
   if (!existsSync(file)) return out;
   for (const line of readFileSync(file, "utf8").split("\n").filter(Boolean)) {
     const { kind, value } = JSON.parse(line);
-    (kind === "event" ? out.events : out.emails).push(value);
+    (kind === "event" ? out.events : kind === "userEmail" ? out.emails : out.courtesyCodes).push(value);
   }
   return out;
 }
@@ -145,6 +145,7 @@ export async function seedProdIdEvents(): Promise<ProdEventKey[]> {
   return inserted;
 }
 
+export const prodEventIds = () => prodEvents.events.map((e) => e.id);
 export const prodId = (key: ProdEventKey) => fixtureEvent(key).id;
 
 /** True when the three prod-id events carry the three legacy questions (C1). */
@@ -158,6 +159,18 @@ export async function legacyQuestionsAttached(): Promise<boolean> {
   return Number(rows[0].n) === 3;
 }
 
+/** A courtesy link for any event (also pre-existing ones); recorded so cleanup removes only this link. */
+export async function createCourtesyLink(eventId: string, adminEmail: string, tickets = 5): Promise<string> {
+  const code = `E2E${randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+  const adminId = await scalar<string>(`SELECT id FROM users WHERE lower(email)=lower($1)`, [adminEmail]);
+  track("courtesyCode", code);
+  await sql(
+    `INSERT INTO courtesy_links (event_id, code, ticket_count, used_count, is_active, created_by) VALUES ($1,$2,$3,0,true,$4)`,
+    [eventId, code, tickets, adminId],
+  );
+  return code;
+}
+
 /** A unique e-mail for this run; recorded for staging cleanup. */
 export function newEmail(tag: string): string {
   const email = `${tag}.${cfg.run}.${randomUUID().slice(0, 6)}@e2e.test`;
@@ -169,7 +182,7 @@ export const personName = (name: string) => `${cfg.namePrefix}${name}`;
 
 /** Staging cleanup: deletes only rows this run created. Safe to call in local mode too. */
 export async function cleanupTracked() {
-  const { events, emails } = readTracked();
+  const { events, emails, courtesyCodes } = readTracked();
   const users = emails.length ? await sql(`SELECT id FROM users WHERE lower(email) = ANY($1)`, [emails]) : [];
   const userIds = users.map((u) => u.id as string);
   const orders = await sql(
@@ -179,7 +192,7 @@ export async function cleanupTracked() {
   const attendeeIds = orders.map((o) => o.courtesy_attendee_id).filter(Boolean);
   await sql(`DELETE FROM orders WHERE id = ANY($1)`, [orders.map((o) => o.id)]);
   if (attendeeIds.length) await sql(`DELETE FROM courtesy_attendees WHERE id = ANY($1)`, [attendeeIds]);
-  await sql(`DELETE FROM courtesy_links WHERE event_id = ANY($1)`, [events]);
+  await sql(`DELETE FROM courtesy_links WHERE code = ANY($1)`, [courtesyCodes]);
   if (emails.length) await sql(`DELETE FROM email_queue WHERE lower("to") = ANY($1)`, [emails]);
   await sql(`DELETE FROM events WHERE id = ANY($1)`, [events]);
   if (userIds.length) await sql(`DELETE FROM users WHERE id = ANY($1)`, [userIds]);
