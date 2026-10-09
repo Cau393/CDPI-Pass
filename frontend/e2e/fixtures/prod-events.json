@@ -1,0 +1,56 @@
+{
+  "_comment": "Non-PII configuration of the 3 upcoming live prod events (snapshot of 2026-10-09: online free, presencial free with sales closed + courtesy limit, presencial paid). Meeting URLs/WhatsApp links are placeholders. `registrationForm` is the extension point (the legacy questions are attached by sql/adr016_attach_legacy_questions.sql in global setup). `id` is the real prod id: used by global setup for the legacy group; every other test inserts a copy with a fresh id and open sales.",
+  "events": [
+    {
+      "key": "onlineFree",
+      "title": "Jornada Analítica & Regulatória",
+      "description": "<p>Descrição de teste espelhando o evento de produção.</p>",
+      "daysFromNow": 4,
+      "location": "Plataforma Zoom",
+      "price": "0.00",
+      "isFree": true,
+      "modality": "online",
+      "meetingUrl": "https://meet.example.com/redacted",
+      "meetingPassword": null,
+      "maxAttendees": null,
+      "salesClosed": false,
+      "registrationForm": [],
+      "id": "13e253d6-14a2-496d-be4d-8a3ca4b0f8df",
+      "courtesyLimit": null
+    },
+    {
+      "key": "presencialFree",
+      "title": "Workshop - Peptídeos: Biológicos e Sintéticos",
+      "description": "<p>Descrição de teste espelhando o evento de produção.</p>",
+      "daysFromNow": 11,
+      "location": "Conselho Federal de Farmácia (CFF) - Brasília - DF",
+      "price": "0.00",
+      "isFree": true,
+      "modality": "presencial",
+      "meetingUrl": null,
+      "meetingPassword": null,
+      "maxAttendees": null,
+      "salesClosed": true,
+      "registrationForm": [],
+      "id": "168193f7-1aa2-45d6-b6e8-ba0ea355efaa",
+      "courtesyLimit": 220
+    },
+    {
+      "key": "presencialPaid",
+      "title": "Workshop - Emagrecimento e Medicina de Precisão",
+      "description": "<p>Descrição de teste espelhando o evento de produção.</p>",
+      "daysFromNow": 13,
+      "location": "K Hotel, Av. Dep. Jamel Cecílio, 2550 - Jardim Goiás, Goiânia - GO, 74810-100",
+      "price": "632.00",
+      "isFree": false,
+      "modality": "presencial",
+      "meetingUrl": null,
+      "meetingPassword": null,
+      "maxAttendees": null,
+      "salesClosed": false,
+      "registrationForm": [],
+      "id": "f2ded6cd-1d45-4cb1-ba6a-7bf8616fda60",
+      "courtesyLimit": null
+    }
+  ]
+}
