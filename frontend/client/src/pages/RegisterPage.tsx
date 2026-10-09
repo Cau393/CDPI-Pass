@@ -14,6 +14,7 @@ import { accountEmailSchema, insertUserObjectSchema, refineAccountDocument } fro
 import { z } from "zod";
 import { useState, useMemo } from "react";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
+import { DocumentFields } from "@/components/DocumentFields";
 
 const registerFormSchema = insertUserObjectSchema.extend({
   birthDate: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, "Data deve estar no formato dd/mm/aaaa"),
@@ -92,17 +93,6 @@ export default function RegisterPage() {
     registerMutation.mutate(data);
   };
 
-  const isForeigner = form.watch("isForeigner") === true;
-
-  // Auto-format CPF
-  const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let value = e.target.value.replace(/\D/g, '');
-    value = value.replace(/(\d{3})(\d)/, '$1.$2');
-    value = value.replace(/(\d{3})(\d)/, '$1.$2');
-    value = value.replace(/(\d{3})(\d{1,2})$/, '$1-$2');
-    form.setValue("cpf", value);
-  };
-
   return (
     <div className="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
       <Card className="w-full max-w-md">
@@ -137,72 +127,7 @@ export default function RegisterPage() {
                 )}
               </div>
 
-              <div className="flex items-start space-x-2">
-                <Checkbox
-                  id="isForeigner"
-                  checked={isForeigner}
-                  onCheckedChange={(checked) => {
-                    const next = checked === true;
-                    form.setValue("isForeigner", next, { shouldValidate: true });
-                    if (next) {
-                      form.setValue("cpf", "");
-                    } else {
-                      form.setValue("foreignDocument", "");
-                    }
-                  }}
-                  data-testid="checkbox-foreigner"
-                />
-                <Label htmlFor="isForeigner" className="text-sm text-gray-700">
-                  Sou estrangeiro e não possuo CPF
-                </Label>
-              </div>
-
-              {isForeigner ? (
-              <div>
-                <Label htmlFor="foreignDocument" className="block text-sm font-medium text-gray-700 mb-2">
-                  Passaporte ou documento estrangeiro
-                </Label>
-                <Input
-                  id="foreignDocument"
-                  type="text"
-                  placeholder="AB1234567"
-                  {...form.register("foreignDocument")}
-                  onChange={(e) => {
-                    const value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 32);
-                    form.setValue("foreignDocument", value, { shouldValidate: true });
-                  }}
-                  maxLength={32}
-                  className="w-full"
-                  data-testid="input-foreign-document"
-                />
-                {form.formState.errors.foreignDocument && (
-                  <p className="text-red-600 text-sm mt-1" data-testid="text-foreign-document-error">
-                    {form.formState.errors.foreignDocument.message}
-                  </p>
-                )}
-              </div>
-              ) : (
-              <div>
-                <Label htmlFor="cpf" className="block text-sm font-medium text-gray-700 mb-2">
-                  CPF
-                </Label>
-                <Input
-                  id="cpf"
-                  type="text"
-                  placeholder="000.000.000-00"
-                  {...form.register("cpf")}
-                  onChange={handleCpfChange}
-                  maxLength={14}
-                  className="w-full"
-                  data-testid="input-cpf"
-                />
-                {form.formState.errors.cpf && (
-                  <p className="text-red-600 text-sm mt-1" data-testid="text-cpf-error">
-                    {form.formState.errors.cpf.message}
-                  </p>
-                )}
-              </div>
-              )}
+              <DocumentFields form={form} />
 
               <div>
                 <Label htmlFor="birthDate" className="block text-sm font-medium text-gray-700 mb-2">

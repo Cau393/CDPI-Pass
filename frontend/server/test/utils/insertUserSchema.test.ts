@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { courtesyRedemptionSchema, insertUserSchema, loginSchema } from "@shared/schema";
+import {
+  courtesyRedemptionSchema,
+  insertUserSchema,
+  loginSchema,
+  onlineCourtesyRedemptionSchema,
+} from "@shared/schema";
 
 const validUser = {
   email: "maria@example.com",
@@ -167,5 +172,36 @@ describe("courtesyRedemptionSchema email confirm", () => {
         true,
       );
     }
+  });
+});
+
+describe("onlineCourtesyRedemptionSchema (ADR-016)", () => {
+  const online = {
+    name: "Maria Silva",
+    email: "maria@example.com",
+    emailConfirm: "maria@example.com",
+    partnerCompany: "CDPI",
+    occupation: "Medica",
+    phone: "595981123456",
+  };
+
+  it("accepts an online courtesy with no CPF, passport, birth date or address", () => {
+    expect(onlineCourtesyRedemptionSchema.safeParse(online).success).toBe(true);
+  });
+
+  it("drops document, birth date and address if a client still sends them", () => {
+    const parsed = onlineCourtesyRedemptionSchema.parse({
+      ...online,
+      cpf: "123.456.789-00",
+      birthDate: "1990-01-15",
+      address: "Rua das Flores 123",
+    });
+    expect(parsed).toEqual(online);
+  });
+
+  it("still rejects mismatched e-mails", () => {
+    expect(
+      onlineCourtesyRedemptionSchema.safeParse({ ...online, emailConfirm: "other@example.com" }).success,
+    ).toBe(false);
   });
 });

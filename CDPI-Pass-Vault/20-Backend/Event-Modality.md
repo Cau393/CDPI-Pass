@@ -63,3 +63,15 @@ Hardcoded online/presencial templates are **not** the admin HTML templates (cort
 - [[30-Frontend/Frontend-Overview]]
 - [[40-Database/Schema-Overview]]
 - [[40-Database/Normalization-History]]
+
+## What an inscription asks, by modality (ADR-016, 2026-10-08)
+
+`systemFieldsFor(event)` in `frontend/shared/eventRegistrationForm.ts` decides the locked questions; `server/utils/inscriptionIdentity.ts` (`missingIdentityFields`) compares them with the account. Nothing is re-asked once the account has it.
+
+| Event | Locked questions | Courtesy |
+|---|---|---|
+| Free online | none | name, e-mail, phone, company, occupation (no CPF, birth date or address) |
+| Paid online | document (CPF or passport; Asaas `cpfCnpj`) | same as free online |
+| Free / paid presencial | document + address | full form, unchanged |
+
+Then the event's own questions (`events.registration_form`), answered into `orders.registration_answers`. A missing locked field is 400 `identity_required`; the client asks it and saves it with `PUT /api/profile/identity` (write-once document). See [[20-Backend/API-Endpoints]].

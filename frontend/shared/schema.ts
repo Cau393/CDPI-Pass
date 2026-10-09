@@ -780,24 +780,38 @@ export const loginSchema = z.object({
 
 export type LoginRequest = z.infer<typeof loginSchema>;
 
-// Courtesy redemption schema
-export const courtesyRedemptionSchema = z.object({
+// Courtesy redemption schemas. Online courtesy asks no document, birth date
+// or address (ADR-016); in-person keeps the full form.
+const courtesyContactSchema = z.object({
   name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
   email: accountEmailSchema,
   emailConfirm: accountEmailSchema,
-  isForeigner: z.boolean().optional(),
-  cpf: z.string().optional(),
-  foreignDocument: z.string().optional(),
   partnerCompany: z.string().min(2, "Empresa que atua é obrigatória"),
   occupation: z.string().min(2, "Cargo é obrigatório"),
-  birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
-  address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),
   phone: z
     .string()
     .regex(/^\d{8,15}$/, "Telefone deve conter 8 a 15 dígitos (código do país sem +)"),
-}).refine((data) => data.email === data.emailConfirm, {
-  message: "Os emails não coincidem",
-  path: ["emailConfirm"],
-}).superRefine(refineAccountDocument);
+});
+
+const courtesyEmailsMatch = (data: { email: string; emailConfirm: string }) =>
+  data.email === data.emailConfirm;
+const COURTESY_EMAILS_MISMATCH = { message: "Os emails não coincidem", path: ["emailConfirm"] };
+
+export const onlineCourtesyRedemptionSchema = courtesyContactSchema.refine(
+  courtesyEmailsMatch,
+  COURTESY_EMAILS_MISMATCH,
+);
+
+export const courtesyRedemptionSchema = courtesyContactSchema
+  .extend({
+    isForeigner: z.boolean().optional(),
+    cpf: z.string().optional(),
+    foreignDocument: z.string().optional(),
+    birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data deve estar no formato AAAA-MM-DD"),
+    address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),
+  })
+  .refine(courtesyEmailsMatch, COURTESY_EMAILS_MISMATCH)
+  .superRefine(refineAccountDocument);
 
 export type CourtesyRedemption = z.infer<typeof courtesyRedemptionSchema>;
+export type OnlineCourtesyRedemption = z.infer<typeof onlineCourtesyRedemptionSchema>;

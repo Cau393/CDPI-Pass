@@ -48,3 +48,7 @@ The implementation follows the published contract anyway: send the normalized pa
 - Profile cannot change CPF, the foreigner flag, or the passport after registration (allowlist strips them).
 - Foreigners usually have a non-BR phone. Phones travel as E.164 digits without `+`, so `normalizePhoneE164` must never parse digits-only input with a default country (fixed 2026-10-07, see [[00-Overview/Lessons-Learned]]). Trade-off: a BR number sent as national digits without `55` is now rejected or, for DDDs that match a country code (`51…` → Peru), read as that country. No client sends that shape (`PhoneInputE164` always includes the country code). A "try BR first for 10–11 digits" guard is wrong because US `12025550100` is also a valid BR national number.
 - [[60-Decisions/ADR-002-asaas-payments]] still uses Asaas. CPF is required only for Brazilian payers.
+
+## Amendment 2026-10-08 (ADR-016 Phase 3)
+
+The document is no longer chosen at signup only. An account may now exist without one; the CPF or passport is asked at the **first in-person or paid inscription** (and the address at the first in-person one), through `PUT /api/profile/identity`, and is write-once from then on. Accounts created under this ADR keep their document and are never asked again. Free online inscriptions and online courtesy need no document. See [[60-Decisions/ADR-016-event-registration-forms-and-minimal-signup]].

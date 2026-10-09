@@ -29,9 +29,9 @@ import {
   brazilianPriceToApiString,
   createEventSchema,
   parseApiErrorMessage,
+  registrationFormPayload,
   type CreateEventFormValues,
 } from "@/lib/eventForm";
-import { interestAreasMultipartValue } from "@shared/interestAreas";
 import type { Event } from "@shared/schema";
 import { sanitizeEventDescriptionHtml } from "@/lib/eventDescriptionHtml";
 
@@ -61,7 +61,7 @@ export default function AdminCreateEventPage({
       whatsappGroupUrl: "",
       confirmationEmailHtml: "",
       courtesyLimit: "",
-      interestAreas: [],
+      registrationForm: [],
     },
   });
 
@@ -104,8 +104,8 @@ export default function AdminCreateEventPage({
       formData.append("courtesy_limit", values.courtesyLimit.trim());
     }
     formData.append(
-      "interest_areas",
-      interestAreasMultipartValue(values.interestAreas),
+      "registration_form",
+      registrationFormPayload(values.registrationForm),
     );
     if (values.coverImage?.[0]) {
       formData.append("coverImage", values.coverImage[0]);

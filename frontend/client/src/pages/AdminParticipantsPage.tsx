@@ -36,13 +36,18 @@ import { apiRequest } from "@/lib/queryClient";
 import { downloadDataUrl } from "@/lib/downloadDataUrl";
 import { exportParticipantsToXlsx } from "@/lib/exportParticipantsExcel";
 import type { Event } from "@shared/schema";
+import type { RegistrationAnswer, RegistrationField } from "@shared/eventRegistrationForm";
 
 interface Participant {
   userId: string;
   name: string;
+  /** CPF or passport. */
   cpf: string | null;
+  isForeigner: boolean;
   email: string;
   phone: string;
+  address: string | null;
+  registrationAnswers: RegistrationAnswer[];
   ticketId: string;
   orderStatus: "paid" | "courtesy" | "cancelled";
   occupation: string | null;
@@ -58,6 +63,8 @@ interface Participant {
 interface ParticipantsResponse {
   data: Participant[];
   total: number;
+  /** Includes archived questions, so the export keeps their answers. */
+  registrationForm: RegistrationField[];
 }
 
 function normalizeForSearch(s: string): string {
@@ -404,8 +411,10 @@ export default function AdminParticipantsPage() {
         allParticipants.map((p) => ({
           name: p.name,
           cpf: p.cpf,
+          isForeigner: p.isForeigner,
           email: p.email,
           phone: p.phone,
+          address: p.address,
           cargoQueOcupa:
             p.orderStatus === "paid" ? "" : (p.occupation ?? ""),
           empresaQueTrabalha:
@@ -414,7 +423,9 @@ export default function AdminParticipantsPage() {
             ? "Presente"
             : "Não confirmou presença",
           orderStatus: p.orderStatus,
+          registrationAnswers: p.registrationAnswers,
         })),
+        participantsRes?.registrationForm ?? [],
         selectedEvent.title,
       );
       toast({

@@ -81,3 +81,13 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Symptom:** while rehearsing ADR-016 Phase 2 locally, `pnpm db:diff` listed the new columns and DROP NOT NULLs but none of the three loosened `*_identity_document_chk` constraints; after the push it reported 0 statements while the database still had the strict checks.
 - **Root cause:** drizzle-kit 0.30 push matches CHECK constraints by name only. The runbook assumed it would "drop and re-add".
 - **Prevention:** a changed CHECK ships as a `sql/` drop + add applied before the push; verify with `pg_get_constraintdef` against a DB freshly pushed from `schema.ts`. Rule in `frontend/.claude/rules/database.md`.
+
+## 2026-10-08 — a PATCH that treats a missing list as "empty" makes every caller resend it
+- **Symptom:** found while replacing "Área de interesse" with the ADR-016 form. `PATCH /api/admin/events/:id` read a missing `interest_areas` as `[]`, so the "Encerrar vendas" toggle had to resend the whole list, or it would silently wipe the event's labels.
+- **Root cause:** "missing" and "cleared" were the same input for a collection field.
+- **Prevention:** on PATCH, a missing collection field means **unchanged**; clearing is an explicit empty value. `registration_form` follows this, and removing a question archives it instead of deleting it, so answers keep their export column. Integration test: "leaves the form alone when an admin edit does not send it".
+
+## 2026-10-08 — prod schema applied on an earlier "go", minutes before a "staging only" message
+- **Symptom:** the ADR-016 Phase 2 schema was applied to the Neon production branch after the owner wrote "you can do it"; minutes later they asked to change only staging until everything is clear. The change was additive and today's prod code passed its 22 integration tests on it, so it was kept, with a backup branch (`backup-pre-adr016-phase2-2026-10-08`).
+- **Root cause:** a prod write was treated as still approved after the owner's scope had narrowed.
+- **Prevention:** right before any prod DB write, re-confirm in the same turn; prove compatibility first by running the prod commit's integration suite against the new schema on a local DB; take a Neon backup branch.

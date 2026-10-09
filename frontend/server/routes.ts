@@ -27,6 +27,7 @@ import {
   loginSchema, 
   insertOrderSchema,
   courtesyRedemptionSchema,
+  onlineCourtesyRedemptionSchema,
   type User,
   type Event,
   events,
@@ -55,12 +56,12 @@ import {
   parseCourtesyLimit,
 } from "./utils/courtesyRedeemLimit";
 import {
-  parseInterestAreasField,
-  resolveOrderInterestArea,
-  sameInterestAreas,
-  storedParticipantInterestArea,
-  withoutBuyerInterestArea,
-} from "@shared/interestAreas";
+  parseRegistrationFormField,
+  resolveRegistrationAnswers,
+  participantAnswers,
+  withoutBuyerAnswers,
+} from "@shared/eventRegistrationForm";
+import { identityRequiredBody, missingIdentityFields } from "./utils/inscriptionIdentity";
 import { validateEmailSubjectTemplateInput } from "./utils/emailSubjectTemplate";
 import { mapCommercialSales } from "./utils/commercialSalesMapper";
 import {
@@ -81,6 +82,7 @@ import {
 } from "./utils/eventSalesPolicy";
 import {
   profileUpdateSchema,
+  profileIdentitySchema,
   PROFILE_SENSITIVE_FIELDS,
 } from "./utils/profileUpdateSchema";
 import { toPresignedUrl } from "./utils/presignedUrl";
@@ -626,11 +628,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!courtesyLimitParsed.ok) {
           return res.status(400).json({ error: courtesyLimitParsed.error });
         }
-        const interestAreasParsed = parseInterestAreasField(
-          (req.body as Record<string, unknown>).interest_areas,
+        const registrationFormParsed = parseRegistrationFormField(
+          (req.body as Record<string, unknown>).registration_form,
+          [],
+          randomUUID,
         );
-        if (!interestAreasParsed.ok) {
-          return res.status(400).json({ error: interestAreasParsed.error });
+        if (!registrationFormParsed.ok) {
+          return res.status(400).json({ error: registrationFormParsed.error });
         }
 
         const modalityResolved = resolveCreateModality(
@@ -701,7 +705,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             whatsappGroupUrl: modalityResolved.whatsappGroupUrl,
             confirmationEmailHtml: modalityResolved.confirmationEmailHtml,
             courtesyLimit: courtesyLimitParsed.value,
-            interestAreas: interestAreasParsed.value,
+            registrationForm: registrationFormParsed.value,
           })
           .returning();
 
@@ -1154,7 +1158,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           whatsappGroupUrl: string | null;
           confirmationEmailHtml: string | null;
           courtesyLimit: number | null;
-          interestAreas: string[];
+          registrationForm: Event["registrationForm"];
         }> = {};
 
         if (Object.prototype.hasOwnProperty.call(body, "title")) {
@@ -1292,19 +1296,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
-        // Missing or "[]" stores an empty list. The edit form and the sales
-        // toggle both send the current list, so a real save can clear it
-        // for future buyers without touching existing orders.
-        const interestAreasParsed = parseInterestAreasField(
-          Object.prototype.hasOwnProperty.call(body, "interest_areas")
-            ? body.interest_areas
-            : undefined,
-        );
-        if (!interestAreasParsed.ok) {
-          return res.status(400).json({ error: interestAreasParsed.error });
-        }
-        if (!sameInterestAreas(existing.interestAreas, interestAreasParsed.value)) {
-          payload.interestAreas = interestAreasParsed.value;
+        // Missing leaves the form unchanged (the sales toggle does not send
+        // it). Removed questions are archived, never deleted, so answers
+        // already given keep their export column.
+        if (Object.prototype.hasOwnProperty.call(body, "registration_form")) {
+          const registrationFormParsed = parseRegistrationFormField(
+            body.registration_form,
+            existing.registrationForm,
+            randomUUID,
+          );
+          if (!registrationFormParsed.ok) {
+            return res.status(400).json({ error: registrationFormParsed.error });
+          }
+          if (JSON.stringify(registrationFormParsed.value) !== JSON.stringify(existing.registrationForm)) {
+            payload.registrationForm = registrationFormParsed.value;
+          }
         }
 
         const file = req.file as { buffer: Buffer; mimetype: string } | undefined;
@@ -1439,12 +1445,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({ qrCodeData });
       }
 
+      const event = await storage.getEvent(eventId);
+      if (!event) {
+        return res.status(404).json({ message: "Evento não encontrado" });
+      }
+
       const rows = await db
         .select({
           userId: users.id,
           name: users.name,
           cpf: users.cpf,
           foreignDocument: users.foreignDocument,
+          userIsForeigner: users.isForeigner,
+          userAddress: users.address,
+          attendeeIsForeigner: courtesyAttendees.isForeigner,
+          attendeeAddress: courtesyAttendees.address,
+          registrationAnswers: orders.registrationAnswers,
           email: users.email,
           phone: users.phone,
           ticketId: orders.id,
@@ -1492,7 +1508,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           orderStatus,
           occupation: r.occupation ?? null,
           partnerCompany: r.partnerCompany ?? null,
-          interestArea: storedParticipantInterestArea(r.interestArea),
+          address: r.attendeeAddress ?? r.userAddress ?? null,
+          isForeigner: (r.attendeeIsForeigner ?? r.userIsForeigner) === true,
+          registrationAnswers: participantAnswers(r.registrationAnswers, r.interestArea),
           amntUsed: used,
           maxUses: maxU,
           checkedIn: used > 0,
@@ -1506,7 +1524,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       });
 
-      res.json({ data, total: data.length });
+      res.json({ data, total: data.length, registrationForm: event.registrationForm });
     } catch (error) {
       console.error("GET /api/admin/events/:eventId/participants:", error);
       res.status(500).json({ message: "Erro ao listar participantes" });
@@ -2457,25 +2475,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const totalAmount = computeOrderTotal(event, finalPrice);
 
-      const interest = resolveOrderInterestArea({
-        labels: event.interestAreas,
-        body: req.body ?? {},
-      });
-      if (!interest.ok) {
-        return res.status(400).json({ message: interest.message });
-      }
-
       const isForeigner = req.user.isForeigner === true;
       if (isForeigner && paymentMethod !== "credit_card") {
         return res.status(400).json({
           message: "Estrangeiros pagam apenas com cartão de crédito internacional, sem PIX, boleto ou parcelamento.",
         });
       }
-      if (isForeigner && !req.user.foreignDocument) {
-        return res.status(400).json({ message: "Complete seu documento no cadastro antes de comprar." });
+      // A paid event always needs the document (Asaas cpfCnpj); in-person also the address.
+      const missingIdentity = missingIdentityFields(event, req.user);
+      if (missingIdentity.length > 0) {
+        return res.status(400).json(identityRequiredBody(missingIdentity));
       }
-      if (!isForeigner && !req.user.cpf) {
-        return res.status(400).json({ message: "Complete seu CPF no perfil antes de comprar." });
+      const registration = resolveRegistrationAnswers({
+        fields: event.registrationForm,
+        body: req.body ?? {},
+      });
+      if (!registration.ok) {
+        return res.status(400).json({ message: registration.message });
       }
 
       // Create order. Paid checkout stays pending; the label is stored now.
@@ -2488,7 +2504,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         amount: totalAmount.toString(),
         status: "pending",
         courtesyLinkId: promoLinkId,
-        interestArea: interest.interestArea,
+        registrationAnswers: registration.answers,
       });
 
       // Create payment with Asaas
@@ -2541,7 +2557,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Prepare response with payment details
         const response: any = {
-          order: updatedOrder ? withoutBuyerInterestArea(updatedOrder) : updatedOrder,
+          order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
           payment: {
             id: paymentData.id,
             link: paymentData.paymentLink,
@@ -2617,36 +2633,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .json({ message: salesBlockedMessage(check.reason) });
       }
 
+      // In-person needs document + address; free online needs neither.
+      const missingIdentity = missingIdentityFields(event, req.user);
+      if (missingIdentity.length > 0) {
+        return res.status(400).json(identityRequiredBody(missingIdentity));
+      }
       const isForeigner = req.user.isForeigner === true;
-      const cpf = isForeigner ? null : req.user.cpf;
-      const foreignDocument = isForeigner ? req.user.foreignDocument : null;
-      if (!isForeigner && !cpf) {
-        return res
-          .status(400)
-          .json({ message: "Complete seu CPF no perfil antes de se inscrever." });
-      }
-      if (isForeigner && !foreignDocument) {
-        return res
-          .status(400)
-          .json({ message: "Complete seu documento no cadastro antes de se inscrever." });
-      }
+      const cpf: string | null = isForeigner ? null : (req.user.cpf ?? null);
+      const foreignDocument: string | null = isForeigner ? (req.user.foreignDocument ?? null) : null;
 
-      const alreadyRegistered = isForeigner
-        ? (await storage.isForeignDocumentAlreadyRegisteredForEvent(foreignDocument!, eventId))
-          || (await storage.isUserAlreadyRegisteredForEvent(userId, eventId))
-        : await storage.isCpfAlreadyRegisteredForEvent(cpf!, eventId);
+      const alreadyRegistered = await storage.isAlreadyRegisteredForEvent({
+        eventId,
+        userId,
+        cpf,
+        foreignDocument,
+      });
       if (alreadyRegistered) {
         return res
           .status(409)
           .json({ message: "Você já possui inscrição confirmada para este evento." });
       }
 
-      const interest = resolveOrderInterestArea({
-        labels: event.interestAreas,
+      const registration = resolveRegistrationAnswers({
+        fields: event.registrationForm,
         body: req.body ?? {},
       });
-      if (!interest.ok) {
-        return res.status(400).json({ message: interest.message });
+      if (!registration.ok) {
+        return res.status(400).json({ message: registration.message });
       }
 
       // Free inscription is immediately confirmed: there is nothing to pay.
@@ -2658,7 +2671,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentMethod: "free",
         amount: "0.00",
         status: "paid",
-        interestArea: interest.interestArea,
+        registrationAnswers: registration.answers,
       });
 
       let qrCodeData = "";
@@ -2698,7 +2711,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       return res.status(201).json({
         message: "Inscrição confirmada!",
-        order: withoutBuyerInterestArea(updatedOrder ?? order),
+        order: withoutBuyerAnswers(updatedOrder ?? order),
         qrCode: qrCodeData || undefined,
         whatsappGroupUrl: links?.whatsappGroupUrl ?? null,
       });
@@ -2739,7 +2752,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Pedido não encontrado" });
       }
 
-      res.json(withoutBuyerInterestArea(order));
+      res.json(withoutBuyerAnswers(order));
     } catch (error) {
       console.error("Get order error:", error);
       res.status(500).json({ message: "Erro interno do servidor" });
@@ -2779,7 +2792,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const updatedOrder = await storage.getOrder(id);
           return res.json({
             message: "Pagamento confirmado!",
-            order: updatedOrder ? withoutBuyerInterestArea(updatedOrder) : updatedOrder,
+            order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
           });
         }
 
@@ -2788,7 +2801,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(409).json({
             message:
               "Já existe ingresso confirmado para este evento. Este pagamento duplicado foi descartado; o estorno será processado quando possível.",
-            order: updatedOrder ? withoutBuyerInterestArea(updatedOrder) : updatedOrder,
+            order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
           });
         }
 
@@ -2796,26 +2809,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const updatedOrder = await storage.getOrder(id);
           return res.json({
             message: "Pagamento já estava confirmado.",
-            order: updatedOrder ? withoutBuyerInterestArea(updatedOrder) : updatedOrder,
+            order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
           });
         }
 
         return res.status(400).json({
           message: "Não foi possível confirmar o pagamento deste pedido.",
-          order: withoutBuyerInterestArea(order),
+          order: withoutBuyerAnswers(order),
         });
       } else if ((payment.status === 'OVERDUE' || payment.status === 'CANCELED') && order.status === 'pending') {
         await storage.updateOrder(id, { status: 'cancelled' });
         const updatedOrder = await storage.getOrder(id);
         return res.json({ 
           message: "Pagamento cancelado", 
-          order: updatedOrder ? withoutBuyerInterestArea(updatedOrder) : updatedOrder,
+          order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
         });
       }
 
       res.json({ 
         message: `Status do pagamento: ${payment.status}`, 
-        order: withoutBuyerInterestArea(order),
+        order: withoutBuyerAnswers(order),
         paymentStatus: payment.status 
       });
     } catch (error) {
@@ -3122,6 +3135,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  /**
+   * ADR-016: CPF or passport, asked at the first in-person or paid
+   * inscription, plus the address for in-person events. The document is
+   * write-once (support changes it); PUT /api/profile keeps stripping it.
+   */
+  app.put("/api/profile/identity", authenticateToken, async (req: any, res) => {
+    try {
+      const parsed = profileIdentitySchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.errors[0]?.message ?? "Dados inválidos" });
+      }
+      const { isForeigner, cpf, foreignDocument, address } = parsed.data;
+      const sendsDocument = isForeigner === true || cpf !== undefined || foreignDocument !== undefined;
+      if (!sendsDocument && address === undefined) {
+        return res.status(400).json({ message: "Informe o documento ou o endereço." });
+      }
+
+      let document: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null } | undefined;
+      if (sendsDocument) {
+        const identity = resolveRegisterIdentity({ isForeigner, cpf, foreignDocument });
+        if (!identity.ok) {
+          return res.status(400).json({ message: identity.message });
+        }
+        document = {
+          isForeigner: identity.isForeigner,
+          cpf: identity.cpf,
+          foreignDocument: identity.foreignDocument,
+        };
+      }
+
+      const result = await storage.setUserIdentity(req.user.id, { document, address });
+      if (!result.ok) {
+        if (result.reason === "document_already_set") {
+          return res.status(409).json({ message: "Documento já informado; fale com o suporte para alterar." });
+        }
+        if (result.reason === "document_taken") {
+          return res.status(409).json({ message: "Este documento já está cadastrado em outra conta." });
+        }
+        return res.status(404).json({ message: "Usuário não encontrado" });
+      }
+
+      const { password, ...userWithoutPassword } = result.user;
+      res.json(userWithoutPassword);
+    } catch (error) {
+      console.error("PUT /api/profile/identity:", error);
+      res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+
   app.put("/api/profile/password", authenticateToken, async (req: any, res) => {
     try {
       const userId = req.user.id;
@@ -3317,16 +3379,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/courtesy/redeem", authenticateToken, async (req: any, res) => {
     try {
       const userId = req.user.id;
-      const { code, ...userData } = req.body;
-
-      // Validate redemption data
-      const validationResult = courtesyRedemptionSchema.safeParse(userData);
-      if (!validationResult.success) {
-        return res.status(400).json({ 
-          message: "Dados inválidos", 
-          errors: validationResult.error.errors 
-        });
-      }
+      const { code, ...userData } = req.body ?? {};
 
       // Get courtesy link
       const link = await storage.getCourtesyLinkByCode(code);
@@ -3354,34 +3407,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Evento não encontrado" });
       }
 
-      const interest = resolveOrderInterestArea({
-        labels: event.interestAreas,
-        body: req.body ?? {},
-      });
-      if (!interest.ok) {
-        return res.status(400).json({ message: interest.message });
+      // Online courtesy asks no document, birth date or address (ADR-016).
+      const online = isOnlineEvent(event);
+      const validationResult = (online ? onlineCourtesyRedemptionSchema : courtesyRedemptionSchema).safeParse(userData);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          message: "Dados inválidos", 
+          errors: validationResult.error.errors 
+        });
       }
 
-      const isForeigner = userData.isForeigner === true;
+      const registration = resolveRegistrationAnswers({
+        fields: event.registrationForm,
+        body: req.body ?? {},
+      });
+      if (!registration.ok) {
+        return res.status(400).json({ message: registration.message });
+      }
+
+      const isForeigner = !online && userData.isForeigner === true;
       const foreignDocument = isForeigner
         ? normalizeForeignDocument(userData.foreignDocument ?? "")
         : null;
-      const attendeeCpf = isForeigner ? null : (userData.cpf ?? null);
+      const attendeeCpf: string | null = online || isForeigner ? null : (userData.cpf ?? null);
       if (isForeigner && !foreignDocument) {
         return res.status(400).json({ message: "Documento estrangeiro inválido" });
       }
-      if (!isForeigner && !attendeeCpf) {
+      if (!online && !isForeigner && !attendeeCpf) {
         return res.status(400).json({ message: "CPF inválido" });
       }
 
-      const alreadyRegistered = isForeigner
-        ? await storage.isForeignDocumentAlreadyRegisteredForEvent(foreignDocument!, link.eventId)
-        : await storage.isCpfAlreadyRegisteredForEvent(attendeeCpf!, link.eventId);
+      // In-person: by the attendee's document, as before (one account may
+      // redeem for several attendees). Online has no document: by account.
+      const alreadyRegistered = await storage.isAlreadyRegisteredForEvent({
+        eventId: link.eventId,
+        userId: online ? userId : null,
+        cpf: attendeeCpf,
+        foreignDocument,
+      });
       if (alreadyRegistered) {
         return res.status(400).json({
           message: isForeigner
             ? "Documento já cadastrado para este evento"
-            : "CPF já cadastrado para este evento",
+            : attendeeCpf
+              ? "CPF já cadastrado para este evento"
+              : "Você já possui inscrição confirmada para este evento.",
         });
       }
 
@@ -3396,7 +3466,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Update user information with courtesy data
-      const birthDateObj = new Date(userData.birthDate);
+      const birthDateObj = online ? null : new Date(userData.birthDate);
 
       let phoneNorm: string;
       let nameNorm: string;
@@ -3411,7 +3481,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         eventId: link.eventId,
         linkId: link.id,
         userId,
-        interestArea: interest.interestArea,
+        registrationAnswers: registration.answers,
         attendee: {
           name: nameNorm,
           email: userData.email,
@@ -3420,7 +3490,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           foreignDocument,
           phone: phoneNorm,
           birthDate: birthDateObj,
-          address: userData.address,
+          address: online ? null : userData.address,
           partnerCompany: userData.partnerCompany,
           occupation: userData.occupation,
           eventTitle: event.title,
@@ -3486,7 +3556,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.error("Could not retrieve final order details for courtesy redemption:", order.id);
           return res.status(201).json({
             message: "Cortesia resgatada com sucesso! Ocorreu um erro ao enviar o email do ingresso.",
-            order: withoutBuyerInterestArea(order),
+            order: withoutBuyerAnswers(order),
             qrCode: qrCodeData
           });
         }
@@ -3509,7 +3579,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.status(201).json({
         message: "Cortesia resgatada com sucesso!",
-        order: withoutBuyerInterestArea(updatedOrder),
+        order: withoutBuyerAnswers(updatedOrder),
         qrCode: qrCodeData || undefined,
       });
     } catch (error) {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  profileIdentitySchema,
   profileUpdateSchema,
   PROFILE_SENSITIVE_FIELDS,
 } from "../../utils/profileUpdateSchema";
@@ -134,5 +135,26 @@ describe("profileUpdateSchema", () => {
     // If a field is ever removed from this list it becomes changeable without
     // re-entering the password, which is an account-takeover primitive.
     expect([...PROFILE_SENSITIVE_FIELDS]).toEqual(["name", "email", "phone"]);
+  });
+});
+
+describe("profileIdentitySchema (PUT /api/profile/identity)", () => {
+  it("rejects a foreigner body that also carries a CPF", () => {
+    expect(
+      profileIdentitySchema.safeParse({ isForeigner: true, cpf: "529.982.247-25", foreignDocument: "AB12345" }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a passport on a body that is not marked foreign", () => {
+    expect(profileIdentitySchema.safeParse({ cpf: "529.982.247-25", foreignDocument: "AB12345" }).success).toBe(false);
+    expect(profileIdentitySchema.safeParse({ foreignDocument: "AB12345" }).success).toBe(false);
+  });
+
+  it("accepts a CPF, a passport, or an address alone, and strips every other key", () => {
+    expect(profileIdentitySchema.safeParse({ cpf: "529.982.247-25" }).success).toBe(true);
+    expect(profileIdentitySchema.safeParse({ isForeigner: true, foreignDocument: "AB12345" }).success).toBe(true);
+    expect(profileIdentitySchema.parse({ address: "Av. España 1000, Asunción", isAdmin: true })).toEqual({
+      address: "Av. España 1000, Asunción",
+    });
   });
 });
