@@ -300,6 +300,10 @@ Every new test must **fail before** its change. Gates per PR: `pnpm run check`, 
   - `PAYMENT_OVERDUE` and `PAYMENT_DELETED` → pending order `cancelled`. `PAYMENT_CREATED` → 200, no change.
   - **Card through the payment link:** Asaas creates a new `pay_…` (one per installment) with `paymentLink` = the link id. Not proven whether it copies the link's `externalReference`, so the handler now falls back to `paymentLink` (fix PR into #4).
   - **Foreign card:** Asaas has not enabled foreign customers on the account yet (owner, 2026-10-09: next week). Until then the site blocks paid checkout for foreigners; they can still sign up for free events.
+  - A foreign invoice paid by hand in the sandbox: `PAYMENT_CONFIRMED`, then `PAYMENT_RECEIVED` 5 s later → `paid` once, attendees +1 only.
+  - An overdue PIX paid after the order was cancelled: `PAYMENT_RECEIVED` → the order **stays cancelled**. The customer paid and has no ticket. This is pre-existing prod behaviour; the owner decides whether a late payment should revive the order or alert an admin.
+  - Fixes in PR #13 (into #4): `paymentLink` fallback, atomic `pending → paid` claim, foreign paid block.
+- **Gate before the deploy (owner, 2026-10-09):** the owner runs a complete purchase and sign-up on **localhost with the staging DB and the sandbox key**, with the sandbox webhook live through ngrok. Only after that is #4 merged into `hotfix-frontend-update`.
 
 Merge #4 only after every step before it has observed output. The why behind each step is in [[70-Operations/ADR-016-Rollout-Plan]].
 
