@@ -313,8 +313,10 @@ The owner said on 2026-10-09 that the server's only webhook is Asaas's, which is
 grep -c '^COURTESY_WEBHOOK_URL=' .env
 ```
 
+**Checked 2026-10-09: the count is 1, so `COURTESY_WEBHOOK_URL` is set in prod.** Every courtesy redemption posts the attendee's CPF, birth date, address, e-mail and phone to it. The owner does not know the consumer. To identify it without exposing the token in the path, print only the scheme and host: `grep '^COURTESY_WEBHOOK_URL=' .env | cut -d/ -f1-3`. After ADR-016, online courtesies send null CPF, birth date and address; the call is fire-and-forget, so this cannot break a redemption.
+
 **Fix**:
-1. If the count is 0, delete the courtesy webhook block; it is dead code with a PII path.
+1. Identify the consumer from the host. If nobody uses it, remove the variable from `.env` and delete the block; it is a PII path.
 2. For Make.com, find who owns the scenario.
    - **If it is unused:** delete the call.
    - **If it is used:** regenerate the hook URL in Make (the current one is public), put the new one in an env var, and drop `meetingUrl` from the payload unless the scenario needs it.

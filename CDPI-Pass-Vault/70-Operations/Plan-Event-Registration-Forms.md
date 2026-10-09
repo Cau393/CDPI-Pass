@@ -281,6 +281,14 @@ Every new test must **fail before** its change. Gates per PR: `pnpm run check`, 
 
 ## Deploy checklist (Phase 6)
 
+**Progress (2026-10-09):**
+- Step 1 ✅: `ASAAS_API_URL` = `https://api.asaas.com/v3`. `COURTESY_WEBHOOK_URL` **is set** (count 1), so the webhook block stays; see [[70-Operations/Security-Backlog]] #14.
+- Steps 2–5 ✅ (17:13 UTC), approved by the owner:
+  - Backup branch `backup-pre-adr016-rollout-2026-10-09` (`br-floral-sound-ac45fm5s`).
+  - Legacy backfill on prod: 3/3/3, and exactly 3 events have a form.
+  - Phone fix on prod: users 797→798 well-formed, attendees 682→685, the 2 foreign numbers untouched, 0 parenthesized left.
+- Step 6: merge scheduled for **22:27 BRT** 2026-10-09. Over 21 days, 22h had 3 orders against 33 at 17h.
+
 Merge #4 only after every step before it has observed output. The why behind each step is in [[70-Operations/ADR-016-Rollout-Plan]].
 
 1. **EC2 env checks** (in the app directory):
