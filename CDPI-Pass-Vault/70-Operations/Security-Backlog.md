@@ -302,6 +302,25 @@ aws iam list-access-keys --user-name cdpi-pass-deployer --query 'AccessKeyMetada
 
 ---
 
+### 14. Outbound webhooks the owner does not recognise (found 2026-10-09, ADR-016 rollout)
+
+The owner said on 2026-10-09 that the server's only webhook is Asaas's, which is inbound. The code also **sends** data out in two places:
+- **Make.com, hardcoded and live:** `server/utils/finalizeOrderPaidLikeWebhook.ts` (`MAKE_WEBHOOK_URL = https://hook.us2.make.com/…`, added 2025-10-22 "Real time sells updates added"). On every order that becomes paid, including courtesies, it posts the buyer's name and e-mail, the event's title, date, location, modality and **`meetingUrl`**, and the order's id, amount, status and method. **The repo `Cau393/CDPI-Pass` is public (checked 2026-10-09), so the hook URL is in public git history:** anyone can post fake "paid order" events into that scenario, and the payload carries PII and the online meeting link.
+- **`COURTESY_WEBHOOK_URL`, env-gated:** `server/routes.ts`, courtesy redeem (added 2025-10-20 "Added Real Time Automation for Courtesy Redeems"). When the variable is set, it posts the full courtesy attendee: name, e-mail, phone, CPF/passport, birth date, address, cargo and empresa.
+
+```bash
+# on EC2, in the app directory: prints a count, never the value
+grep -c '^COURTESY_WEBHOOK_URL=' .env
+```
+
+**Fix**:
+1. If the count is 0, delete the courtesy webhook block; it is dead code with a PII path.
+2. For Make.com, find who owns the scenario.
+   - **If it is unused:** delete the call.
+   - **If it is used:** regenerate the hook URL in Make (the current one is public), put the new one in an env var, and drop `meetingUrl` from the payload unless the scenario needs it.
+
+---
+
 ## Out of scope but seen
 
 - Three other IAM users with long-lived keys belong to other projects in the same account (`rachae-backend`, `cdpi-lesson-editor-backend`, `cdpi-pass-deployer`). A blast-radius review of the whole account is worth doing once items 2 and 3 are closed.

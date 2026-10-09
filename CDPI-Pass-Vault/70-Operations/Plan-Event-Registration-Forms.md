@@ -1,16 +1,15 @@
 # Plan: event registration forms + minimal signup
 
-The step-by-step runbook for [[60-Decisions/ADR-016-event-registration-forms-and-minimal-signup]]. Each phase is **one feature branch and one PR into `hotfix-frontend-update`**. Pushing to that branch deploys prod, so never commit to it or to `main` directly. A phase is done only when its **Done when** list has observed output, written in the PR description.
+The step-by-step runbook for [[60-Decisions/ADR-016-event-registration-forms-and-minimal-signup]]. Pushing to `hotfix-frontend-update` deploys prod, so never commit to it or to `main` directly. The phases were first planned as one PR each; they shipped instead as **one combined PR, #4 `feat/registration-forms-all`**, which the rollout PRs (#5–#7) were merged into. A phase is done only when its **Done when** list has observed output, written in a PR description.
 
-| Phase | Scope | Status |
+| Phase | Scope | Status (2026-10-09) |
 |---|---|---|
-| 0 | Prerequisites (sync, baseline, foreign-card fix) | ⏳ |
-| 1 | Visible *Cadastre-se* CTA | ✅ PR `feat/register-cta-visibility` |
-| 2 | DB expand (schema only) | ✅ staging and prod applied 2026-10-08 (prod via one transaction; backup branch `backup-pre-adr016-phase2-2026-10-08`); code in PR `feat/registration-forms-db` |
-| 3 | Form builder + locked fields + answers + Excel | 🟡 implemented on `feat/registration-form-builder` (stacked on Phase 2), not merged |
-| 4 | Minimal signup | 🟡 implemented on `feat/minimal-signup` (stacked on Phase 3), not merged |
-| — | Combined PR `feat/registration-forms-all` (phases 1–4 + phone + foreign-card fixes) | 🟡 open, not merged; refuter fixes in ([[70-Operations/ADR-016-Refuter-Findings]]) |
-| 6 | Rollout: legacy questions on live events, remaining refuter items, Playwright suite, staging rehearsal | ⏳ run [[70-Operations/Prompt-ADR-016-Rollout]]; merge the combined PR only after it |
+| 0 | Prerequisites (sync, baseline, foreign-card fix) | ✅ except Asaas enabling foreign payers in prod (gate b, pending) |
+| 1 | Visible *Cadastre-se* CTA | ✅ in #4 |
+| 2 | DB expand (schema only) | ✅ staging and prod applied 2026-10-08 (backup branch `backup-pre-adr016-phase2-2026-10-08`); code in #4 |
+| 3 | Form builder + locked fields + answers + Excel | ✅ in #4 |
+| 4 | Minimal signup | ✅ in #4 |
+| 6 | Rollout ([[70-Operations/Prompt-ADR-016-Rollout]], design [[70-Operations/ADR-016-Rollout-Plan]]): legacy questions (#5), refuter items (#6), Playwright suite (#7), rehearsals | 🟡 code merged into #4; prod SQL awaiting owner approval; see **Deploy checklist** |
 | 5 | Docs (part of every PR) | ongoing |
 
 ## Who is asked what
@@ -279,6 +278,26 @@ Every new test must **fail before** its change. Gates per PR: `pnpm run check`, 
 - An admin builds a text/select/radio form; an attendee answers; the Excel shows the columns. After an archive, the answer is still there under "(removida)".
 - A paid online event in the Asaas sandbox asks for CPF.
 - Foreigner walkthrough (card-only `invoiceUrl`). Report it as **blocked**, not passed, until the Phase 0 foreign-card fix lands.
+
+## Deploy checklist (Phase 6)
+
+Merge #4 only after every step before it has observed output. The why behind each step is in [[70-Operations/ADR-016-Rollout-Plan]].
+
+1. **EC2 webhook check:** `grep -c '^COURTESY_WEBHOOK_URL=' .env` in the app directory. Expected `0`, which means the courtesy webhook is dead code; see [[70-Operations/Security-Backlog]] #14. A `1` means someone consumes it: find them before the deploy, because online courtesies now send null birth date and address.
+2. **Owner approves the exact prod SQL:** `frontend/sql/adr016_attach_legacy_questions.sql` (3 event ids) and the re-run of `frontend/sql/phone_e164_backfill.sql`.
+3. **Neon backup branch of prod:** `backup-pre-adr016-rollout-<date>`, parent `br-lucky-rice-acakvihn`.
+4. **Backfill on prod.** The live code ignores the column, so this is safe before the merge. Then run the file's verification query: expect `legacy_ids_present = 3` for each of the 3 events. A re-run must change nothing.
+5. **Phone normalisation on prod.** Expect 1 `users` row and 3 `courtesy_attendees` rows. The sanity gate inside the file rolls back on any bad row.
+6. **Merge #4 into `hotfix-frontend-update` off-peak, and not on an event day.** The Jornada is on 2026-10-13. The deploy workflow runs and never touches the DB.
+7. **Post-deploy smoke test** (prod, real accounts, no purchase):
+   - Logged out, the header shows *Cadastre-se*. A 4-field signup sends the verification e-mail.
+   - Each live event's CTA. Jornada (online free): the dialog shows the 3 questions, prefilled for a full-profile account. Peptídeos (sales closed): the courtesy link asks for "Área de atuação" only, next to the attendee's own Cargo and Empresa fields. Emagrecimento (paid): the dialog opens, then the payment modal; stop before paying.
+   - Admin: the participants Excel for Jornada has "Área de atuação" as the last fixed column, and the old rows show the profile values.
+8. **Rollback:** revert the merge commit on `hotfix-frontend-update`. The backfill is additive and the old code ignores it (rehearsed). 4-field accounts created in the meantime can log in, but the old code asks them for a CPF before they subscribe.
+9. **Real Asaas charge:** a low-value charge, only after the owner confirms Asaas enabled foreign payers (gate b).
+10. **After the deploy (owner's choice):**
+    - Remove the superseded worktrees and branches `register-cta-visibility`, `registration-forms-db`, `registration-form-builder`, `minimal-signup`, `phone-input-keyboard`, `foreign-card-checkout`, the `adr016-*` rollout worktrees and `prod-b0a6359`.
+    - Delete the `[REHEARSAL]` rows on staging and the backup branch `backup-staging-pre-adr016-rehearsal-2026-10-09`.
 
 ## Out of scope
 
