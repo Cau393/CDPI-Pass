@@ -180,12 +180,13 @@ export class AsaasService {
    * One-off international card charge. Asaas does not allow payment links,
    * installments, PIX, or boleto for foreignCustomer. Lookup is by
    * externalReference (our user id), not by document, so a passport cannot
-   * collide with a Brazilian CPF.
+   * collide with a Brazilian CPF. The passport is never sent: Asaas validates
+   * `cpfCnpj` as a Brazilian document even with `foreignCustomer: true` and
+   * answers 400 "O CPF/CNPJ informado é inválido" (sandbox, 2026-10-09).
    */
   async createForeignCardPayment(params: {
     name: string;
     email: string;
-    cpfCnpj: string;
     phone: string;
     userId: string;
     value: number;
@@ -202,7 +203,6 @@ export class AsaasService {
         : await this.makeRequest("/customers", "POST", {
             name: params.name,
             email: params.email,
-            cpfCnpj: params.cpfCnpj,
             phone: params.phone,
             mobilePhone: params.phone,
             foreignCustomer: true,

@@ -138,3 +138,9 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Root cause:** step 2 treats every 10-11 digit string as a Brazilian domestic number, true when all phones were "(11) 98765-4321" but false once foreign E.164 numbers are stored as digits (ADR-016 signup).
 - **Prevention:** the historical script only got a DO NOT RE-RUN header; `sql/phone_parenthesized_br_fix.sql` is scoped to the rows it reformats (`^\(`) and its integration test asserts foreign numbers stay unchanged and a re-run is a no-op.
 
+## 2026-10-09 — foreign card checkout sent the passport as `cpfCnpj`, and Asaas refused the customer
+- **Symptom:** found by the first check against the real Asaas **sandbox** (owner's `ASAAS_API_KEY_SANDBOX`). `POST /api/orders` by card for a foreign account answered 502 "Não foi possível gerar a cobrança agora", because Asaas rejected `POST /customers` with 400 `invalid_object` "O CPF/CNPJ informado é inválido."
+- **Root cause:** `createForeignCardPayment` put the passport in `cpfCnpj`. Asaas validates that field as a Brazilian document even with `foreignCustomer: true`. The unit and integration tests mocked Asaas, so they never saw the refusal, and one test even asserted the passport was sent.
+- **Fix:** the foreign customer is created with `foreignCustomer: true` and `externalReference` (our user id) only. The passport stays on our order (`orders.foreign_document`). Sandbox proof: the same payload without `cpfCnpj` → 200 and a `CREDIT_CARD` charge with a `sandbox.asaas.com` invoice URL. App flow: card order for a +595 account → 201.
+- **Prevention:** when payment code changes, run one check against the Asaas sandbox. The local fake only proves our side of the contract.
+

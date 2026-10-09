@@ -287,6 +287,11 @@ Every new test must **fail before** its change. Gates per PR: `pnpm run check`, 
   - Backup branch `backup-pre-adr016-rollout-2026-10-09` (`br-floral-sound-ac45fm5s`).
   - Legacy backfill on prod: 3/3/3, and exactly 3 events have a form.
   - Phone fix on prod: users 797→798 well-formed, attendees 682→685, the 2 foreign numbers untouched, 0 parenthesized left.
+- **Asaas sandbox check** (combined code + `ASAAS_API_KEY_SANDBOX`, network guard allowing only `api-sandbox.asaas.com`):
+  - BR PIX (QR + payload), boleto and card link → 201 with real sandbox charges; the legacy answers are copied from the profile (3 per order).
+  - 4-field account: `identity_required` → CPF + address → PIX 201.
+  - Foreigner: PIX → 400, card → **502, fixed by #12** (passport sent as `cpfCnpj`) → 201 with a sandbox invoice URL.
+  - The sandbox objects were deleted afterwards (8 payments, 2 links, 5 customers).
 - Step 6: merge scheduled for **22:27 BRT** 2026-10-09. Over 21 days, 22h had 3 orders against 33 at 17h.
 
 Merge #4 only after every step before it has observed output. The why behind each step is in [[70-Operations/ADR-016-Rollout-Plan]].

@@ -505,7 +505,9 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
 
       expect(pix.status).toBe(400);
       expect(card.status).toBe(201);
-      expect(foreignCardCalls).toContainEqual(expect.objectContaining({ cpfCnpj: passport }));
+      // Asaas rejects a passport in cpfCnpj (sandbox, 2026-10-09): it is never sent; the order keeps it.
+      expect(foreignCardCalls).toContainEqual(expect.objectContaining({ userId: visitor.id }));
+      expect(foreignCardCalls.every((c) => !("cpfCnpj" in (c as object)))).toBe(true);
       expect(card.body.order.registrationAnswers).toBeUndefined();
     });
   });

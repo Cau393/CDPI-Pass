@@ -5,7 +5,6 @@ import { AsaasApiError } from "../../utils/asaasErrors";
 const FOREIGN_PAYMENT = {
   name: "Participante Estrangeira",
   email: "foreign@example.test",
-  cpfCnpj: "PYA1234567",
   phone: "595981123456",
   userId: "user-1",
   value: 105,
@@ -61,6 +60,26 @@ describe("AsaasService requests", () => {
       constructor: AsaasApiError,
       status: 400,
     });
+  });
+
+  it("creates the foreign customer without cpfCnpj (Asaas rejects a passport there)", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.body) bodies.push(JSON.parse(String(init.body)));
+        if (String(url).includes("/customers?")) return jsonResponse(200, { data: [] });
+        if (String(url).endsWith("/customers")) return jsonResponse(200, { id: "cus_1" });
+        return jsonResponse(200, { id: "pay_1", invoiceUrl: "https://sandbox.asaas.com/i/pay_1", value: 105 });
+      }),
+    );
+
+    const payment = await new AsaasService().createForeignCardPayment(FOREIGN_PAYMENT);
+
+    const customer = bodies[0];
+    expect(customer).toMatchObject({ foreignCustomer: true, externalReference: "user-1" });
+    expect(customer).not.toHaveProperty("cpfCnpj");
+    expect(payment.paymentLink).toBe("https://sandbox.asaas.com/i/pay_1");
   });
 
   it("never logs the raw Asaas response", async () => {
