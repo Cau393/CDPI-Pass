@@ -36,17 +36,30 @@ export async function closePool() {
 const STATE_DIR = path.resolve(HERE, "../.state");
 export const serverLogPath = () => path.join(STATE_DIR, `server-${cfg.run}.log`);
 export const trackFile = () => path.join(STATE_DIR, `created-${cfg.run}.ndjson`);
-function track(kind: "event" | "userEmail" | "courtesyCode", value: string) {
+function track(kind: "event" | "userEmail" | "courtesyCode" | "counter", value: string) {
   mkdirSync(STATE_DIR, { recursive: true });
   appendFileSync(trackFile(), JSON.stringify({ kind, value }) + "\n");
 }
-export function readTracked(): { events: string[]; emails: string[]; courtesyCodes: string[] } {
+export interface Tracked {
+  events: string[];
+  emails: string[];
+  courtesyCodes: string[];
+  /** current_attendees of pre-existing events at global setup: eventId -> value. */
+  counters: Record<string, number>;
+}
+
+export function readTracked(): Tracked {
   const file = trackFile();
-  const out = { events: [] as string[], emails: [] as string[], courtesyCodes: [] as string[] };
+  const out: Tracked = { events: [], emails: [], courtesyCodes: [], counters: {} };
   if (!existsSync(file)) return out;
   for (const line of readFileSync(file, "utf8").split("\n").filter(Boolean)) {
     const { kind, value } = JSON.parse(line);
-    (kind === "event" ? out.events : kind === "userEmail" ? out.emails : out.courtesyCodes).push(value);
+    if (kind === "counter") {
+      const c = JSON.parse(value) as { eventId: string; value: number };
+      if (!(c.eventId in out.counters)) out.counters[c.eventId] = c.value; // first snapshot wins
+    } else {
+      (kind === "event" ? out.events : kind === "userEmail" ? out.emails : out.courtesyCodes).push(value);
+    }
   }
   return out;
 }
@@ -160,6 +173,19 @@ export async function legacyQuestionsAttached(): Promise<boolean> {
   return Number(rows[0].n) === 3;
 }
 
+/**
+ * Global setup: remember `current_attendees` of events that existed before this run (never inserted by it).
+ * Teardown restores each to at most this value, which undoes exactly what the run's own app-created
+ * orders added and nothing else (the app only ever increments; SQL-seeded orders never touch it).
+ */
+export async function snapshotAttendeeCounters(eventIds: string[]) {
+  const rows = await sql<{ id: string; current_attendees: number | null }>(
+    `SELECT id, current_attendees FROM events WHERE id = ANY($1)`,
+    [eventIds],
+  );
+  for (const r of rows) track("counter", JSON.stringify({ eventId: r.id, value: r.current_attendees ?? 0 }));
+}
+
 /** A courtesy link for any event (also pre-existing ones); recorded so cleanup removes only this link. */
 export async function createCourtesyLink(eventId: string, adminEmail: string, tickets = 5): Promise<string> {
   const code = `E2E${randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
@@ -187,8 +213,8 @@ export const personName = (name: string) => `${cfg.namePrefix}${name}`;
  * `.state` file so a re-run of the teardown can finish. Safe to call in local mode too.
  * Returns the list of problems (empty when everything went).
  */
-export async function cleanupTracked(): Promise<string[]> {
-  const { events, emails, courtesyCodes } = readTracked();
+export async function cleanupTracked(tracked: Tracked = readTracked()): Promise<string[]> {
+  const { events, emails, courtesyCodes, counters } = tracked;
   const problems: string[] = [];
   const attempt = async (label: string, text: string, params: unknown[]) => {
     try {
@@ -208,12 +234,6 @@ export async function cleanupTracked(): Promise<string[]> {
     )) ?? [];
   const orderIds = orders.map((o) => o.id as string);
   const attendeeIds = orders.map((o) => o.courtesy_attendee_id).filter(Boolean) as string[];
-  // Pre-existing events we did not create: their counter was bumped by our paid orders.
-  const bumped = new Map<string, number>();
-  for (const o of orders) {
-    if (o.status === "paid" && !events.includes(o.event_id)) bumped.set(o.event_id, (bumped.get(o.event_id) ?? 0) + 1);
-  }
-
   const del = async (label: string, text: string, params: unknown[]) => attempt(label, text, params);
   // Children first.
   await del("print_jobs", `DELETE FROM print_jobs WHERE order_id = ANY($1) OR event_id = ANY($2)`, [orderIds, events]);
@@ -230,10 +250,12 @@ export async function cleanupTracked(): Promise<string[]> {
   await del("courtesy_attendees", `DELETE FROM courtesy_attendees WHERE id = ANY($1)`, [attendeeIds]);
   await del("courtesy_links", `DELETE FROM courtesy_links WHERE code = ANY($1) OR created_by = ANY($2)`, [courtesyCodes, userIds]);
   await del("email_queue", `DELETE FROM email_queue WHERE lower("to") = ANY($1)`, [emails]);
-  // Counters of pre-existing events: atomic decrement floored at 0, only once the orders are really gone.
+  // Counters of pre-existing events: never above the value seen at setup. LEAST is atomic and a no-op when the
+  // counter did not move. Only once our orders are really gone.
   if (deletedOrders) {
-    for (const [eventId, n] of Array.from(bumped.entries())) {
-      await del("current_attendees", `UPDATE events SET current_attendees = GREATEST(COALESCE(current_attendees, 0) - $2, 0) WHERE id = $1`, [eventId, n]);
+    for (const [eventId, snapshot] of Object.entries(counters)) {
+      if (events.includes(eventId)) continue;
+      await del("current_attendees", `UPDATE events SET current_attendees = LEAST(COALESCE(current_attendees, 0), $2) WHERE id = $1`, [eventId, snapshot]);
     }
   }
   await del("events", `DELETE FROM events WHERE id = ANY($1)`, [events]);
