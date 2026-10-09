@@ -158,6 +158,55 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
   });
 
+  it("installments delivered at the same time count one seat and send one ticket", async () => {
+    const linkId = `lnk${randomUUID().slice(0, 12)}`;
+    const { eventId, orderId, email } = await pendingOrder("credit_card", linkId);
+    const installment = () => ({
+      event: "PAYMENT_CONFIRMED",
+      payment: { id: `pay_${randomUUID().slice(0, 12)}`, billingType: "CREDIT_CARD", value: 212.33, externalReference: null, paymentLink: linkId },
+    });
+
+    const statuses = await Promise.all([deliver(installment()), deliver(installment()), deliver(installment())]);
+
+    expect(statuses).toEqual([200, 200, 200]);
+    expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+    expect(ticketEmails.filter((to) => to === email)).toHaveLength(1);
+  });
+
+  it("two finalizers holding the same pending snapshot (webhook + check-status poll) count one seat", async () => {
+    const { eventId, orderId, email } = await pendingOrder("pix", "pay_stale_snapshot");
+    const { storage } = await import("../../storage");
+    const { finalizeOrderPaidLikeWebhook } = await import("../../utils/finalizeOrderPaidLikeWebhook");
+    const snapshot = (await storage.getOrder(orderId))!;
+    const meta = { billingType: "PIX", value: 637 };
+
+    const first = await finalizeOrderPaidLikeWebhook(snapshot, meta);
+    const second = await finalizeOrderPaidLikeWebhook(snapshot, meta);
+
+    expect([first, second]).toEqual([{ ok: true }, { ok: false, code: "already_paid" }]);
+    expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+    expect(ticketEmails.filter((to) => to === email)).toHaveLength(1);
+  });
+
+  it("externalReference wins over paymentLink when they point at different orders", async () => {
+    const byReference = await pendingOrder("pix", "pay_ref_wins");
+    const linkId = `lnk${randomUUID().slice(0, 12)}`;
+    const byLink = await pendingOrder("credit_card", linkId);
+    await deliver({
+      event: "PAYMENT_RECEIVED",
+      payment: { id: "pay_ref_wins_other", billingType: "PIX", externalReference: byReference.orderId, paymentLink: linkId },
+    });
+    expect((await state(byReference.orderId, byReference.eventId)).status).toBe("paid");
+    expect(await state(byLink.orderId, byLink.eventId)).toEqual({ status: "pending", attendees: 0 });
+  });
+
+  it("a late PAYMENT_CONFIRMED does not revive a cancelled order", async () => {
+    const { eventId, orderId } = await pendingOrder("pix", "pay_late");
+    await deliver({ event: "PAYMENT_OVERDUE", payment: { id: "pay_late", externalReference: orderId } });
+    expect(await deliver({ event: "PAYMENT_RECEIVED", payment: { id: "pay_late", billingType: "PIX", externalReference: orderId } })).toBe(200);
+    expect(await state(orderId, eventId)).toEqual({ status: "cancelled", attendees: 0 });
+  });
+
   it("an externalReference that is not one of our orders falls back to the payment link", async () => {
     const linkId = `lnk${randomUUID().slice(0, 12)}`;
     const { eventId, orderId } = await pendingOrder("credit_card", linkId);

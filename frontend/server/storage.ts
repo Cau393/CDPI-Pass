@@ -90,6 +90,8 @@ export interface IStorage {
   getOrdersByUser(userId: string, page: number, limit: number): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }>;
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
+  /** pending -> paid in one statement; false when the order was no longer pending. */
+  markPendingOrderPaid(id: string): Promise<boolean>;
   getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined>;
   /**
    * True when the event already has a paid order for this holder: the
@@ -468,6 +470,15 @@ export class DatabaseStorage implements IStorage {
       .where(eq(orders.id, id))
       .returning();
     return order;
+  }
+
+  async markPendingOrderPaid(id: string): Promise<boolean> {
+    const claimed = await db
+      .update(orders)
+      .set({ status: "paid", updatedAt: new Date() })
+      .where(and(eq(orders.id, id), eq(orders.status, "pending")))
+      .returning({ id: orders.id });
+    return claimed.length > 0;
   }
 
   async getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined> {

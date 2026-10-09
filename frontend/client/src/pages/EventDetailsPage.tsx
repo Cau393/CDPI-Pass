@@ -441,7 +441,7 @@ export default function EventDetailsPage() {
                   Você já possui inscrição confirmada para este evento.
                 </p>
               )}
-              {!hasPaidForEvent && foreignPaidBlocked && (
+              {!hasPaidForEvent && !salesClosed && !soldOut && foreignPaidBlocked && (
                 <p
                   className="text-sm text-muted-foreground text-center sm:text-right w-full sm:w-auto"
                   data-testid="foreign-paid-unavailable"
