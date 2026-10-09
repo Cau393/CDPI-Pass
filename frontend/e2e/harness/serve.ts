@@ -52,11 +52,7 @@ async function main() {
 }
 
 function startServer() {
-
-const child = spawn("pnpm", ["exec", "tsx", "--import", path.join(here, "register.mjs"), "server/index.ts"], {
-  cwd: appRoot,
-  stdio: "inherit",
-  env: {
+  const env = {
     PATH: process.env.PATH,
     HOME: process.env.HOME,
     APP_ROOT: appRoot,
@@ -73,11 +69,39 @@ const child = spawn("pnpm", ["exec", "tsx", "--import", path.join(here, "registe
     AWS_SECRET_ACCESS_KEY: "e2e-dummy",
     AWS_REGION: "us-east-1",
     AWS_S3_BUCKET_NAME: "e2e-dummy",
-    AWS_ENDPOINT_URL: `http://127.0.0.1:${cfg.asaasPort}` // fake S3 PUT (fake-asaas.ts),
-  },
-});
-child.on("exit", (code) => process.exit(code ?? 0));
-for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => child.kill(sig));
+    // fake S3 PUT lives in fake-asaas.ts
+    AWS_ENDPOINT_URL: `http://127.0.0.1:${cfg.asaasPort}`,
+  };
+  let shuttingDown = false;
+  let respawns = 0;
+  let child = launch();
+
+  function launch() {
+    const c = spawn("pnpm", ["exec", "tsx", "--import", path.join(here, "register.mjs"), "server/index.ts"], {
+      cwd: appRoot,
+      stdio: "inherit",
+      env,
+    });
+    c.on("exit", (code, signal) => {
+      console.error(`[e2e] app server exited (code=${code}, signal=${signal}) at ${new Date().toISOString()}`);
+      // Killed from outside (e.g. a stray pkill on a busy shared machine): the database is untouched, so start again.
+      if (!shuttingDown && signal && respawns < 3) {
+        respawns++;
+        console.error(`[e2e] restarting the app server (${respawns}/3)`);
+        child = launch();
+        return;
+      }
+      process.exit(code ?? 1);
+    });
+    return c;
+  }
+
+  for (const sig of ["SIGINT", "SIGTERM"] as const) {
+    process.on(sig, () => {
+      shuttingDown = true;
+      child.kill(sig);
+    });
+  }
 }
 
 main().catch((e) => {
