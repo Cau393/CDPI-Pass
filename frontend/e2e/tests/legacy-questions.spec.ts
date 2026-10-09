@@ -90,19 +90,25 @@ test.describe("legacy questions (C1)", () => {
     await expectNoHorizontalScroll(page, "legacy checkout");
   });
 
-  test("4-field account must answer them: blocked in the UI and 400 from the API until filled", async ({ page }) => {
+  test("4-field account must answer them: blocked in the UI and refused by the API until filled", async ({ page }) => {
     const u = makeUser("legnew");
     await createAccount(u);
     const eventId = prodId("onlineFree");
 
-    // API: no answers -> 400 naming a question; nothing is created
     const token = await bearerFor(u.email);
-    const res = await fetch(`${cfg.baseUrl}/api/events/${eventId}/subscribe`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "x-forwarded-for": "10.7.1.1" },
-      body: JSON.stringify({}),
-    });
-    expect(res.status).toBe(400);
+    const subscribe = (body: unknown) =>
+      fetch(`${cfg.baseUrl}/api/events/${eventId}/subscribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "x-forwarded-for": "10.7.1.1" },
+        body: JSON.stringify(body),
+      });
+    // Old bundle (no answers key) that the profile cannot complete -> 409 "Atualize a página"
+    const oldBundle = await subscribe({});
+    expect(oldBundle.status).toBe(409);
+    expect(await oldBundle.json()).toMatchObject({ code: "reload_required" });
+    // New bundle with the questions unanswered -> 400 naming a question
+    const unanswered = await subscribe({ answers: {} });
+    expect(unanswered.status).toBe(400);
     expect(await orderCount(u.email, eventId)).toBe("0");
 
     await login(page, u.email);
