@@ -31,6 +31,7 @@ const mockEvent: Event = {
   meetingPassword: null,
   whatsappGroupUrl: null,
   interestAreas: [],
+  registrationForm: [],
   confirmationEmailHtml: null,
   courtesyLimit: null,
 };

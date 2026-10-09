@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { getValidatedNextPath } from "../../lib/authRedirect";
+import { authEntryHref, getValidatedNextPath } from "../../lib/authRedirect";
 
 describe("getValidatedNextPath", () => {
   beforeEach(() => {
@@ -102,5 +102,35 @@ describe("getValidatedNextPath", () => {
   it("rejects unknown pathnames", () => {
     expect(getValidatedNextPath("/admin")).toBe("/");
     expect(getValidatedNextPath("/cortesia/extra")).toBe("/");
+  });
+});
+
+describe("authEntryHref", () => {
+  it("carries an event page back as next", () => {
+    expect(authEntryHref("/register", "/event/abc?promo=CDPI01")).toBe(
+      "/register?next=%2Fevent%2Fabc%3Fpromo%3DCDPI01",
+    );
+  });
+
+  it("carries a courtesy code page back as next", () => {
+    expect(authEntryHref("/login", "/cortesia?code=CDPI123")).toBe(
+      "/login?next=%2Fcortesia%3Fcode%3DCDPI123",
+    );
+  });
+
+  it("omits next on pages that are not return targets", () => {
+    expect(authEntryHref("/register", "/eventos")).toBe("/register");
+  });
+
+  it("forwards the next of the auth page the visitor is on", () => {
+    expect(authEntryHref("/register", "/login?next=%2Fevent%2Fabc")).toBe(
+      "/register?next=%2Fevent%2Fabc",
+    );
+  });
+
+  it("drops an invalid next forwarded from an auth page", () => {
+    expect(authEntryHref("/login", "/register?next=https%3A%2F%2Fevil.example")).toBe(
+      "/login",
+    );
   });
 });

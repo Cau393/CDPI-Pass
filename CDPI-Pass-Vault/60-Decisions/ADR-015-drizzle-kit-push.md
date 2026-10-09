@@ -28,3 +28,4 @@ Two genuine drizzle-kit 0.30.6 behaviors were involved. Both still exist in the 
 - The integration-test and CI databases are built by push, so they now carry the real checks and indexes.
 - The patch must be revisited on any drizzle-kit upgrade. `db:diff` = 0 on staging is the check.
 - Hand-creating a constraint or index outside `schema.ts` silently reintroduces drift: the next push drops it.
+- (2026-10-08) Push does **not** detect a changed CHECK expression when the constraint name is unchanged; `db:diff` stays silent. Such a change ships as drop + add in a `sql/` file applied before the push, verified with `pg_get_constraintdef` against a fresh push (first case: ADR-016 Phase 2).

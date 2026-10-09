@@ -44,3 +44,31 @@ export type ProfileUpdate = z.infer<typeof profileUpdateSchema>;
 
 /** Fields that require re-entering the current password before they change. */
 export const PROFILE_SENSITIVE_FIELDS = ["name", "email", "phone"] as const;
+
+/**
+ * PUT /api/profile/identity (ADR-016): the document asked at the first
+ * in-person or paid inscription, and the address for in-person events.
+ * Same allowlist rule as above: every other key is stripped.
+ */
+export const profileIdentitySchema = z.object({
+  isForeigner: z.boolean().optional(),
+  cpf: z.string().optional(),
+  foreignDocument: z.string().optional(),
+  address: z
+    .string()
+    .trim()
+    .min(10, "Endereço deve ter pelo menos 10 caracteres")
+    .max(500, "Endereço deve ter no máximo 500 caracteres")
+    .optional(),
+}).superRefine((data, ctx) => {
+  if (data.isForeigner === true && data.cpf?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["cpf"], message: "Estrangeiro não informa CPF" });
+  }
+  if (data.isForeigner !== true && data.foreignDocument?.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["foreignDocument"],
+      message: "Documento estrangeiro só vale para estrangeiros",
+    });
+  }
+});

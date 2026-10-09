@@ -29,7 +29,8 @@ import {
   type CommunicateRecipientMode,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ne, desc, sql, asc, count, and, isNull } from "drizzle-orm";
+import { eq, ne, desc, sql, asc, count, and, isNull, or } from "drizzle-orm";
+import type { RegistrationAnswer } from "@shared/eventRegistrationForm";
 import { s3Service } from "./services/s3Service";
 import { buildUndoCheckInPatch } from "./utils/undoCheckInUpdate";
 import { validateCourtesyTicketCountUpdate } from "./utils/courtesyTicketCountUpdate";
@@ -74,16 +75,36 @@ export interface IStorage {
 
   // Order operations
   getOrder(id: string): Promise<Order | undefined>;
-  getOrdersByUser(userId: string, page: number, limit: number): Promise<{ orders: Order[]; total: number }>;
+  /** "Meus ingressos": buyer-facing, so registration answers are not selected (ADR-016). */
+  getOrdersByUser(userId: string, page: number, limit: number): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }>;
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
   getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined>;
-  isCpfAlreadyRegisteredForEvent(cpf: string, eventId: string): Promise<boolean>;
-  isForeignDocumentAlreadyRegisteredForEvent(
-    foreignDocument: string,
-    eventId: string,
-  ): Promise<boolean>;
-  isUserAlreadyRegisteredForEvent(userId: string, eventId: string): Promise<boolean>;
+  /**
+   * True when the event already has a paid order for this account (when
+   * `userId` is given) or for this document (when one is given).
+   */
+  isAlreadyRegisteredForEvent(params: {
+    eventId: string;
+    userId: string | null;
+    cpf: string | null;
+    foreignDocument: string | null;
+  }): Promise<boolean>;
+  /**
+   * ADR-016 write-once document (+ editable address). A different document
+   * than the one on file is `document_already_set`; a document owned by
+   * another account is `document_taken`.
+   */
+  setUserIdentity(
+    userId: string,
+    identity: {
+      document?: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null };
+      address?: string;
+    },
+  ): Promise<
+    | { ok: true; user: User }
+    | { ok: false; reason: "document_already_set" | "document_taken" | "not_found" }
+  >;
   /** True when another order (not excludeOrderId) is already paid for cpf+event. */
   existsOtherPaidOrderForCpfAndEvent(
     excludeOrderId: string,
@@ -128,7 +149,7 @@ export interface IStorage {
     eventId: string;
     linkId: string;
     userId: string;
-    interestArea: string | null;
+    registrationAnswers: RegistrationAnswer[];
     attendee: InsertCourtesyAttendee;
   }): Promise<
     | { ok: false }
@@ -323,7 +344,7 @@ export class DatabaseStorage implements IStorage {
     return order;
   }
 
-  async getOrdersByUser(userId: string, page: number = 1, limit: number = 10): Promise<{ orders: Order[]; total: number }> {
+  async getOrdersByUser(userId: string, page: number = 1, limit: number = 10): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }> {
     const offset = (page - 1) * limit;
     
     const ordersQuery = db
@@ -345,7 +366,6 @@ export class DatabaseStorage implements IStorage {
         maxUses: orders.maxUses,
         amntUsed: orders.amntUsed,
         qrCodeUsedAt: orders.qrCodeUsedAt,
-        interestArea: orders.interestArea,
         createdAt: orders.createdAt,
         updatedAt: orders.updatedAt,
         event: {
@@ -420,54 +440,61 @@ export class DatabaseStorage implements IStorage {
     return order;
   }
 
-  /** True when this CPF already has a confirmed (paid) inscription for the event. */
-  async isCpfAlreadyRegisteredForEvent(cpf: string, eventId: string): Promise<boolean> {
-    const existingOrder = await db
-      .select()
-      .from(orders)
-      .where(
-        and(
-          eq(orders.cpf, cpf),
-          eq(orders.eventId, eventId),
-          eq(orders.status, "paid"),
-        ),
-      )
-      .limit(1);
-
-    return existingOrder.length > 0;
-  }
-
-  async isForeignDocumentAlreadyRegisteredForEvent(
-    foreignDocument: string,
-    eventId: string,
-  ): Promise<boolean> {
-    const existingOrder = await db
+  async isAlreadyRegisteredForEvent(params: {
+    eventId: string;
+    userId: string | null;
+    cpf: string | null;
+    foreignDocument: string | null;
+  }): Promise<boolean> {
+    const sameHolder = [];
+    if (params.userId) sameHolder.push(eq(orders.userId, params.userId));
+    if (params.cpf) sameHolder.push(eq(orders.cpf, params.cpf));
+    if (params.foreignDocument) sameHolder.push(eq(orders.foreignDocument, params.foreignDocument));
+    if (sameHolder.length === 0) return false;
+    const existing = await db
       .select({ id: orders.id })
       .from(orders)
-      .where(
-        and(
-          eq(orders.foreignDocument, foreignDocument),
-          eq(orders.eventId, eventId),
-          eq(orders.status, "paid"),
-        ),
-      )
+      .where(and(eq(orders.eventId, params.eventId), eq(orders.status, "paid"), or(...sameHolder)))
       .limit(1);
-    return existingOrder.length > 0;
+    return existing.length > 0;
   }
 
-  async isUserAlreadyRegisteredForEvent(userId: string, eventId: string): Promise<boolean> {
-    const existingOrder = await db
-      .select({ id: orders.id })
-      .from(orders)
-      .where(
-        and(
-          eq(orders.userId, userId),
-          eq(orders.eventId, eventId),
-          eq(orders.status, "paid"),
-        ),
-      )
-      .limit(1);
-    return existingOrder.length > 0;
+  async setUserIdentity(
+    userId: string,
+    identity: {
+      document?: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null };
+      address?: string;
+    },
+  ): Promise<
+    | { ok: true; user: User }
+    | { ok: false; reason: "document_already_set" | "document_taken" | "not_found" }
+  > {
+    const addressPatch = identity.address !== undefined ? { address: identity.address } : {};
+    try {
+      if (identity.document) {
+        const [claimed] = await db
+          .update(users)
+          .set({ ...identity.document, ...addressPatch, updatedAt: new Date() })
+          .where(and(eq(users.id, userId), isNull(users.cpf), isNull(users.foreignDocument)))
+          .returning();
+        if (claimed) return { ok: true, user: claimed };
+
+        const current = await this.getUser(userId);
+        if (!current) return { ok: false, reason: "not_found" };
+        const { isForeigner, cpf, foreignDocument } = identity.document;
+        const sameDocument = isForeigner
+          ? current.isForeigner === true && current.foreignDocument === foreignDocument
+          : current.isForeigner !== true && current.cpf?.replace(/\D/g, "") === cpf?.replace(/\D/g, "");
+        if (!sameDocument) return { ok: false, reason: "document_already_set" };
+      }
+      const user = await this.updateUser(userId, addressPatch);
+      return user ? { ok: true, user } : { ok: false, reason: "not_found" };
+    } catch (error) {
+      const code = (error as { code?: string; cause?: { code?: string } })?.code
+        ?? (error as { cause?: { code?: string } })?.cause?.code;
+      if (code === "23505") return { ok: false, reason: "document_taken" };
+      throw error;
+    }
   }
 
   async existsOtherPaidOrderForCpfAndEvent(
@@ -690,7 +717,7 @@ export class DatabaseStorage implements IStorage {
     eventId: string;
     linkId: string;
     userId: string;
-    interestArea: string | null;
+    registrationAnswers: RegistrationAnswer[];
     attendee: InsertCourtesyAttendee;
   }): Promise<
     | { ok: false }
@@ -742,7 +769,7 @@ export class DatabaseStorage implements IStorage {
           status: "paid",
           courtesyLinkId: params.linkId,
           courtesyAttendeeId: attendee.id,
-          interestArea: params.interestArea,
+          registrationAnswers: params.registrationAnswers,
           createdAt: new Date(),
           updatedAt: new Date(),
         })

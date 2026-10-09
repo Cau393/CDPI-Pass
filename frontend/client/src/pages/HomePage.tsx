@@ -13,6 +13,9 @@ import EventCoverImage from "@/components/EventCoverImage";
 import SiteFooter from "@/components/SiteFooter";
 import { eventDescriptionPlainText } from "@/lib/eventDescriptionHtml";
 import { useFreeSubscribe } from "@/hooks/useFreeSubscribe";
+import { EventRegistrationDialog } from "@/components/EventRegistrationDialog";
+import { needsRegistrationDialog } from "@/lib/eventRegistration";
+import type { SystemField } from "@shared/eventRegistrationForm";
 import {
   eventAcquisitionCtaLabel,
   eventFeeLabel,
@@ -52,9 +55,20 @@ export default function HomePage() {
   const [expandedFAQ, setExpandedFAQ] = useState<string | null>(null);
   const [promoCode, setPromoCode] = useState<string | null>(null);
   const [, setLocation] = useLocation();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const { toast } = useToast();
-  const { subscribe, isPending: isSubscribePending } = useFreeSubscribe();
+  const {
+    subscribe,
+    isPending: isSubscribePending,
+    registrationDialog,
+  } = useFreeSubscribe();
+  // Paid path: registration questions first, then the payment modal.
+  const [registrationPrompt, setRegistrationPrompt] = useState<{
+    event: Event;
+    missing?: SystemField[];
+    message?: string;
+  } | null>(null);
+  const [checkoutAnswers, setCheckoutAnswers] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -125,6 +139,15 @@ export default function HomePage() {
       setLocation(`/login?next=${encodeURIComponent(next)}`);
       return;
     }
+    if (needsRegistrationDialog(event, user)) {
+      setRegistrationPrompt({ event });
+      return;
+    }
+    openCheckout(event, {});
+  };
+
+  const openCheckout = (event: Event, answers: Record<string, string>) => {
+    setCheckoutAnswers(answers);
     setSelectedEvent(event);
     setIsPaymentModalOpen(true);
   };
@@ -469,10 +492,16 @@ export default function HomePage() {
           event={selectedEvent}
           promoCode={promoCode}
           displayPrice={displayPriceForEvent(selectedEvent)}
+          answers={checkoutAnswers}
           isOpen={isPaymentModalOpen}
           onClose={() => {
             setIsPaymentModalOpen(false);
             setSelectedEvent(null);
+          }}
+          onIdentityRequired={(missing, message) => {
+            setIsPaymentModalOpen(false);
+            setSelectedEvent(null);
+            setRegistrationPrompt({ event: selectedEvent, missing, message });
           }}
           onSuccess={() => {
             toast({
@@ -484,6 +513,20 @@ export default function HomePage() {
           }}
         />
       )}
+      <EventRegistrationDialog
+        open={registrationPrompt != null}
+        event={registrationPrompt?.event ?? null}
+        missing={registrationPrompt?.missing}
+        error={registrationPrompt?.message}
+        confirmLabel="Continuar para pagamento"
+        onCancel={() => setRegistrationPrompt(null)}
+        onConfirm={(answers) => {
+          if (!registrationPrompt) return;
+          setRegistrationPrompt(null);
+          openCheckout(registrationPrompt.event, answers);
+        }}
+      />
+      {registrationDialog}
     </main>
   );
 }

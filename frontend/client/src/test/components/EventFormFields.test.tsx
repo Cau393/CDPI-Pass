@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -31,12 +31,19 @@ vi.mock("@tiptap/react", () => ({
 
 import EventFormFields from "../../components/admin/EventFormFields";
 import { Form } from "../../components/ui/form";
-import { editEventSchema, type EditEventFormValues } from "../../lib/eventForm";
+import {
+  editEventSchema,
+  type EditEventFormValues,
+  type RegistrationFormRow,
+} from "../../lib/eventForm";
+import { REGISTRATION_FIELD_LABEL_INVALID } from "@shared/eventRegistrationForm";
 
 function Harness({
   defaults,
+  onValid = () => {},
 }: {
   defaults?: Partial<EditEventFormValues>;
+  onValid?: (values: EditEventFormValues) => void;
 }) {
   const form = useForm<EditEventFormValues>({
     resolver: zodResolver(editEventSchema),
@@ -53,13 +60,14 @@ function Harness({
       meetingPassword: "",
       whatsappGroupUrl: "",
       confirmationEmailHtml: "",
+      registrationForm: [],
       ...defaults,
     },
   });
 
   return (
     <Form {...form}>
-      <form>
+      <form onSubmit={form.handleSubmit(onValid)}>
         <EventFormFields
           form={form}
           fileInputRef={{ current: null }}
@@ -67,6 +75,7 @@ function Harness({
           coverRequired={false}
           onClearNewCover={() => {}}
         />
+        <button type="submit">Salvar</button>
       </form>
     </Form>
   );
@@ -253,5 +262,129 @@ describe("EventFormFields — courtesy limit", () => {
     const input = screen.getByLabelText("Limite total de cortesias");
     expect(input).toHaveAttribute("inputmode", "numeric");
     expect(input).toHaveValue("");
+  });
+});
+
+function question(overrides: Partial<RegistrationFormRow> = {}): RegistrationFormRow {
+  return {
+    fieldId: null,
+    type: "text",
+    label: "Cargo",
+    optionsText: "",
+    required: false,
+    ...overrides,
+  };
+}
+
+function lockedRows(): string[] {
+  return screen.queryAllByTestId("registration-locked-row").map((row) => row.textContent ?? "");
+}
+
+describe("EventFormFields — Formulário de inscrição", () => {
+  it("replaces the old Área de Interesse editor", () => {
+    render(<Harness />);
+    expect(screen.getByText("Formulário de inscrição")).toBeInTheDocument();
+    expect(screen.queryByTestId("input-interest-area")).not.toBeInTheDocument();
+  });
+
+  it("locks document and address on top for an in-person event", () => {
+    render(<Harness />);
+    expect(lockedRows()).toEqual(["Documento (CPF ou passaporte)", "Endereço"]);
+  });
+
+  it("locks only the document for a paid online event", () => {
+    render(<Harness defaults={{ modality: "online", meetingUrl: "https://zoom.us/j/1" }} />);
+    expect(lockedRows()).toEqual(["Documento (CPF ou passaporte)"]);
+  });
+
+  it("locks nothing once an online event is made free", async () => {
+    const user = userEvent.setup();
+    render(<Harness defaults={{ modality: "online", meetingUrl: "https://zoom.us/j/1" }} />);
+
+    await user.click(screen.getByTestId("switch-event-is-free"));
+
+    expect(lockedRows()).toEqual([]);
+  });
+
+  it("adds a text question the admin can make required", async () => {
+    const user = userEvent.setup();
+    const onValid = vi.fn();
+    render(<Harness onValid={onValid} />);
+
+    await user.click(screen.getByRole("button", { name: "Adicionar pergunta" }));
+    await user.type(screen.getByLabelText("Pergunta 1"), "Cargo");
+    await user.click(screen.getByRole("switch", { name: "Obrigatório" }));
+    await user.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() => {
+      expect(onValid.mock.calls[0]?.[0].registrationForm).toEqual([
+        question({ label: "Cargo", required: true }),
+      ]);
+    });
+  });
+
+  it("asks for options when the question becomes a dropdown", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: "Adicionar pergunta" }));
+    await user.click(screen.getByRole("combobox", { name: "Tipo de resposta" }));
+    await user.click(await screen.findByRole("option", { name: "Lista suspensa" }));
+
+    expect(screen.getByLabelText("Opções (uma por linha)")).toBeInTheDocument();
+  });
+
+  it("does not let the admin change the type of a saved question", () => {
+    render(<Harness defaults={{ registrationForm: [question({ fieldId: "q-1" })] }} />);
+    expect(screen.getByRole("combobox", { name: "Tipo de resposta" })).toBeDisabled();
+  });
+
+  it("moves a question up", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        defaults={{ registrationForm: [question({ label: "Cargo" }), question({ label: "Empresa" })] }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Mover pergunta 2 para cima" }));
+
+    expect(screen.getByLabelText("Pergunta 1")).toHaveValue("Empresa");
+  });
+
+  it("removes a question", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        defaults={{ registrationForm: [question({ label: "Cargo" }), question({ label: "Empresa" })] }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Remover pergunta 1" }));
+
+    expect(screen.getAllByLabelText(/^Pergunta \d$/).map((input) => (input as HTMLInputElement).value)).toEqual([
+      "Empresa",
+    ]);
+  });
+
+  it("shows the server's rule next to a question without text", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: "Adicionar pergunta" }));
+    await user.click(screen.getByRole("button", { name: "Salvar" }));
+
+    expect(await screen.findByText(REGISTRATION_FIELD_LABEL_INVALID)).toBeInTheDocument();
+  });
+
+  it("stops adding questions at 20", () => {
+    render(
+      <Harness
+        defaults={{
+          registrationForm: Array.from({ length: 20 }, (_, i) => question({ label: `Pergunta ${i}` })),
+        }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Adicionar pergunta" })).toBeDisabled();
   });
 });

@@ -8,7 +8,10 @@ vi.mock("wouter", () => ({
   useLocation: () => ["/", setLocation],
 }));
 
-const authState = { isAuthenticated: false };
+const authState: {
+  isAuthenticated: boolean;
+  user?: { cpf: string | null; foreignDocument: string | null; isForeigner: boolean; address: string | null };
+} = { isAuthenticated: false };
 vi.mock("../../hooks/useAuth", () => ({
   useAuth: () => authState,
 }));
@@ -288,5 +291,59 @@ describe("HomePage — contact", () => {
 
     await screen.findByTestId("site-footer");
     expect(screen.queryByText(/99860-6833/)).not.toBeInTheDocument();
+  });
+});
+
+describe("HomePage — registration questions", () => {
+  const cargo = {
+    id: "q-cargo",
+    type: "text",
+    label: "Cargo",
+    options: [],
+    required: true,
+    archived: false,
+  };
+
+  beforeEach(() => {
+    authState.isAuthenticated = true;
+    authState.user = {
+      cpf: "123.456.789-09",
+      foreignDocument: null,
+      isForeigner: false,
+      address: "Rua A, 100, São Paulo",
+    };
+    localStorage.setItem("token", "test-token");
+  });
+  afterEach(() => {
+    authState.isAuthenticated = false;
+    authState.user = undefined;
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  it("asks a free event's questions before subscribing", async () => {
+    vi.stubGlobal("fetch", mockApi({ ...baseEvent, registrationForm: [cargo] }));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-buy-main"));
+
+    expect(await screen.findByLabelText(/Cargo/)).toBeInTheDocument();
+  });
+
+  it("asks a foreign visitor's passport before the payment of a paid event", async () => {
+    authState.user = { cpf: null, foreignDocument: null, isForeigner: false, address: null };
+    vi.stubGlobal(
+      "fetch",
+      mockApi({ ...baseEvent, isFree: false, price: "100.00", modality: "online" }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-buy-main"));
+    await user.click(await screen.findByLabelText("Sou estrangeiro / I'm a foreign visitor"));
+
+    expect(screen.getByLabelText("Passaporte / Passport")).toBeInTheDocument();
+    expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
   });
 });

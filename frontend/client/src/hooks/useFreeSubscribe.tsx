@@ -7,8 +7,10 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { isOnlineEvent } from "@shared/eventModality";
 import { loginRequiredDescription } from "@/lib/eventCta";
 import { parseApiErrorMessage } from "@/lib/eventForm";
-import { InterestAreaDialog } from "@/components/InterestAreaDialog";
+import { identityRequiredMissing, needsRegistrationDialog } from "@/lib/eventRegistration";
+import { EventRegistrationDialog } from "@/components/EventRegistrationDialog";
 import type { Event } from "@shared/schema";
+import type { SystemField } from "@shared/eventRegistrationForm";
 
 type SubscribeResponse = {
   message: string;
@@ -18,30 +20,29 @@ type SubscribeResponse = {
 /**
  * Free inscription: one confirmation click, no payment step, no Asaas call.
  * The server re-checks that the event really is free and that sales are open.
+ * Render `registrationDialog`: it asks the event's questions (and a missing
+ * document/address) before subscribing.
  */
 export function useFreeSubscribe() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const [promptEvent, setPromptEvent] = useState<Event | null>(null);
-  const [interestError, setInterestError] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState<{ event: Event; missing?: SystemField[] } | null>(null);
+  const [promptError, setPromptError] = useState<string | null>(null);
 
   const subscribeMutation = useMutation({
-    mutationFn: async (input: { event: Event; interestArea?: string }) => {
-      const body = input.interestArea
-        ? { interestArea: input.interestArea }
-        : undefined;
+    mutationFn: async (input: { event: Event; answers: Record<string, string> }) => {
       const res = await apiRequest(
         "POST",
         `/api/events/${input.event.id}/subscribe`,
-        body,
+        { answers: input.answers },
       );
       return res.json() as Promise<SubscribeResponse>;
     },
     onSuccess: async (data, input) => {
       const event = input.event;
-      setPromptEvent(null);
-      setInterestError(null);
+      setPrompt(null);
+      setPromptError(null);
       toast({
         title: "Inscrição confirmada!",
         description: isOnlineEvent(event)
@@ -65,9 +66,16 @@ export function useFreeSubscribe() {
       });
       setLocation("/profile");
     },
-    onError: (error: Error) => {
+    onError: (error: Error, input) => {
+      const missing = identityRequiredMissing(error);
+      if (missing) {
+        // Said inline, so a reopen that asks nothing new is never silent.
+        setPromptError(parseApiErrorMessage(error));
+        setPrompt({ event: input.event, missing });
+        return;
+      }
       const message = parseApiErrorMessage(error);
-      setInterestError(message);
+      setPromptError(message);
       toast({
         title: "Não foi possível confirmar",
         description: message,
@@ -88,28 +96,29 @@ export function useFreeSubscribe() {
       setLocation(`/login?next=${encodeURIComponent(next)}`);
       return;
     }
-    if ((event.interestAreas?.length ?? 0) > 0) {
-      setInterestError(null);
-      setPromptEvent(event);
+    if (needsRegistrationDialog(event, user)) {
+      setPromptError(null);
+      setPrompt({ event });
       return;
     }
-    subscribeMutation.mutate({ event });
+    subscribeMutation.mutate({ event, answers: {} });
   };
 
-  const interestDialog = (
-    <InterestAreaDialog
-      open={promptEvent != null}
-      options={promptEvent?.interestAreas ?? []}
+  const registrationDialog = (
+    <EventRegistrationDialog
+      open={prompt != null}
+      event={prompt?.event ?? null}
+      missing={prompt?.missing}
       confirmLabel="Confirmar inscrição"
       pending={subscribeMutation.isPending}
-      error={interestError}
+      error={promptError}
       onCancel={() => {
-        setPromptEvent(null);
-        setInterestError(null);
+        setPrompt(null);
+        setPromptError(null);
       }}
-      onConfirm={(interestArea) => {
-        if (!promptEvent) return;
-        subscribeMutation.mutate({ event: promptEvent, interestArea });
+      onConfirm={(answers) => {
+        if (!prompt) return;
+        subscribeMutation.mutate({ event: prompt.event, answers });
       }}
     />
   );
@@ -117,6 +126,6 @@ export function useFreeSubscribe() {
   return {
     subscribe,
     isPending: subscribeMutation.isPending,
-    interestDialog,
+    registrationDialog,
   };
 }

@@ -71,3 +71,28 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Symptom:** pushing schema changes to Neon with Drizzle did not work; the push prompt offered 74 statements, including `TRUNCATE users CASCADE` and `TRUNCATE orders CASCADE`.
 - **Root cause:** years of hand-written `sql/` files created checks, indexes, FK names, types and NOT NULLs that `shared/schema.ts` never declared. Push treats the schema as truth, so it tried to undo all of it. drizzle-kit 0.30 also turns any type change on a non-empty table into `TRUNCATE ... CASCADE`, and it misreads empty-array defaults (patched). Forbidding push hid the drift instead of fixing it.
 - **Prevention:** `schema.ts` declares every DB object; `pnpm db:diff` must be 0 before and after a change; backfills and type changes go in a transactional `sql/` file applied before the push. See [[60-Decisions/ADR-015-drizzle-kit-push]] and `frontend/.claude/rules/database.md`.
+
+## 2026-10-08 — "Área de interesse" was enforced on three routes but sent by one client
+- **Symptom:** found during the ADR-016 analysis; no user hit it (prod had 0 events with interest areas). `resolveOrderInterestArea` rejects `POST /api/orders` and `POST /api/courtesy/redeem` with 400 "Selecione uma área de interesse" when the event has labels, but only `useFreeSubscribe` sends `interestArea`. `PaymentModal` and `CourtesyRedeemPage` never do, so paid checkout and courtesy redeem would fail on such an event.
+- **Root cause:** the server gate was added to all three inscription routes, while client wiring and tests covered only the free-subscribe path.
+- **Prevention:** a new inscription gate ships with a client caller **and** a test for each of the three entry points (`PaymentModal` → `/api/orders`, `useFreeSubscribe` → `/subscribe`, `CourtesyRedeemPage` → `/courtesy/redeem`). Phase 3 of [[70-Operations/Plan-Event-Registration-Forms]] replaces the gate and wires all three.
+
+## 2026-10-08 — drizzle-kit push silently ignores a changed CHECK expression
+- **Symptom:** while rehearsing ADR-016 Phase 2 locally, `pnpm db:diff` listed the new columns and DROP NOT NULLs but none of the three loosened `*_identity_document_chk` constraints; after the push it reported 0 statements while the database still had the strict checks.
+- **Root cause:** drizzle-kit 0.30 push matches CHECK constraints by name only. The runbook assumed it would "drop and re-add".
+- **Prevention:** a changed CHECK ships as a `sql/` drop + add applied before the push; verify with `pg_get_constraintdef` against a DB freshly pushed from `schema.ts`. Rule in `frontend/.claude/rules/database.md`.
+
+## 2026-10-08 — a PATCH that treats a missing list as "empty" makes every caller resend it
+- **Symptom:** found while replacing "Área de interesse" with the ADR-016 form. `PATCH /api/admin/events/:id` read a missing `interest_areas` as `[]`, so the "Encerrar vendas" toggle had to resend the whole list, or it would silently wipe the event's labels.
+- **Root cause:** "missing" and "cleared" were the same input for a collection field.
+- **Prevention:** on PATCH, a missing collection field means **unchanged**; clearing is an explicit empty value. `registration_form` follows this, and removing a question archives it instead of deleting it, so answers keep their export column. Integration test: "leaves the form alone when an admin edit does not send it".
+
+## 2026-10-08 — prod schema applied on an earlier "go", minutes before a "staging only" message
+- **Symptom:** the ADR-016 Phase 2 schema was applied to the Neon production branch after the owner wrote "you can do it"; minutes later they asked to change only staging until everything is clear. The change was additive and today's prod code passed its 22 integration tests on it, so it was kept, with a backup branch (`backup-pre-adr016-phase2-2026-10-08`).
+- **Root cause:** a prod write was treated as still approved after the owner's scope had narrowed.
+- **Prevention:** right before any prod DB write, re-confirm in the same turn; prove compatibility first by running the prod commit's integration suite against the new schema on a local DB; take a Neon backup branch.
+
+## 2026-10-08 — the profile form sent the whole stored user back, so a nullable column broke "Salvar"
+- **Symptom:** found by a red test while building ADR-016 Phase 4: an account from the four-field signup (no address, no birth date) clicking **Salvar Alterações** got 400, because ProfilePage submitted the full `/api/auth/me` object and `PUT /api/profile` rejects `address: null` / `birthDate: null`.
+- **Root cause:** the form's values were the raw user row, so making a column nullable silently changed what the client sends.
+- **Prevention:** forms send an explicit payload of the fields they edit (`profileUpdatePayload`), leaving empty optional fields out; when a column becomes nullable, grep its client readers and writers in the same PR.

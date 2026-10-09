@@ -28,7 +28,7 @@ import { downloadDataUrl } from "@/lib/downloadDataUrl";
 import { Download, Eye, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, Shield, AlertTriangle, RefreshCw, Mail, ChevronLeft, ChevronRight, Award } from "lucide-react";
 import { CertificatesTab } from "@/components/CertificatesTab";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
-import type { User, Order, CourtesyLink } from "@shared/schema";
+import { NOT_APPLICABLE_PROFILE_VALUE, type User, type Order, type CourtesyLink } from "@shared/schema";
 import { isOnlineEvent, publicEventLocationLabel } from "@shared/eventModality";
 import { isFreePaymentMethod } from "@/lib/eventCta";
 import {
@@ -42,6 +42,37 @@ import {
  *  touch target; from `sm` they collapse back to one row of four. */
 const PROFILE_TAB_CLASS =
   "flex min-h-11 items-center justify-center gap-2 whitespace-normal py-2 text-center leading-tight sm:min-h-0 sm:whitespace-nowrap";
+
+const OPTIONAL_PROFILE_FIELDS = ["address", "occupation", "partnerCompany", "areaOfActivity"] as const;
+
+/**
+ * Accounts from the ADR-016 signup have no address and the DB default
+ * "Nao aplicavel" on the work fields: show both as empty inputs.
+ */
+function profileFormValues(user: User): User {
+  const values = { ...user };
+  for (const field of OPTIONAL_PROFILE_FIELDS) {
+    const value = user[field];
+    values[field] = value == null || value === NOT_APPLICABLE_PROFILE_VALUE ? "" : value;
+  }
+  return values;
+}
+
+const WORK_PROFILE_FIELDS = ["occupation", "partnerCompany", "areaOfActivity"] as const;
+
+/**
+ * PUT /api/profile body: only the fields this form edits. An empty work field
+ * goes back to the default; a missing address stays missing, while blanking a
+ * saved one is sent so the server can refuse it.
+ */
+function profileUpdatePayload(values: Partial<User>, stored: User | null | undefined) {
+  const payload: Record<string, unknown> = { name: values.name, email: values.email, phone: values.phone };
+  for (const field of WORK_PROFILE_FIELDS) {
+    payload[field] = values[field]?.trim() ? values[field] : NOT_APPLICABLE_PROFILE_VALUE;
+  }
+  if (values.address?.trim() || stored?.address) payload.address = values.address ?? "";
+  return payload;
+}
 
 export default function ProfilePage() {
   const [, setLocation] = useLocation();
@@ -91,12 +122,12 @@ export default function ProfilePage() {
 
   // Update form when user data changes
   const profileForm = useForm({
-    defaultValues: currentUser || {},
+    defaultValues: currentUser ? profileFormValues(currentUser) : {},
   });
 
   useEffect(() => {
     if (currentUser) {
-      profileForm.reset(currentUser);
+      profileForm.reset(profileFormValues(currentUser));
     }
   }, [currentUser]);
 
@@ -217,7 +248,7 @@ export default function ProfilePage() {
       });
       return;
     }
-    updateProfileMutation.mutate(data);
+    updateProfileMutation.mutate(profileUpdatePayload(data, currentUser));
   };
 
   // Monitor form changes for sensitive fields
@@ -693,6 +724,7 @@ const handleCancelOrder = (orderId: string) => {
                               : (currentUser?.cpf ?? "")
                           }
                           readOnly
+                          placeholder="Informado na primeira inscrição"
                           className="bg-gray-50"
                           data-testid="input-profile-cpf"
                         />
