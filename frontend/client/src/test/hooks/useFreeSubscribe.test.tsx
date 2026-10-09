@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { renderHook, render, screen, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { Event } from "@shared/schema";
 
@@ -64,6 +64,8 @@ describe("useFreeSubscribe — list page with a form the admin changed", () => {
   const oldQuestion = { id: "q-old", type: "text", label: "Pergunta antiga", options: [], required: false, archived: false };
   const newQuestion = { id: "q-new", type: "text", label: "Pergunta nova", options: [], required: false, archived: false };
   const listEvent = { ...event, registrationForm: [oldQuestion] } as unknown as Event;
+  const json = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -71,44 +73,99 @@ describe("useFreeSubscribe — list page with a form the admin changed", () => {
     appQueryClient.clear();
   });
 
+  /** HomePage in miniature: a list consumer plus the subscribe hook's dialog. */
   function Harness() {
-    const { subscribe, registrationDialog } = useFreeSubscribe();
+    const { subscribe, registrationDialog, isPending } = useFreeSubscribe();
+    useQuery<Event[]>({ queryKey: ["/api/events"] });
     return (
       <>
         <button onClick={() => subscribe(listEvent)}>abrir</button>
+        <span data-testid="pending">{String(isPending)}</span>
         {registrationDialog}
       </>
     );
   }
 
-  it("refetches the list and the event and shows the new question in the open dialog", async () => {
-    appQueryClient.setQueryData(["/api/events"], [listEvent]);
-    const invalidate = vi.spyOn(appQueryClient, "invalidateQueries");
-    const json = (status: number, body: unknown) =>
-      new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        if (String(input).endsWith("/subscribe") && init?.method === "POST") {
-          return json(400, { message: "Resposta para uma pergunta que não existe neste evento." });
-        }
-        return json(200, { ...event, registrationForm: [newQuestion] });
-      }),
-    );
-    const user = userEvent.setup();
+  function mount() {
     render(
       <QueryClientProvider client={appQueryClient}>
         <Harness />
       </QueryClientProvider>,
     );
+  }
 
+  async function openAndConfirm() {
+    const user = userEvent.setup();
     await user.click(screen.getByText("abrir"));
     expect(await screen.findByLabelText("Pergunta antiga")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Confirmar inscrição" }));
+  }
+
+  const refused = () => json(400, { message: "Resposta para uma pergunta que não existe neste evento." });
+
+  it("refetches the list a second time and shows the new question in the open dialog", async () => {
+    const listFetches: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/subscribe") && init?.method === "POST") return refused();
+        if (url === "/api/events") {
+          listFetches.push(url);
+          return json(200, [{ ...event, registrationForm: listFetches.length > 1 ? [newQuestion] : [oldQuestion] }]);
+        }
+        return json(200, { ...event, registrationForm: [newQuestion] });
+      }),
+    );
+    mount();
+    await waitFor(() => expect(listFetches).toHaveLength(1));
+
+    await openAndConfirm();
 
     expect(await screen.findByLabelText("Pergunta nova")).toBeInTheDocument();
     expect(screen.queryByLabelText("Pergunta antiga")).not.toBeInTheDocument();
-    const keys = invalidate.mock.calls.map(([filters]) => (filters as { queryKey: unknown[] }).queryKey);
-    expect(keys).toContainEqual(["/api/events"]);
+    expect(listFetches).toHaveLength(2);
+  });
+
+  it("settles the request and shows the error before the event refetch answers", async () => {
+    let releaseRefetch: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (releaseRefetch = resolve));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/subscribe") && init?.method === "POST") return refused();
+        if (url === "/api/events") return json(200, [listEvent]);
+        await gate;
+        return json(200, { ...event, registrationForm: [newQuestion] });
+      }),
+    );
+    mount();
+
+    await openAndConfirm();
+
+    expect(await screen.findByText(/não existe neste evento/)).toBeInTheDocument();
+    expect(screen.getByTestId("pending")).toHaveTextContent("false");
+    expect(screen.getByRole("button", { name: "Confirmar inscrição" })).toBeEnabled();
+    releaseRefetch();
+    expect(await screen.findByLabelText("Pergunta nova")).toBeInTheDocument();
+  });
+
+  it("tells the user to reload when the event cannot be refetched", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/subscribe") && init?.method === "POST") return refused();
+        if (url === "/api/events") return json(200, [listEvent]);
+        return json(404, { message: "Evento não encontrado" });
+      }),
+    );
+    mount();
+
+    await openAndConfirm();
+
+    expect(await screen.findByText("Atualize a página para continuar.")).toBeInTheDocument();
+    expect(screen.queryByText(/não existe neste evento/)).not.toBeInTheDocument();
   });
 });

@@ -498,10 +498,10 @@ export default function HomePage() {
             setIsPaymentModalOpen(false);
             setSelectedEvent(null);
           }}
-          onIdentityRequired={(missing, message) => {
+          onIdentityRequired={(missing, message, freshEvent) => {
             setIsPaymentModalOpen(false);
             setSelectedEvent(null);
-            setRegistrationPrompt({ event: selectedEvent, missing, message });
+            setRegistrationPrompt({ event: freshEvent ?? selectedEvent, missing, message });
           }}
           onSuccess={() => {
             toast({

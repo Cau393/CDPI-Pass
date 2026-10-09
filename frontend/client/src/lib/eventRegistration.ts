@@ -95,23 +95,29 @@ export function staleRegistrationError(err: unknown): "identity" | "form" | null
   }
 }
 
+export const RELOAD_PAGE_MESSAGE = "Atualize a página para continuar.";
+
 /**
  * Drops every cached copy of the event (detail and the `/api/events` list that
  * HomePage and EventsPage read, all `staleTime: Infinity`) and the account for
- * identity_required, then returns the event refetched from the server (null if
- * the error is not a stale one or the refetch failed) so an open dialog can
- * switch to the fresh form instead of the one it captured.
+ * identity_required, then refetches the event so an open dialog can switch to
+ * the fresh form instead of the one it captured. `stale` is null when the error
+ * is not a stale one; `event` is null when the refetch failed or the event is
+ * gone (the caller then tells the user to reload).
  */
-export async function refreshAfterStaleRegistration(err: unknown, eventId: string): Promise<Event | null> {
+export async function refreshAfterStaleRegistration(
+  err: unknown,
+  eventId: string,
+): Promise<{ stale: "identity" | "form" | null; event: Event | null }> {
   const stale = staleRegistrationError(err);
-  if (!stale) return null;
+  if (!stale) return { stale, event: null };
   void queryClient.invalidateQueries({ queryKey: ["/api/events"] });
   void queryClient.invalidateQueries({ queryKey: [`/api/events/${eventId}`] });
   if (stale === "identity") void queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
   try {
-    return await queryClient.fetchQuery<Event>({ queryKey: [`/api/events/${eventId}`], staleTime: 0 });
+    return { stale, event: await queryClient.fetchQuery<Event>({ queryKey: [`/api/events/${eventId}`], staleTime: 0 }) };
   } catch {
-    return null;
+    return { stale, event: null };
   }
 }
 

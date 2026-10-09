@@ -13,7 +13,7 @@ import type { SystemField } from "@shared/eventRegistrationForm";
 import { publicEventLocationLabel } from "@shared/eventModality";
 import { isFreeEvent } from "@/lib/eventCta";
 import { parseApiErrorMessage } from "@/lib/eventForm";
-import { identityRequiredMissing, refreshAfterStaleRegistration } from "@/lib/eventRegistration";
+import { identityRequiredMissing, refreshAfterStaleRegistration, RELOAD_PAGE_MESSAGE } from "@/lib/eventRegistration";
 
 interface EventForModal {
   id: string;
@@ -33,7 +33,8 @@ interface PaymentModalProps {
   /** Answers from EventRegistrationDialog, sent with the order. */
   answers: Record<string, string>;
   /** The order needs a document/address the account lacks: reopen the registration dialog. */
-  onIdentityRequired: (missing: SystemField[], message: string) => void;
+  /** `freshEvent` is the event refetched after the refusal, when it could be. */
+  onIdentityRequired: (missing: SystemField[], message: string, freshEvent?: Event) => void;
   onSuccess: () => void;
 }
 
@@ -85,16 +86,26 @@ export default function PaymentModal({
         });
       },
       onError: (error: Error) => {
-        refreshAfterStaleRegistration(error, event.id);
+        const refreshed = refreshAfterStaleRegistration(error, event.id);
         const missing = identityRequiredMissing(error);
         if (missing) {
-          onIdentityRequired(missing, parseApiErrorMessage(error));
+          // Reopen the dialog with the refetched event, not the captured one.
+          void refreshed.then(({ event: fresh }) => {
+            const message = parseApiErrorMessage(error);
+            if (fresh) onIdentityRequired(missing, message, fresh);
+            else onIdentityRequired(missing, message);
+          });
           return;
         }
         toast({
           title: "Erro ao processar pagamento",
           description: parseApiErrorMessage(error),
           variant: "destructive",
+        });
+        void refreshed.then(({ stale, event: fresh }) => {
+          if (stale === "form" && !fresh) {
+            toast({ title: "Erro ao processar pagamento", description: RELOAD_PAGE_MESSAGE, variant: "destructive" });
+          }
         });
       },
     });

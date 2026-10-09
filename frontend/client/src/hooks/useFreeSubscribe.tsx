@@ -11,6 +11,7 @@ import {
   identityRequiredMissing,
   needsRegistrationDialog,
   refreshAfterStaleRegistration,
+  RELOAD_PAGE_MESSAGE,
 } from "@/lib/eventRegistration";
 import { EventRegistrationDialog } from "@/components/EventRegistrationDialog";
 import type { Event } from "@shared/schema";
@@ -70,20 +71,26 @@ export function useFreeSubscribe() {
       });
       setLocation("/profile");
     },
-    onError: async (error: Error, input) => {
-      // The form may have changed since this event was cached: retry with the fresh one.
-      const fresh = await refreshAfterStaleRegistration(error, input.event.id);
-      const event = fresh ?? input.event;
+    onError: (error: Error, input) => {
+      // The form may have changed since this event was cached. Refetch in the
+      // background (the mutation settles now) and swap the fresh event into the
+      // open dialog when it arrives.
+      void refreshAfterStaleRegistration(error, input.event.id).then(({ stale, event: fresh }) => {
+        if (fresh) {
+          setPrompt((current) => (current ? { ...current, event: fresh } : current));
+        } else if (stale === "form") {
+          setPromptError(RELOAD_PAGE_MESSAGE);
+        }
+      });
       const missing = identityRequiredMissing(error);
       if (missing) {
         // Said inline, so a reopen that asks nothing new is never silent.
         setPromptError(parseApiErrorMessage(error));
-        setPrompt({ event, missing });
+        setPrompt({ event: input.event, missing });
         return;
       }
       const message = parseApiErrorMessage(error);
       setPromptError(message);
-      if (fresh) setPrompt((current) => (current ? { ...current, event: fresh } : current));
       toast({
         title: "Não foi possível confirmar",
         description: message,
