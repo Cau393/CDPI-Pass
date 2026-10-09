@@ -110,6 +110,7 @@ import { Readable } from 'stream';
 import { toTitleCaseName } from "./utils/toTitleCaseName";
 import { decodeCsvBuffer } from "./utils/decodeCsvBuffer";
 import { normalizePhoneE164 } from "./utils/normalizePhoneE164";
+import { checkoutPaymentErrorResponse } from "./utils/asaasErrors";
 import {
   cdpiApoiandoNpsAnswersSchema,
   cdpiEventNpsAnswersSchema,
@@ -2560,10 +2561,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         res.status(201).json(response);
       } catch (paymentError) {
-        console.error("Payment creation error:", paymentError);
+        console.error(`Payment creation error (order ${order.id}):`, paymentError);
         // Delete the order if payment creation fails
         await storage.deleteOrder(order.id);
-        res.status(500).json({ message: "Erro ao processar pagamento. Tente novamente." });
+        const failure = checkoutPaymentErrorResponse(paymentError);
+        res.status(failure.status).json(failure.body);
       }
     } catch (error) {
       console.error("Create order error:", error);

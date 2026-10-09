@@ -147,4 +147,20 @@ describe("PaymentModal — registration answers", () => {
       );
     });
   });
+  it("shows a foreign buyer the card-unavailable message when Asaas refuses foreign payers", async () => {
+    authState.user = { isForeigner: true };
+    const unavailable = "Pagamento com cartão internacional indisponível no momento; seu pedido não foi criado.";
+    vi.stubGlobal(
+      "fetch",
+      mockOrders({ status: 503, body: { code: "foreign_payment_unavailable", message: unavailable } }),
+    );
+    const user = userEvent.setup();
+    renderModal();
+
+    await user.click(screen.getByRole("button", { name: "Pagar com Cartão" }));
+
+    await waitFor(() => {
+      expect(toastSpy).toHaveBeenCalledWith(expect.objectContaining({ description: unavailable }));
+    });
+  });
 });

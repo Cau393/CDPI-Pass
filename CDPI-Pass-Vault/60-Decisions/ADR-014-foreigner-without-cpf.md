@@ -25,7 +25,13 @@ No sandbox key exists on this machine. The probe did **not** create a customer o
 - whether `POST /payments` with `billingType: CREDIT_CARD` and no card number returns `invoiceUrl`
 - the expected failures of `POST /paymentLinks` and `POST /payments` PIX for that customer
 
-The implementation follows the published contract anyway: send the normalized passport as `cpfCnpj`, set `foreignCustomer: true`, look the customer up by `externalReference` (the user id), and create one credit-card charge. If `invoiceUrl` is missing, the pending order is deleted and checkout returns 500. Re-run the probe with a sandbox key before relying on production foreign charges. Production also needs the Asaas foreign-payer permission; until then this call fails in production and Brazilian checkout is unchanged.
+The implementation follows the published contract anyway: send the normalized passport as `cpfCnpj`, set `foreignCustomer: true`, look the customer up by `externalReference` (the user id), and create one credit-card charge. If `invoiceUrl` is missing, the pending order is deleted and checkout returns 500. Since 2026-10-08 an Asaas refusal of foreign payers returns **503** with the CDPI contact (other Asaas errors 502), still deleting the order. Re-run the probe with a sandbox key before relying on production foreign charges. Production also needs the Asaas foreign-payer permission; until then this call fails in production and Brazilian checkout is unchanged.
+
+## Production evidence and probe status (8 Oct 2026)
+
+- Production answered `createForeignCardPayment` on 2026-10-06 with **400**, both errors coded `invalid_object`: "Sua conta não tem permissão para gerar pagadores estrangeiros…" and "O CPF/CNPJ informado é inválido." (the passport is validated as a CPF while the permission is off). The buyer saw a generic 500.
+- `asaasService` now reads `ASAAS_API_URL` (it was hardcoded to production), maps that refusal to 503 and never logs raw Asaas bodies.
+- Sandbox `invoiceUrl` probe: **still blocked**. `frontend/.env` holds only a production key; the probe needs a `$aact_hmlg_…` key against `https://api-sandbox.asaas.com/v3` (customer with `foreignCustomer: true`, then a `CREDIT_CARD` payment). Foreign paid checkout is **not** verified to work in production until Asaas enables foreign payers and this probe passes.
 
 ## Decision
 

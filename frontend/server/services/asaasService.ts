@@ -1,3 +1,12 @@
+import { AsaasApiError } from "../utils/asaasErrors";
+
+const DEFAULT_ASAAS_API_URL = "https://api.asaas.com/v3";
+
+/** Production unless ASAAS_API_URL points elsewhere (sandbox: https://api-sandbox.asaas.com/v3). */
+export function asaasBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  return (env.ASAAS_API_URL || DEFAULT_ASAAS_API_URL).replace(/\/+$/, "");
+}
+
 interface AsaasCustomer {
   name: string;
   email: string;
@@ -33,13 +42,13 @@ interface AsaasPaymentResponse {
   bankSlipUrl?: string;
 }
 
-class AsaasService {
+export class AsaasService {
   private apiKey: string;
   private baseUrl: string;
 
   constructor() {
     this.apiKey = process.env.ASAAS_API_KEY || "";
-    this.baseUrl = "https://api.asaas.com/v3"; // Use production API
+    this.baseUrl = asaasBaseUrl();
     
     if (!process.env.ASAAS_API_KEY) {
       console.error("ASAAS_API_KEY environment variable is required for payment processing");
@@ -63,15 +72,13 @@ class AsaasService {
 
     try {
       const response = await fetch(url, options);
-      const responseData = await response.json();
-
       if (!response.ok) {
-        throw new Error(`Asaas API error: ${response.status} - ${JSON.stringify(responseData)}`);
+        throw new AsaasApiError(response.status, await response.json().catch(() => null));
       }
-
-      return responseData;
+      return await response.json();
     } catch (error) {
-      console.error("Asaas API request failed:", error);
+      // Path only: the query string can carry a CPF or passport.
+      console.error(`Asaas API request failed (${method} ${endpoint.split("?")[0]}):`, error);
       throw error;
     }
   }

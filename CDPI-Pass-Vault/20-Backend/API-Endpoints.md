@@ -84,7 +84,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 ## Orders & payments (user)
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/orders` | 🔑 | Create order → Asaas payment (PIX/Boleto/Card for Brazilians). A foreigner may only send `credit_card`; the charge is one international card invoice, not a payment link. QR generated only if the event is presencial. ADR-016: a paid event needs the document (Asaas `cpfCnpj`), in-person also the address; when missing, 400 `{ code: "identity_required", missing, message }`. Body `answers` as in `/subscribe`. The foreigner card-only rule runs first |
+| POST | `/api/orders` | 🔑 | Create order → Asaas payment (PIX/Boleto/Card for Brazilians). A foreigner may only send `credit_card`; the charge is one international card invoice, not a payment link. QR generated only if the event is presencial. ADR-016: a paid event needs the document (Asaas `cpfCnpj`), in-person also the address; when missing, 400 `{ code: "identity_required", missing, message }`. Body `answers` as in `/subscribe`. The foreigner card-only rule runs first. Charge failure deletes the pending order and answers **503** `{code:"foreign_payment_unavailable"}` when Asaas refuses foreign payers (message carries the CDPI contact), **502** `{code:"payment_provider_error"}` for any other Asaas HTTP error, **500** otherwise |
 | GET | `/api/orders` | ✉️ | My orders. Nested event includes `modality`. `meetingUrl`, `meetingPassword`, and `whatsappGroupUrl` only for `paid`/`courtesy` online orders; omitted otherwise. Never includes `confirmationEmailHtml` |
 | GET | `/api/orders/:id` | 🔑 | Order detail |
 | POST | `/api/orders/:id/check-status` | 🔑 | Poll Asaas payment status |

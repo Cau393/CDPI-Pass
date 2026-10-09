@@ -149,6 +149,8 @@ ASAAS_API_URL=https://sandbox.asaas.com/api/v3
 ```
 This is the local `.env`; the EC2 copy could not be checked (item 9), but `infra/README.md` records no orders in 30 days and no upcoming events, so the outage is currently invisible. It will not be once ticket sales resume. The webhook side (`ASAAS_WEBHOOK_TOKEN`) is proven working and is a separate credential.
 
+**Correction (2026-10-08):** `asaasService` never read `ASAAS_API_URL`; it was hardcoded to `https://api.asaas.com/v3`, so the sandbox value above had no effect. `fix/foreign-card-checkout` makes it read the variable, so the EC2 value must be the production host **before** that PR merges, or every paid checkout goes to sandbox with a production key (401 → 502).
+
 **Fix**: generate a new key in the Asaas dashboard for the environment actually used in prod, set `ASAAS_API_URL` to match, update the EC2 `.env`, restart, and place one real R$1 test order end to end before the next event goes on sale. Store the key in SSM Parameter Store once item 4 lands.
 
 ### 6. `JWT_SECRET` fallback `"your-secret-key"`
