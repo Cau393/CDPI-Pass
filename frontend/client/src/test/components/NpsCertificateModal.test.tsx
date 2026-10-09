@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NpsCertificateModal } from "@/components/nps/NpsCertificateModal";
 
@@ -20,7 +20,7 @@ describe("NpsCertificateModal", () => {
   });
 
   it("shows Outro follow-up when support rating is Outro (cdpi_event)", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
 
     render(
       <NpsCertificateModal
@@ -38,7 +38,7 @@ describe("NpsCertificateModal", () => {
         name: /Como você avalia o suporte da equipe CDPI durante o evento/i,
       }),
     );
-    await user.click(await screen.findByRole("option", { name: "Outro" }));
+    await user.click(within(await screen.findByRole("listbox")).getByText("Outro"));
 
     expect(await screen.findByLabelText(/^Descreva/i)).toBeInTheDocument();
   });
@@ -83,7 +83,7 @@ describe("NpsCertificateModal", () => {
   });
 
   it("shows Outro follow-up on Evento de Terceiros organization question", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
 
     render(
       <NpsCertificateModal
@@ -101,7 +101,7 @@ describe("NpsCertificateModal", () => {
         name: /Como foi sua experiência com a equipe organizadora/i,
       }),
     );
-    await user.click(await screen.findByRole("option", { name: "Outro" }));
+    await user.click(within(await screen.findByRole("listbox")).getByText("Outro"));
 
     expect(await screen.findByLabelText(/^Descreva/i)).toBeInTheDocument();
   });

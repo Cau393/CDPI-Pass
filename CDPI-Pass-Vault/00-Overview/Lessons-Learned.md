@@ -117,3 +117,18 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Root cause:** the answers gate (`resolveRegistrationAnswers`) trusts only `body.answers`, and a form definition change on the server is visible to clients that cannot render it.
 - **Prevention:** when a required question can be derived from data the server already has (here the account profile), the route fills the missing answer before validation (`withLegacyProfileAnswers`); the same question on the courtesy route uses the attendee, never `req.user`, because the redeeming account may be someone else. Integration tests run the old-bundle request (no `answers`) for free, paid (card and PIX) and both courtesy modalities, with a foreigner case.
 
+
+## 2026-10-09 — a user response leaked a pending verification code, and a courtesy link leaked the meeting password
+- **Symptom:** ADR-016 refuter S1/S2, reproduced with integration tests: `GET /api/auth/me`, `PUT /api/profile` and `PUT /api/profile/identity` returned `emailVerificationCode` and its expiry; `GET /api/courtesy-links/:code` (no login) returned `meetingUrl` and `meetingPassword`.
+- **Root cause:** each route hand-stripped one field (`const { password, ...rest } = user`) or returned the raw event row, so every column added later leaked by default.
+- **Prevention:** one sanitizer per entity, used by every route that returns it (`toPublicUser`, `toPublicEvent`); tests assert the secret keys are absent.
+
+## 2026-10-09 — check-then-insert let eight concurrent subscribes create five orders
+- **Symptom:** N parallel `POST /api/events/:id/subscribe` of one account (double click, two tabs) created several paid orders for the same event.
+- **Root cause:** `isAlreadyRegisteredForEvent` ran, then `createOrder`, as two statements with no lock. A unique index is not an option: prod already has 7 (user, event) groups with several legitimate paid orders.
+- **Prevention:** the check and the insert share one transaction holding `FOR UPDATE` on the event row (`createFreeSubscription`), like the courtesy claim. Integration test fires 8 concurrent requests for a Brazilian and a +595 account and expects exactly one order. Still open: `/courtesy/redeem` checks before its claim transaction.
+
+## 2026-10-09 — flaky tests: one real race, the rest CPU starvation of the first, heaviest test
+- **Symptom:** `EventDetailsPage.test.tsx` "switches an override-price code…" failed ~1 run in 5; `NpsCertificateModal.test.tsx` and the first test of `AdminEditEventPage.test.tsx` failed (`Test timed out in 5000ms`, `Unable to find a label`) only when the whole suite ran with competing CPU load.
+- **Root cause:** (1) the override-price test asserted `Promoção aplicada` with `getByText` right after `Comprar Ingresso` appeared, but that text needs a second request (the promo lookup) issued after the cortesia lookup answered; it only passed when the mock answered fast enough. Reproduced deterministically by delaying that second response. (2) The NPS/admin tests are the heaviest interactions (Radix Select via `userEvent`, role-with-name queries over a large form) and run first in their file, so the cold render and the macrotask yield per user action exceed the default 5 s / 1 s budgets when workers compete for CPU; the per-test work was ~290 ms alone and 3 to 5 s under load.
+- **Prevention:** assert anything that depends on a later request with `findBy*`, and pin the order by delaying that mock; interaction-heavy tests use `userEvent.setup({ delay: null })` and cheap queries. No retries and no longer timeouts were added.
