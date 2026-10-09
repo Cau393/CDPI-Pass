@@ -166,7 +166,6 @@ test.describe("legacy questions (C1)", () => {
 
   test("participants Excel: 'Área de atuação' is the last fixed column after 'Status'; no duplicate legacy columns", async ({ page }) => {
     const eventId = prodId("presencialPaid");
-    const eventTitle = (await scalar<string>(`SELECT title FROM events WHERE id=$1`, [eventId]))!;
     const buyer = makeUser("legxls");
     await createAccount(buyer);
     const buyerId = await scalar<string>(`SELECT id FROM users WHERE lower(email)=lower($1)`, [buyer.email]);
@@ -183,7 +182,7 @@ test.describe("legacy questions (C1)", () => {
     await login(page, admin.email);
     await page.goto("/admin/participants");
     await page.getByRole("combobox").first().click();
-    await page.getByRole("option", { name: eventTitle }).click();
+    await page.locator(`[role="option"][data-value="${eventId}"]`).click();
     const [dl] = await Promise.all([
       page.waitForEvent("download", { timeout: 30_000 }),
       page.getByRole("button", { name: /Exportar/ }).click(),

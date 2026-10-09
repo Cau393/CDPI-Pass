@@ -98,7 +98,7 @@ test.describe("admin: participants Excel", () => {
     const exportRows = async () => {
       await page.goto("/admin/participants");
       await page.getByRole("combobox").first().click();
-      await page.getByRole("option", { name: ev.title }).click();
+      await page.locator(`[role="option"][data-value="${ev.id}"]`).click();
       const [dl] = await Promise.all([
         page.waitForEvent("download", { timeout: 20_000 }),
         page.getByRole("button", { name: /Exportar/ }).click(),
