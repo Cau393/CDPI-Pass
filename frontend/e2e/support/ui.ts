@@ -74,7 +74,18 @@ export async function clickEventCta(page: Page, eventId: string) {
 
 export async function waitForRegistrationDialog(page: Page) {
   await page.getByText("Complete sua inscrição").waitFor({ timeout: 10_000 });
-  await page.waitForTimeout(700); // dialog zoom-in animation
+  // The dialog zooms in: wait until the confirm button stopped moving.
+  const confirm = page.getByTestId("button-confirm-registration");
+  await expect(confirm).toBeVisible();
+  let previous = "";
+  await expect
+    .poll(async () => {
+      const now = JSON.stringify(await confirm.boundingBox());
+      const settled = now === previous;
+      previous = now;
+      return settled;
+    })
+    .toBe(true);
 }
 
 export const orderCount = (email: string, eventId: string, status?: string) =>

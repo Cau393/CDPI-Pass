@@ -31,3 +31,16 @@ for (const mod of [http, https]) {
   }
 }
 syncBuiltinESMExports();
+
+// Watchdog: Playwright may SIGKILL the launcher (serve.ts), which cannot clean up after itself.
+// Without this, the detached tsx/node group would keep the port for the next run.
+const parent = Number(process.env.E2E_PARENT_PID);
+if (parent) {
+  setInterval(() => {
+    try {
+      process.kill(parent, 0);
+    } catch {
+      process.exit(0);
+    }
+  }, 500).unref();
+}

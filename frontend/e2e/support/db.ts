@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 // @ts-ignore pg ships no types (@types/pg is not a dependency); only Pool/Client are used here
 import pg from "pg";
@@ -34,6 +34,7 @@ export async function closePool() {
 
 // Everything the suite creates is recorded so staging cleanup deletes exactly that.
 const STATE_DIR = path.resolve(HERE, "../.state");
+export const serverLogPath = () => path.join(STATE_DIR, `server-${cfg.run}.log`);
 export const trackFile = () => path.join(STATE_DIR, `created-${cfg.run}.ndjson`);
 function track(kind: "event" | "userEmail" | "courtesyCode", value: string) {
   mkdirSync(STATE_DIR, { recursive: true });
@@ -180,22 +181,79 @@ export function newEmail(tag: string): string {
 
 export const personName = (name: string) => `${cfg.namePrefix}${name}`;
 
-/** Staging cleanup: deletes only rows this run created. Safe to call in local mode too. */
-export async function cleanupTracked() {
+/**
+ * Staging cleanup: deletes only rows this run recorded (event ids, user e-mails, courtesy codes),
+ * in FK order, each statement on its own. Leftovers are reported, not thrown, and keep the
+ * `.state` file so a re-run of the teardown can finish. Safe to call in local mode too.
+ * Returns the list of problems (empty when everything went).
+ */
+export async function cleanupTracked(): Promise<string[]> {
   const { events, emails, courtesyCodes } = readTracked();
-  const users = emails.length ? await sql(`SELECT id FROM users WHERE lower(email) = ANY($1)`, [emails]) : [];
+  const problems: string[] = [];
+  const attempt = async (label: string, text: string, params: unknown[]) => {
+    try {
+      return await sql(text, params);
+    } catch (e) {
+      problems.push(`${label}: ${e instanceof Error ? e.message.split("\n")[0] : e}`);
+      return null;
+    }
+  };
+  const users = emails.length ? (await attempt("select users", `SELECT id FROM users WHERE lower(email) = ANY($1)`, [emails])) ?? [] : [];
   const userIds = users.map((u) => u.id as string);
-  const orders = await sql(
-    `SELECT id, courtesy_attendee_id FROM orders WHERE event_id = ANY($1) OR user_id = ANY($2)`,
-    [events, userIds],
-  );
-  const attendeeIds = orders.map((o) => o.courtesy_attendee_id).filter(Boolean);
-  await sql(`DELETE FROM orders WHERE id = ANY($1)`, [orders.map((o) => o.id)]);
-  if (attendeeIds.length) await sql(`DELETE FROM courtesy_attendees WHERE id = ANY($1)`, [attendeeIds]);
-  await sql(`DELETE FROM courtesy_links WHERE code = ANY($1)`, [courtesyCodes]);
-  if (emails.length) await sql(`DELETE FROM email_queue WHERE lower("to") = ANY($1)`, [emails]);
-  await sql(`DELETE FROM events WHERE id = ANY($1)`, [events]);
-  if (userIds.length) await sql(`DELETE FROM users WHERE id = ANY($1)`, [userIds]);
+  const orders =
+    (await attempt(
+      "select orders",
+      `SELECT id, event_id, status, courtesy_attendee_id FROM orders WHERE event_id = ANY($1) OR user_id = ANY($2)`,
+      [events, userIds],
+    )) ?? [];
+  const orderIds = orders.map((o) => o.id as string);
+  const attendeeIds = orders.map((o) => o.courtesy_attendee_id).filter(Boolean) as string[];
+  // Pre-existing events we did not create: their counter was bumped by our paid orders.
+  const bumped = new Map<string, number>();
+  for (const o of orders) {
+    if (o.status === "paid" && !events.includes(o.event_id)) bumped.set(o.event_id, (bumped.get(o.event_id) ?? 0) + 1);
+  }
+
+  const del = async (label: string, text: string, params: unknown[]) => attempt(label, text, params);
+  // Children first.
+  await del("print_jobs", `DELETE FROM print_jobs WHERE order_id = ANY($1) OR event_id = ANY($2)`, [orderIds, events]);
+  await del("certificates", `DELETE FROM certificates WHERE user_id = ANY($1) OR event_id = ANY($2)`, [userIds, events]);
+  await del("nps_cdpi_event_responses", `DELETE FROM nps_cdpi_event_responses WHERE user_id = ANY($1) OR event_id = ANY($2)`, [userIds, events]);
+  await del("nps_cdpi_apoiando_responses", `DELETE FROM nps_cdpi_apoiando_responses WHERE user_id = ANY($1) OR event_id = ANY($2)`, [userIds, events]);
+  await del("communicate_jobs", `DELETE FROM communicate_jobs WHERE created_by = ANY($1) OR event_id = ANY($2)`, [userIds, events]);
+  await del("reminder_jobs", `DELETE FROM reminder_jobs WHERE created_by = ANY($1) OR event_id = ANY($2)`, [userIds, events]);
+  await del("mass_send_jobs", `DELETE FROM mass_send_jobs WHERE created_by = ANY($1)`, [userIds]);
+  await del("communicate_templates", `DELETE FROM communicate_templates WHERE event_id = ANY($1)`, [events]);
+  await del("reminder_templates", `DELETE FROM reminder_templates WHERE event_id = ANY($1)`, [events]);
+  await del("event_print_settings", `DELETE FROM event_print_settings WHERE event_id = ANY($1)`, [events]);
+  const deletedOrders = await del("orders", `DELETE FROM orders WHERE id = ANY($1)`, [orderIds]);
+  await del("courtesy_attendees", `DELETE FROM courtesy_attendees WHERE id = ANY($1)`, [attendeeIds]);
+  await del("courtesy_links", `DELETE FROM courtesy_links WHERE code = ANY($1) OR created_by = ANY($2)`, [courtesyCodes, userIds]);
+  await del("email_queue", `DELETE FROM email_queue WHERE lower("to") = ANY($1)`, [emails]);
+  // Counters of pre-existing events: atomic decrement floored at 0, only once the orders are really gone.
+  if (deletedOrders) {
+    for (const [eventId, n] of Array.from(bumped.entries())) {
+      await del("current_attendees", `UPDATE events SET current_attendees = GREATEST(COALESCE(current_attendees, 0) - $2, 0) WHERE id = $1`, [eventId, n]);
+    }
+  }
+  await del("events", `DELETE FROM events WHERE id = ANY($1)`, [events]);
+  await del("users", `DELETE FROM users WHERE id = ANY($1)`, [userIds]);
+
+  // Leftovers that are ours.
+  const left = async (label: string, text: string, params: unknown[]) => {
+    const rows = await attempt(`leftover ${label}`, text, params);
+    if (rows && rows.length) problems.push(`leftover ${label}: ${rows.length}`);
+  };
+  await left("events", `SELECT id FROM events WHERE id = ANY($1)`, [events]);
+  await left("users", `SELECT id FROM users WHERE lower(email) = ANY($1)`, [emails]);
+  await left("courtesy_links", `SELECT id FROM courtesy_links WHERE code = ANY($1)`, [courtesyCodes]);
+  await left("orders", `SELECT id FROM orders WHERE id = ANY($1)`, [orderIds]);
+  return problems;
+}
+
+/** Removes the state file once the cleanup left nothing behind. */
+export function dropTrackFile() {
+  rmSync(trackFile(), { force: true });
 }
 
 /** Valid CPF digits from a numeric seed. */

@@ -38,4 +38,33 @@ test.describe("database guard (dry run, no connection made)", () => {
     expect(mayChangeSchema("local")).toBe(true);
     expect(mayChangeSchema("staging")).toBe(false);
   });
+  test("hostname is anchored: look-alike hosts are refused", () => {
+    const host = (h: string) => `postgresql://u:secret-pass@${h}/db?sslmode=require`;
+    expect(() => assertStagingDatabaseUrl(host(`${STAGING_ENDPOINT}.attacker.example`))).toThrow(/not the staging/);
+    expect(() => assertStagingDatabaseUrl(host(`${STAGING_ENDPOINT}.c-3.sa-east-1.aws.neon.tech.evil.com`))).toThrow(/not the staging/);
+    expect(() => assertStagingDatabaseUrl(host(`x${STAGING_ENDPOINT}.c-3.sa-east-1.aws.neon.tech`))).toThrow(/not the staging/);
+    expect(() => assertStagingDatabaseUrl(host(`${STAGING_ENDPOINT}.c-3.sa-east-1.aws.neon.tech`.toUpperCase()))).not.toThrow();
+  });
+  test("prod endpoint anywhere in the URL is refused first", () => {
+    const base = url(STAGING_ENDPOINT);
+    expect(() => assertStagingDatabaseUrl(`${base}&application_name=${PROD_ENDPOINT}`)).toThrow(/PRODUCTION/);
+    expect(() => assertStagingDatabaseUrl(`${base}&host=${PROD_ENDPOINT}.neon.tech`)).toThrow(/PRODUCTION/);
+  });
+  test("host / hostaddr / options query overrides are refused", () => {
+    for (const q of ["host=evil.example", "hostaddr=10.0.0.1", "options=-c%20search_path%3Dx", "HOST=evil.example"]) {
+      expect(() => assertStagingDatabaseUrl(`${url(STAGING_ENDPOINT)}&${q}`), q).toThrow(/query parameter/);
+    }
+  });
+  test("PGHOST / PGHOSTADDR / PGDATABASE in the environment are refused", () => {
+    for (const name of ["PGHOST", "PGHOSTADDR", "PGDATABASE"]) {
+      expect(() => assertStagingDatabaseUrl(url(STAGING_ENDPOINT), { [name]: "x" }), name).toThrow(new RegExp(name));
+    }
+    expect(() => assertStagingDatabaseUrl(url(STAGING_ENDPOINT), {})).not.toThrow();
+  });
+  test("local mode accepts only localhost / 127.0.0.1 / ::1 as E2E_PG_HOST", () => {
+    for (const h of ["localhost", "127.0.0.1", "::1"]) expect(() => loadConfig({ E2E_PG_HOST: h })).not.toThrow();
+    for (const h of ["db.example.com", "10.0.0.5", "localhost.evil.com", "ep-summer-sun-acft18c1.c-3.neon.tech"]) {
+      expect(() => loadConfig({ E2E_PG_HOST: h }), h).toThrow(/E2E_PG_HOST/);
+    }
+  });
 });

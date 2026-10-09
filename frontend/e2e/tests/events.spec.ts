@@ -1,6 +1,6 @@
 import { test, expect, expectNoHorizontalScroll } from "../support/fixtures";
 import { createEvent, fmtCpf, scalar, sql } from "../support/db";
-import { clickEventCta, createAccount, login, makeUser, orderCount } from "../support/ui";
+import { clickEventCta, createAccount, login, makeUser, orderCount, waitForRegistrationDialog } from "../support/ui";
 import { ADDRESS, completeRegistrationDialog, newPassport, paymentMethods, uniqueCpf } from "../support/flows";
 
 test.describe("online free event", () => {
@@ -68,8 +68,7 @@ test.describe("presencial free event", () => {
     await createAccount(u);
     await login(page, u.email);
     await clickEventCta(page, ev.id);
-    await page.getByText("Complete sua inscrição").waitFor();
-    await page.waitForTimeout(700);
+    await waitForRegistrationDialog(page);
     await page.getByTestId("button-confirm-registration").click();
     await expect(page.locator(".text-destructive, .text-red-600").first()).toBeVisible();
     expect(await orderCount(u.email, ev.id)).toBe("0");

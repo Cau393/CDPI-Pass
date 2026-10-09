@@ -51,7 +51,7 @@ export default defineConfig({
     },
   ],
   projects: [
-    { name: "guard", testMatch: /guard\.spec\.ts/ },
+    { name: "guard", testMatch: /guard\.spec\.ts/ } /* guard.spec.ts + network-guard.spec.ts: viewport-independent, run once */,
     ...viewports.map((v) => ({
       name: v.name,
       testIgnore: /guard\.spec\.ts/,
