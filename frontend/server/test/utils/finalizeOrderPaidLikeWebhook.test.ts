@@ -133,9 +133,8 @@ describe("finalizeOrderPaidLikeWebhook", () => {
     );
     expect(updateOrder).toHaveBeenCalledWith("order-uuid", { status: "paid" });
     expect(incrementCourtesyLinkUsage).toHaveBeenCalledWith("cl-1");
-    expect(updateEvent).toHaveBeenCalledWith("evt-1", {
-      currentAttendees: 2,
-    });
+    // Counter only: a sale is not an edit, so the admin's loaded updatedAt stays valid.
+    expect(updateEvent).toHaveBeenCalledWith("evt-1", { currentAttendees: 2 }, { touchUpdatedAt: false });
   });
 
   it("finalizes free cortesia (pending + courtesy payment method) as paid", async () => {
