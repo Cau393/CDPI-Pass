@@ -292,7 +292,18 @@ Every new test must **fail before** its change. Gates per PR: `pnpm run check`, 
   - 4-field account: `identity_required` → CPF + address → PIX 201.
   - Foreigner: PIX → 400, card → **502, fixed by #12** (passport sent as `cpfCnpj`) → 201 with a sandbox invoice URL.
   - The sandbox objects were deleted afterwards (8 payments, 2 links, 5 customers).
-- Step 6: merge scheduled for **22:27 BRT** 2026-10-09. Over 21 days, 22h had 3 orders against 33 at 17h.
+- Step 6: the 22:27 BRT 2026-10-09 merge was **cancelled**: the owner wanted the webhook proven on the sandbox first.
+- **Asaas sandbox webhook** (2026-10-09, combined code on a local DB, sandbox webhook → ngrok → a proxy that forwards only `POST /api/webhooks/asaas`). Every delivery carried the token and got HTTP 200.
+  - Payments were simulated with `POST /v3/sandbox/payment/{id}/confirm` (PIX, boleto) and `/overdue`. Card checkout pages (`/c/…`, `/i/…`) are behind reCAPTCHA, so cards need a human.
+  - BR PIX `PAYMENT_RECEIVED` → `paid`, attendees +1, ticket e-mail queued, Make.com blocked by the guard. Boleto → `paid`. 4-field account PIX → `paid` with answers.
+  - Replayed delivery ×2 → still one paid order, the counter did not double. Wrong token → 401, nothing changed.
+  - `PAYMENT_OVERDUE` and `PAYMENT_DELETED` → pending order `cancelled`. `PAYMENT_CREATED` → 200, no change.
+  - **Card through the payment link:** Asaas creates a new `pay_…` (one per installment) with `paymentLink` = the link id. Not proven whether it copies the link's `externalReference`, so the handler now falls back to `paymentLink` (fix PR into #4).
+  - **Foreign card:** Asaas has not enabled foreign customers on the account yet (owner, 2026-10-09: next week). Until then the site blocks paid checkout for foreigners; they can still sign up for free events.
+  - A foreign invoice paid by hand in the sandbox: `PAYMENT_CONFIRMED`, then `PAYMENT_RECEIVED` 5 s later → `paid` once, attendees +1 only.
+  - An overdue PIX paid after the order was cancelled: `PAYMENT_RECEIVED` → the order **stays cancelled**. The customer paid and has no ticket. This is pre-existing prod behaviour; the owner decides whether a late payment should revive the order or alert an admin.
+  - Fixes in PR #13 (into #4): `paymentLink` fallback, atomic `pending → paid` claim, foreign paid block.
+- **Gate before the deploy (owner, 2026-10-09):** the owner runs a complete purchase and sign-up on **localhost with the staging DB and the sandbox key**, with the sandbox webhook live through ngrok. Only after that is #4 merged into `hotfix-frontend-update`.
 
 Merge #4 only after every step before it has observed output. The why behind each step is in [[70-Operations/ADR-016-Rollout-Plan]].
 

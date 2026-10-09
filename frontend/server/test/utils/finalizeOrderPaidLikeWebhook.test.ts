@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Order } from "@shared/schema";
 
-const updateOrder = vi.fn();
+const markPendingOrderPaid = vi.fn();
+const getOrder = vi.fn();
 const incrementCourtesyLinkUsage = vi.fn();
 const getEvent = vi.fn();
 const getUser = vi.fn();
@@ -15,7 +16,8 @@ const cancelPayment = vi.fn();
 
 vi.mock("../../storage", () => ({
   storage: {
-    updateOrder: (...a: unknown[]) => updateOrder(...a),
+    markPendingOrderPaid: (...a: unknown[]) => markPendingOrderPaid(...a),
+    getOrder: (...a: unknown[]) => getOrder(...a),
     incrementCourtesyLinkUsage: (...a: unknown[]) =>
       incrementCourtesyLinkUsage(...a),
     getEvent: (...a: unknown[]) => getEvent(...a),
@@ -77,6 +79,7 @@ function baseOrder(overrides: Partial<Order> = {}): Order {
 describe("finalizeOrderPaidLikeWebhook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    markPendingOrderPaid.mockResolvedValue(true);
     existsOtherPaidOrderForCpfAndEvent.mockResolvedValue(false);
     existsOtherPaidOrderForForeignDocumentAndEvent.mockResolvedValue(false);
     existsOtherPaidOrderForUserAndEvent.mockResolvedValue(false);
@@ -105,7 +108,18 @@ describe("finalizeOrderPaidLikeWebhook", () => {
       billingType: "CREDIT_CARD",
     });
     expect(r).toEqual({ ok: false, code: "already_paid" });
-    expect(updateOrder).not.toHaveBeenCalled();
+    expect(markPendingOrderPaid).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when another delivery already flipped the order (stale pending snapshot)", async () => {
+    markPendingOrderPaid.mockResolvedValue(false);
+    getOrder.mockResolvedValue(baseOrder({ status: "paid" }));
+    const r = await finalizeOrderPaidLikeWebhook(baseOrder(), { billingType: "CREDIT_CARD" });
+    expect(r).toEqual({ ok: false, code: "already_paid" });
+    expect(incrementEventAttendees).not.toHaveBeenCalled();
+    expect(incrementCourtesyLinkUsage).not.toHaveBeenCalled();
+    expect(emailService.sendTicketEmail).not.toHaveBeenCalled();
+    expect(emailService.sendOnlineEventEmail).not.toHaveBeenCalled();
   });
 
   it("returns not_pending when order is cancelled", async () => {
@@ -114,7 +128,7 @@ describe("finalizeOrderPaidLikeWebhook", () => {
       billingType: "CREDIT_CARD",
     });
     expect(r).toEqual({ ok: false, code: "not_pending" });
-    expect(updateOrder).not.toHaveBeenCalled();
+    expect(markPendingOrderPaid).not.toHaveBeenCalled();
   });
 
   it("finalizes promo-link (paid) orders as paid and increments link usage", async () => {
@@ -133,7 +147,7 @@ describe("finalizeOrderPaidLikeWebhook", () => {
       "123",
       "evt-1",
     );
-    expect(updateOrder).toHaveBeenCalledWith("order-uuid", { status: "paid" });
+    expect(markPendingOrderPaid).toHaveBeenCalledWith("order-uuid");
     expect(incrementCourtesyLinkUsage).toHaveBeenCalledWith("cl-1");
     // Counter only: a sale is not an edit, so the admin's loaded updatedAt stays valid.
     expect(incrementEventAttendees).toHaveBeenCalledWith("evt-1");
@@ -151,7 +165,7 @@ describe("finalizeOrderPaidLikeWebhook", () => {
       billingType: "UNKNOWN",
     });
     expect(r).toEqual({ ok: true });
-    expect(updateOrder).toHaveBeenCalledWith("order-uuid", { status: "paid" });
+    expect(markPendingOrderPaid).toHaveBeenCalledWith("order-uuid");
     expect(incrementCourtesyLinkUsage).toHaveBeenCalledWith("cl-1");
   });
 
@@ -161,7 +175,7 @@ describe("finalizeOrderPaidLikeWebhook", () => {
       billingType: "CREDIT_CARD",
     });
     expect(r).toEqual({ ok: true });
-    expect(updateOrder).toHaveBeenCalledWith("order-uuid", { status: "paid" });
+    expect(markPendingOrderPaid).toHaveBeenCalledWith("order-uuid");
     expect(incrementCourtesyLinkUsage).not.toHaveBeenCalled();
   });
 
@@ -210,7 +224,7 @@ describe("finalizeOrderPaidLikeWebhook", () => {
     expect(r).toEqual({ ok: false, code: "duplicate_other_paid" });
     expect(cancelPayment).toHaveBeenCalledWith("pay-dup");
     expect(discardPendingOrder).toHaveBeenCalledWith("order-uuid");
-    expect(updateOrder).not.toHaveBeenCalled();
+    expect(markPendingOrderPaid).not.toHaveBeenCalled();
     expect(updateEvent).not.toHaveBeenCalled();
   });
 
@@ -227,7 +241,7 @@ describe("finalizeOrderPaidLikeWebhook", () => {
     expect(r).toEqual({ ok: false, code: "duplicate_other_paid" });
     expect(cancelPayment).not.toHaveBeenCalled();
     expect(discardPendingOrder).not.toHaveBeenCalled();
-    expect(updateOrder).not.toHaveBeenCalled();
+    expect(markPendingOrderPaid).not.toHaveBeenCalled();
   });
 
   it("sends the ticket email for a presencial event", async () => {

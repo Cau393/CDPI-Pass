@@ -107,7 +107,13 @@ export async function finalizeOrderPaidLikeWebhook(
     return handleDuplicatePaidInscription(order, duplicatePolicy);
   }
 
-  await storage.updateOrder(order.id, { status: "paid" });
+  // Callers hold a snapshot read earlier: concurrent deliveries (installments of one
+  // link purchase, Asaas redeliveries, the check-status poll) can all see "pending".
+  // Only the one that flips the row does the side effects below.
+  if (!(await storage.markPendingOrderPaid(order.id))) {
+    const current = await storage.getOrder(order.id);
+    return { ok: false, code: current?.status === "paid" ? "already_paid" : "not_pending" };
+  }
 
   if (order.courtesyLinkId) {
     await storage.incrementCourtesyLinkUsage(order.courtesyLinkId);

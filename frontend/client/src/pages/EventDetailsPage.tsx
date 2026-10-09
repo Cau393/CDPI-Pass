@@ -19,6 +19,7 @@ import { useFreeSubscribe } from "@/hooks/useFreeSubscribe";
 import { EventRegistrationDialog } from "@/components/EventRegistrationDialog";
 import { needsRegistrationDialog } from "@/lib/eventRegistration";
 import type { SystemField } from "@shared/eventRegistrationForm";
+import { FOREIGN_PAID_UNAVAILABLE_MESSAGE, foreignPaidCheckoutBlocked } from "@shared/foreignCheckout";
 import {
   COURTESY_CODE_INVALID_COPY,
   courtesyLoginRequiredDescription,
@@ -159,6 +160,8 @@ export default function EventDetailsPage() {
       : null;
   const feeLabel =
     event && !showCourtesyOffer ? eventFeeLabel(event, "detailed") : null;
+  // Paid checkout (a promo price included); free sign-up and courtesy redeem stay open.
+  const foreignPaidBlocked = !isFree && !showCourtesyOffer && foreignPaidCheckoutBlocked(user);
 
   const handleFreeSubscribe = () => {
     if (!event) return;
@@ -201,6 +204,14 @@ export default function EventDetailsPage() {
 
     if (!event) return;
     if (isFreeEvent(event)) return;
+    if (foreignPaidCheckoutBlocked(user)) {
+      toast({
+        title: "Compra indisponível",
+        description: FOREIGN_PAID_UNAVAILABLE_MESSAGE,
+        variant: "destructive",
+      });
+      return;
+    }
 
     // Store the event and promo in state
     setSelectedEvent({ ...selected, promoCode: code });
@@ -403,7 +414,8 @@ export default function EventDetailsPage() {
                     : soldOut ||
                       hasPaidForEvent ||
                       salesClosed ||
-                      isSubscribePending
+                      isSubscribePending ||
+                      foreignPaidBlocked
                 }
                 data-testid="button-event-cta"
               >
@@ -427,6 +439,14 @@ export default function EventDetailsPage() {
               {hasPaidForEvent && (
                 <p className="text-sm text-muted-foreground text-center sm:text-right w-full sm:w-auto">
                   Você já possui inscrição confirmada para este evento.
+                </p>
+              )}
+              {!hasPaidForEvent && !salesClosed && !soldOut && foreignPaidBlocked && (
+                <p
+                  className="text-sm text-muted-foreground text-center sm:text-right w-full sm:w-auto"
+                  data-testid="foreign-paid-unavailable"
+                >
+                  {FOREIGN_PAID_UNAVAILABLE_MESSAGE}
                 </p>
               )}
               {courtesyErrorMessage && (

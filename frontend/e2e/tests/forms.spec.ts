@@ -3,6 +3,7 @@ import { test, expect, expectNoHorizontalScroll } from "../support/fixtures";
 import { createEvent, fmtCpf, question, scalar } from "../support/db";
 import { clickEventCta, createAccount, fillSignup, login, makeUser, orderCount, submitAndVerify, waitForRegistrationDialog } from "../support/ui";
 import { ADDRESS, completeRegistrationDialog, newPassport, paymentMethods, uniqueCpf } from "../support/flows";
+import { FOREIGN_PAID_CHECKOUT_ENABLED } from "../../shared/foreignCheckout";
 
 const cargo = question("q-cargo", "Cargo");
 const turno = question("q-turno", "Turno", { type: "radio", options: ["Manhã", "Tarde"], required: false });
@@ -50,6 +51,7 @@ test.describe("event registration forms", () => {
   });
 
   test("foreigner on a paid online event: passport only (no address), card-only hint, then card-only checkout", async ({ page }) => {
+    test.skip(!FOREIGN_PAID_CHECKOUT_ENABLED, "Asaas has not enabled foreign payers yet: paid checkout refuses foreigners");
     const ev = await createEvent("onlineFree", { titleSuffix: "pago", isFree: false });
     const u = makeUser("onpaidpy", { phone: "595981123456" });
     await createAccount(u);

@@ -23,6 +23,7 @@ import type { Server } from "http";
 import jwt from "jsonwebtoken";
 import { Pool } from "pg";
 import { randomUUID } from "crypto";
+import { FOREIGN_PAID_CHECKOUT_ENABLED } from "@shared/foreignCheckout";
 
 const VERIFY_URL = process.env.VERIFY_DATABASE_URL;
 const enabled = Boolean(VERIFY_URL);
@@ -413,7 +414,7 @@ describe.skipIf(!enabled)("free events and sales-closed (real routes + real DB)"
   });
 
   describe("foreign card checkout while Asaas refuses foreign payers", () => {
-    it("answers 503 with the CDPI contact and leaves no order behind", async () => {
+    it.runIf(FOREIGN_PAID_CHECKOUT_ENABLED)("answers 503 with the CDPI contact and leaves no order behind", async () => {
       const eventId = await createEvent({ price: "100.00" });
       const foreigner = await createForeignUser();
 
