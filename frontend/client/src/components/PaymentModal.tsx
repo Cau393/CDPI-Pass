@@ -13,7 +13,7 @@ import type { SystemField } from "@shared/eventRegistrationForm";
 import { publicEventLocationLabel } from "@shared/eventModality";
 import { isFreeEvent } from "@/lib/eventCta";
 import { parseApiErrorMessage } from "@/lib/eventForm";
-import { identityRequiredMissing } from "@/lib/eventRegistration";
+import { identityRequiredMissing, refreshAfterStaleRegistration } from "@/lib/eventRegistration";
 
 interface EventForModal {
   id: string;
@@ -85,6 +85,7 @@ export default function PaymentModal({
         });
       },
       onError: (error: Error) => {
+        refreshAfterStaleRegistration(error, event.id);
         const missing = identityRequiredMissing(error);
         if (missing) {
           onIdentityRequired(missing, parseApiErrorMessage(error));

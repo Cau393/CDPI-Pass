@@ -3,6 +3,7 @@ import type { RegistrationField } from "@shared/eventRegistrationForm";
 import {
   identityRequiredMissing,
   legacyPrefill,
+  staleRegistrationError,
   needsRegistrationDialog,
   registrationAnswerErrors,
   registrationAnswersPayload,
@@ -112,6 +113,27 @@ describe("identityRequiredMissing", () => {
   it("ignores other 400 answers", () => {
     const err = new Error('400: {"message":"Responda a pergunta obrigatória: Cargo"}');
     expect(identityRequiredMissing(err)).toBeNull();
+  });
+});
+
+describe("staleRegistrationError", () => {
+  it("flags identity_required as an identity-stale error", () => {
+    const err = new Error('400: {"code":"identity_required","missing":["document"],"message":"x"}');
+    expect(staleRegistrationError(err)).toBe("identity");
+  });
+
+  it.each([
+    "Resposta para uma pergunta que não existe neste evento.",
+    "Responda a pergunta obrigatória: Cargo",
+    "Escolha uma das opções da pergunta: Turno",
+  ])("flags the form-answer 400 %s as a form-stale error", (message) => {
+    expect(staleRegistrationError(new Error(`400: ${JSON.stringify({ message })}`))).toBe("form");
+  });
+
+  it("ignores unrelated errors and non-400 statuses", () => {
+    expect(staleRegistrationError(new Error('400: {"message":"Evento esgotado"}'))).toBeNull();
+    expect(staleRegistrationError(new Error('500: {"message":"Responda a pergunta obrigatória: A"}'))).toBeNull();
+    expect(staleRegistrationError("nope")).toBeNull();
   });
 });
 

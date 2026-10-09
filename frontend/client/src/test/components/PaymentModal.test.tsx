@@ -15,6 +15,7 @@ vi.mock("../../hooks/use-toast", () => ({
 }));
 
 import PaymentModal from "../../components/PaymentModal";
+import { queryClient as appQueryClient } from "../../lib/queryClient";
 
 const event = {
   id: "44444444-4444-4444-4444-444444444444",
@@ -161,6 +162,39 @@ describe("PaymentModal — registration answers", () => {
 
     await waitFor(() => {
       expect(toastSpy).toHaveBeenCalledWith(expect.objectContaining({ description: unavailable }));
+    });
+  });
+
+  describe("stale cached event after an admin edited the form", () => {
+    async function pay(body: unknown) {
+      authState.user = { isForeigner: false };
+      vi.stubGlobal("fetch", mockOrders({ status: 400, body }));
+      const invalidate = vi.spyOn(appQueryClient, "invalidateQueries").mockResolvedValue();
+      const user = userEvent.setup();
+      renderModal();
+      await user.click(screen.getByTestId("button-confirm-payment"));
+      await waitFor(() => expect(invalidate).toHaveBeenCalled());
+      return invalidate.mock.calls.map(([filters]) => (filters as { queryKey: unknown[] }).queryKey);
+    }
+
+    it("refetches the event and the account on identity_required", async () => {
+      const keys = await pay({ code: "identity_required", missing: ["document"], message: "Complete seus dados" });
+
+      expect(keys).toContainEqual([`/api/events/${event.id}`]);
+      expect(keys).toContainEqual(["/api/auth/me"]);
+    });
+
+    it("refetches the event when an answer targets an archived or unknown question", async () => {
+      const keys = await pay({ message: "Resposta para uma pergunta que não existe neste evento." });
+
+      expect(keys).toContainEqual([`/api/events/${event.id}`]);
+      expect(keys).not.toContainEqual(["/api/auth/me"]);
+    });
+
+    it("refetches the event when a newly required question is missing", async () => {
+      const keys = await pay({ message: "Responda a pergunta obrigatória: Turno" });
+
+      expect(keys).toContainEqual([`/api/events/${event.id}`]);
     });
   });
 });
