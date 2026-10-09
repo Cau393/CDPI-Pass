@@ -112,3 +112,8 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Root cause:** ADR-016 added the account id to the "already registered" check because 4-field accounts may have no document, but courtesy orders belong to the redeeming account, not the attendee.
 - **Prevention:** an inscription dedupe matches the person who attends: own inscriptions by account (`courtesy_attendee_id IS NULL`), courtesies by the attendee's document or e-mail. Integration tests cover sponsor → teammates and sponsor → self.
 
+## 2026-10-09 — attaching required questions after launch breaks tabs on the old bundle
+- **Symptom (caught at design time):** adding required `legacy-*` questions to live events makes any browser tab still running the pre-deploy bundle send `POST /api/orders` / `/subscribe` without `answers`, which would 400 for every old-bundle buyer.
+- **Root cause:** the answers gate (`resolveRegistrationAnswers`) trusts only `body.answers`, and a form definition change on the server is visible to clients that cannot render it.
+- **Prevention:** when a required question can be derived from data the server already has (here the account profile), the route fills the missing answer before validation (`withLegacyProfileAnswers`); the same question on the courtesy route uses the attendee, never `req.user`, because the redeeming account may be someone else. Integration tests run the old-bundle request (no `answers`) for free, paid (card and PIX) and both courtesy modalities, with a foreigner case.
+

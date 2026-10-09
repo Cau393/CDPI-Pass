@@ -9,11 +9,15 @@ import {
   REGISTRATION_FIELD_LABEL_INVALID,
   REGISTRATION_FIELD_OPTIONS_INVALID,
   REGISTRATION_FIELD_TYPE_CHANGED,
+  LEGACY_QUESTIONS,
+  legacyProfileValue,
+  mergeLegacyIntoProfile,
   parseRegistrationFormField,
   participantAnswers,
   registrationFormMultipartValue,
   resolveRegistrationAnswers,
   systemFieldsFor,
+  withLegacyProfileAnswers,
   withoutBuyerAnswers,
   type RegistrationField,
 } from "@shared/eventRegistrationForm";
@@ -274,5 +278,73 @@ describe("participantAnswers", () => {
   it("returns no answers when the order has neither", () => {
     expect(participantAnswers([], null)).toEqual([]);
     expect(participantAnswers(null, null)).toEqual([]);
+  });
+});
+
+describe("legacy questions (ADR-016 legacy profile fields)", () => {
+  const legacyFields: RegistrationField[] = LEGACY_QUESTIONS.map((q) => ({
+    id: q.id,
+    type: "text",
+    label: q.label,
+    options: [],
+    required: true,
+    archived: false,
+  }));
+
+  it("maps the three legacy ids to the profile keys", () => {
+    expect(LEGACY_QUESTIONS.map((q) => [q.id, q.profileKey, q.label])).toEqual([
+      ["legacy-occupation", "occupation", "Cargo que ocupa"],
+      ["legacy-partner-company", "partnerCompany", "Empresa que trabalha"],
+      ["legacy-area-of-activity", "areaOfActivity", "Área de atuação"],
+    ]);
+  });
+
+  it("legacyProfileValue ignores null, blank and the not-applicable placeholder", () => {
+    const profile = { occupation: " Médica ", partnerCompany: "Nao aplicavel", areaOfActivity: "  " };
+    expect(legacyProfileValue("legacy-occupation", profile)).toBe("Médica");
+    expect(legacyProfileValue("legacy-partner-company", profile)).toBeNull();
+    expect(legacyProfileValue("legacy-area-of-activity", profile)).toBeNull();
+    expect(legacyProfileValue("legacy-occupation", { occupation: null })).toBeNull();
+    expect(legacyProfileValue("f-cargo", profile)).toBeNull();
+  });
+
+  it("withLegacyProfileAnswers fills only missing or blank legacy answers, explicit wins", () => {
+    const profile = { occupation: "Médica", partnerCompany: "Acme", areaOfActivity: "Pesquisa" };
+    const body = withLegacyProfileAnswers(legacyFields, { answers: { "legacy-occupation": "Chefe", "legacy-partner-company": "  " } }, profile);
+    expect(body).toEqual({
+      answers: {
+        "legacy-occupation": "Chefe",
+        "legacy-partner-company": "Acme",
+        "legacy-area-of-activity": "Pesquisa",
+      },
+    });
+  });
+
+  it("withLegacyProfileAnswers leaves the body alone when the profile has no real value or the field is archived", () => {
+    const none = withLegacyProfileAnswers(legacyFields, {}, { occupation: "Nao aplicavel" });
+    expect(resolveRegistrationAnswers({ fields: legacyFields, body: none }).ok).toBe(false);
+    const archived = legacyFields.map((f) => ({ ...f, archived: true }));
+    expect(withLegacyProfileAnswers(archived, {}, { occupation: "Médica" })).toEqual({});
+  });
+
+  it("withLegacyProfileAnswers does not touch non-object answers (still rejected downstream)", () => {
+    const body = withLegacyProfileAnswers(legacyFields, { answers: ["x"] }, { occupation: "Médica" });
+    expect(resolveRegistrationAnswers({ fields: legacyFields, body }).ok).toBe(false);
+  });
+
+  it("mergeLegacyIntoProfile prefers the order's answer over the profile and drops the legacy answers", () => {
+    const merged = mergeLegacyIntoProfile(
+      [
+        { fieldId: "legacy-occupation", label: "Cargo que ocupa", value: "Diretora" },
+        { fieldId: "f-turno", label: "Turno", value: "Tarde" },
+      ],
+      { occupation: "Médica", partnerCompany: "Acme", areaOfActivity: "Nao aplicavel" },
+    );
+    expect(merged).toEqual({
+      occupation: "Diretora",
+      partnerCompany: "Acme",
+      areaOfActivity: null,
+      answers: [{ fieldId: "f-turno", label: "Turno", value: "Tarde" }],
+    });
   });
 });

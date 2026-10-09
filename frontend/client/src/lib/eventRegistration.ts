@@ -1,5 +1,7 @@
 import {
+  legacyProfileValue,
   resolveRegistrationAnswers,
+  type LegacyProfile,
   systemFieldsFor,
   type RegistrationField,
   type SystemField,
@@ -89,4 +91,22 @@ export function registrationAnswersPayload(
     if (value) answers[field.id] = value;
   }
   return answers;
+}
+
+/**
+ * Answers to prefill from the account for the active legacy questions
+ * (Cargo, Empresa, Área de atuação): only real profile values, never the
+ * "Nao aplicavel" placeholder of 4-field accounts. The attendee can edit them.
+ */
+export function legacyPrefill(
+  fields: readonly RegistrationField[],
+  profile: LegacyProfile | null | undefined,
+): Record<string, string> {
+  const prefill: Record<string, string> = {};
+  for (const field of fields) {
+    if (field.archived) continue;
+    const value = legacyProfileValue(field.id, profile);
+    if (value !== null) prefill[field.id] = value;
+  }
+  return prefill;
 }

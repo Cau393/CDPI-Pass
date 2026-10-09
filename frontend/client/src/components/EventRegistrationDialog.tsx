@@ -21,6 +21,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
 import { parseApiErrorMessage } from "@/lib/eventForm";
 import {
+  legacyPrefill,
   registrationAnswerErrors,
   registrationAnswersPayload,
   registrationQuestionsFor,
@@ -113,6 +114,9 @@ export function EventRegistrationDialog({
     // Prefill blanks only, when opening: the draft wins over the account.
     if (!form.getValues("address").trim() && user.address) form.setValue("address", user.address);
     if (user.isForeigner) form.setValue("isForeigner", true);
+    // Legacy questions (Cargo, Empresa, Área): the account's real values, under any draft.
+    const prefill = legacyPrefill(questions?.fields ?? [], user);
+    if (Object.keys(prefill).length > 0) setAnswers((prev) => ({ ...prefill, ...prev }));
   }, [open]);
 
   const handleCancel = () => {

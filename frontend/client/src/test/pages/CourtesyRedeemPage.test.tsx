@@ -18,6 +18,9 @@ type Account = {
   cpf?: string | null;
   address?: string | null;
   birthDate?: string | null;
+  occupation?: string | null;
+  partnerCompany?: string | null;
+  areaOfActivity?: string | null;
 };
 const authState = {
   isAuthenticated: false,
@@ -33,6 +36,7 @@ vi.mock("../../hooks/use-toast", () => ({
   useToast: () => ({ toast: toastSpy }),
 }));
 
+import { LEGACY_QUESTIONS } from "@shared/eventRegistrationForm";
 import CourtesyRedeemPage from "../../pages/CourtesyRedeemPage";
 
 const EVENT_ID = "11111111-1111-1111-1111-111111111111";
@@ -355,5 +359,55 @@ describe("CourtesyRedeemPage — registration questions", () => {
       await screen.findByText("Responda a pergunta obrigatória: Como soube do evento"),
     ).toBeInTheDocument();
     expect(redeemBodies(fetchMock)).toEqual([]);
+  });
+
+  describe("legacy profile questions", () => {
+    const legacyForm = LEGACY_QUESTIONS.map((q) => ({
+      id: q.id,
+      type: "text" as const,
+      label: q.label,
+      options: [],
+      required: true,
+      archived: false,
+    }));
+
+    it("does not ask cargo and company twice: only the area is asked, and the account's profile is never sent", async () => {
+      authState.user = {
+        email: "ana@example.com",
+        name: "Ana",
+        phone: "595981123456",
+        occupation: "Cargo da conta",
+        partnerCompany: "Empresa da conta",
+        areaOfActivity: "Área da conta",
+      };
+      const fetchMock = mockRedeem({
+        id: EVENT_ID,
+        title: "Webinar CDPI",
+        modality: "online",
+        registrationForm: legacyForm,
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.type(await screen.findByTestId("input-partner-company"), "Empresa do Convidado");
+      await user.type(screen.getByTestId("input-occupation"), "Cargo do Convidado");
+      expect(screen.queryByLabelText(/Cargo que ocupa/)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/Empresa que trabalha/)).not.toBeInTheDocument();
+      const area = screen.getByLabelText(/Área de atuação/);
+      expect(area).toHaveValue("");
+      await user.type(area, "Farmácia");
+      await user.click(screen.getByTestId("button-redeem"));
+
+      await waitFor(() => {
+        expect(redeemBodies(fetchMock)).toEqual([
+          expect.objectContaining({
+            partnerCompany: "Empresa do Convidado",
+            occupation: "Cargo do Convidado",
+            answers: { "legacy-area-of-activity": "Farmácia" },
+          }),
+        ]);
+      });
+    });
   });
 });

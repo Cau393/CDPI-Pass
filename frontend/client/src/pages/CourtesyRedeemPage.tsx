@@ -6,7 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import type { z } from "zod";
 import { courtesyRedemptionSchema, onlineCourtesyRedemptionSchema } from "@shared/schema";
 import { isOnlineEvent } from "@shared/eventModality";
-import type { RegistrationField } from "@shared/eventRegistrationForm";
+import { COURTESY_FILLED_LEGACY_IDS, type RegistrationField } from "@shared/eventRegistrationForm";
 import { RegistrationFields } from "@/components/RegistrationFields";
 import { parseApiErrorMessage } from "@/lib/eventForm";
 import { registrationAnswerErrors, registrationAnswersPayload } from "@/lib/eventRegistration";
@@ -84,8 +84,9 @@ export default function CourtesyRedeemPage() {
 
   // Online courtesy asks no document, birth date or address (ADR-016).
   const isOnline = isOnlineEvent(linkData?.event ?? {});
+  // Cargo and company legacy questions are the attendee's own form fields above (the server fills them).
   const questions = ((linkData?.event?.registrationForm ?? []) as RegistrationField[]).filter(
-    (field) => !field.archived,
+    (field) => !field.archived && !COURTESY_FILLED_LEGACY_IDS.includes(field.id),
   );
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [answerErrors, setAnswerErrors] = useState<Record<string, string>>({});

@@ -2,13 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { RegistrationField, SystemField } from "@shared/eventRegistrationForm";
+import { LEGACY_QUESTIONS, type RegistrationField, type SystemField } from "@shared/eventRegistrationForm";
 
 type Account = {
   cpf: string | null;
   foreignDocument: string | null;
   isForeigner: boolean;
   address: string | null;
+  occupation?: string | null;
+  partnerCompany?: string | null;
+  areaOfActivity?: string | null;
 };
 const authState: { user: Account | undefined } = { user: undefined };
 vi.mock("../../hooks/useAuth", () => ({
@@ -237,6 +240,86 @@ describe("EventRegistrationDialog", () => {
 
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith({ "q-cargo": "Farmacêutica" }));
     expect(identityBodies(fetchMock)).toEqual([]);
+  });
+
+  describe("legacy profile questions", () => {
+    const legacyForm: RegistrationField[] = LEGACY_QUESTIONS.map((q) => ({
+      id: q.id,
+      type: "text",
+      label: q.label,
+      options: [],
+      required: true,
+      archived: false,
+    }));
+    const legacyEvent: DialogEvent = { ...freeOnline, registrationForm: legacyForm };
+
+    it("prefills the real profile values, editable, and confirms them", async () => {
+      authState.user = {
+        ...newAccount,
+        occupation: "Médica",
+        partnerCompany: "Clínica Aurora",
+        areaOfActivity: "Pesquisa",
+      };
+      const user = userEvent.setup();
+      const { onConfirm } = renderDialog(legacyEvent);
+
+      const occupation = screen.getByLabelText(/Cargo que ocupa/);
+      expect(occupation).toHaveValue("Médica");
+      expect(screen.getByLabelText(/Empresa que trabalha/)).toHaveValue("Clínica Aurora");
+      expect(screen.getByLabelText(/Área de atuação/)).toHaveValue("Pesquisa");
+      await user.clear(occupation);
+      await user.type(occupation, "Diretora");
+      await user.click(screen.getByRole("button", { name: "Continuar" }));
+
+      await waitFor(() =>
+        expect(onConfirm).toHaveBeenCalledWith({
+          "legacy-occupation": "Diretora",
+          "legacy-partner-company": "Clínica Aurora",
+          "legacy-area-of-activity": "Pesquisa",
+        }),
+      );
+    });
+
+    it("leaves a 4-field account's questions empty (the placeholder is not a value)", async () => {
+      authState.user = {
+        ...newAccount,
+        occupation: "Nao aplicavel",
+        partnerCompany: "Nao aplicavel",
+        areaOfActivity: "Nao aplicavel",
+      };
+      const user = userEvent.setup();
+      const { onConfirm } = renderDialog(legacyEvent);
+
+      expect(screen.getByLabelText(/Cargo que ocupa/)).toHaveValue("");
+      await user.click(screen.getByRole("button", { name: "Continuar" }));
+      expect(onConfirm).not.toHaveBeenCalled();
+      expect(screen.getByLabelText(/Cargo que ocupa/)).toHaveAccessibleDescription(
+        "Responda a pergunta obrigatória: Cargo que ocupa",
+      );
+    });
+
+    it("prefills a foreign visitor (passport, Paraguay) too, only the legacy questions", () => {
+      authState.user = {
+        cpf: null,
+        foreignDocument: "AB123456",
+        isForeigner: true,
+        address: "Av. Mariscal López 1234, Asunción",
+        occupation: "Investigador",
+        partnerCompany: "Instituto",
+        areaOfActivity: "Salud",
+      };
+      renderDialog({ ...legacyEvent, registrationForm: [...legacyForm, cargo] });
+
+      expect(screen.getByLabelText(/Cargo que ocupa/)).toHaveValue("Investigador");
+      expect(screen.getByLabelText(/^Cargo(\s*\*)?$/)).toHaveValue("");
+    });
+
+    it("does not prefill an archived legacy question", () => {
+      authState.user = { ...newAccount, occupation: "Médica" };
+      renderDialog({ ...legacyEvent, registrationForm: legacyForm.map((f) => ({ ...f, archived: true })) });
+
+      expect(screen.queryByLabelText(/Cargo que ocupa/)).not.toBeInTheDocument();
+    });
   });
 
   it("does not re-ask an account that already has a passport and an address", () => {
