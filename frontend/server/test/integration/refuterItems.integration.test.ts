@@ -423,6 +423,43 @@ describe.skipIf(!enabled)("ADR-016 refuter follow-ups (real routes + real DB)", 
       expect(await ordersFor(user.id, eventId)).toBe(1);
     });
 
+    it("gives the last seat to exactly one of two different accounts subscribing at once", async () => {
+      const eventId = await createEvent({ modality: "online", isFree: true });
+      await pool.query(`UPDATE events SET max_attendees = 1, current_attendees = 0 WHERE id = $1`, [eventId]);
+      const brazilian = await createBareUser();
+      const visitor = await createBareUser({ phone: "595981123456" });
+
+      const results = await Promise.all(
+        [brazilian, visitor].map((u) =>
+          api("POST", `/api/events/${eventId}/subscribe`, { token: u.token, body: {} }),
+        ),
+      );
+
+      expect(results.map((r) => r.status).sort()).toEqual([201, 400]);
+      expect(results.find((r) => r.status === 400)?.body.message).toBe("Evento lotado");
+      const { rows } = await pool.query(
+        `SELECT (SELECT count(*)::int FROM orders WHERE event_id = $1) AS orders, current_attendees FROM events WHERE id = $1`,
+        [eventId],
+      );
+      expect(rows[0]).toMatchObject({ orders: 1, current_attendees: 1 });
+    });
+
+    it("counts both a concurrent free subscribe and a paid finalize (no lost update)", async () => {
+      const eventId = await createEvent({ modality: "online", isFree: true });
+      const { storage } = await import("../../storage");
+      const user = await createBareUser();
+
+      const [sub] = await Promise.all([
+        api("POST", `/api/events/${eventId}/subscribe`, { token: user.token, body: {} }),
+        storage.incrementEventAttendees(eventId),
+        storage.incrementEventAttendees(eventId),
+      ]);
+
+      expect(sub.status).toBe(201);
+      const { rows } = await pool.query(`SELECT current_attendees FROM events WHERE id = $1`, [eventId]);
+      expect(rows[0].current_attendees).toBe(3);
+    });
+
     it("creates exactly one order for concurrent subscribes of a foreign visitor (+595 phone, passport)", async () => {
       const eventId = await createEvent({ modality: "presencial", isFree: true });
       const visitor = await createBareUser({ phone: "595981123456" });

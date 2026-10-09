@@ -2704,6 +2704,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           registrationAnswers: registration.answers,
         },
       });
+      if (!created.ok && created.reason === "event_full") {
+        return res
+          .status(salesBlockedStatus("event_full"))
+          .json({ message: salesBlockedMessage("event_full") });
+      }
       if (!created.ok) {
         return res
           .status(409)

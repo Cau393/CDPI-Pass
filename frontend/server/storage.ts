@@ -29,6 +29,7 @@ import {
   type CommunicateRecipientMode,
 } from "@shared/schema";
 import { db } from "./db";
+import { isEventFull } from "./utils/eventSalesPolicy";
 import { eq, ne, desc, sql, asc, count, and, isNull, or, inArray } from "drizzle-orm";
 import type { RegistrationAnswer } from "@shared/eventRegistrationForm";
 import { s3Service } from "./services/s3Service";
@@ -111,7 +112,9 @@ export interface IStorage {
   createFreeSubscription(params: {
     holder: { userId: string; cpf: string | null; foreignDocument: string | null; email: string | null };
     order: InsertOrder;
-  }): Promise<{ ok: true; order: Order } | { ok: false; reason: "already_registered" }>;
+  }): Promise<{ ok: true; order: Order } | { ok: false; reason: "already_registered" | "event_full" }>;
+  /** Atomic `current_attendees + 1`; not an edit, so `updated_at` stays. */
+  incrementEventAttendees(eventId: string): Promise<void>;
   /**
    * ADR-016 write-once document (+ editable address). A different document
    * than the one on file is `document_already_set`; a document owned by
@@ -513,18 +516,27 @@ export class DatabaseStorage implements IStorage {
     return existing.length > 0;
   }
 
+  async incrementEventAttendees(eventId: string): Promise<void> {
+    await db
+      .update(events)
+      .set({ currentAttendees: sql`COALESCE(${events.currentAttendees}, 0) + 1` })
+      .where(eq(events.id, eventId));
+  }
+
   async createFreeSubscription(params: {
     holder: { userId: string; cpf: string | null; foreignDocument: string | null; email: string | null };
     order: InsertOrder;
-  }): Promise<{ ok: true; order: Order } | { ok: false; reason: "already_registered" }> {
+  }): Promise<{ ok: true; order: Order } | { ok: false; reason: "already_registered" | "event_full" }> {
     return db.transaction(async (tx) => {
       // Same pattern as claimCourtesyRedeem: the event row lock serializes
       // inscriptions of one event, so the check below cannot be raced.
       const [locked] = await tx
-        .select({ currentAttendees: events.currentAttendees })
+        .select({ currentAttendees: events.currentAttendees, maxAttendees: events.maxAttendees })
         .from(events)
         .where(eq(events.id, params.order.eventId))
         .for("update");
+      // Capacity is re-checked on the locked row: the route's read is older.
+      if (locked && isEventFull({ price: "0", ...locked })) return { ok: false as const, reason: "event_full" as const };
       const alreadyRegistered = await this.isAlreadyRegisteredForEvent(
         { eventId: params.order.eventId, ...params.holder },
         tx,
@@ -537,7 +549,7 @@ export class DatabaseStorage implements IStorage {
         .returning();
       await tx
         .update(events)
-        .set({ currentAttendees: (locked?.currentAttendees || 0) + 1 })
+        .set({ currentAttendees: sql`COALESCE(${events.currentAttendees}, 0) + 1` })
         .where(eq(events.id, params.order.eventId));
       return { ok: true as const, order };
     });
@@ -871,7 +883,7 @@ export class DatabaseStorage implements IStorage {
         .update(events)
         .set({
           // Counter only: not an edit, so updated_at stays (see updateEvent).
-          currentAttendees: (locked.currentAttendees || 0) + 1,
+          currentAttendees: sql`COALESCE(${events.currentAttendees}, 0) + 1`,
         })
         .where(eq(events.id, params.eventId));
 
