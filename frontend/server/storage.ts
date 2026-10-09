@@ -29,7 +29,7 @@ import {
   type CommunicateRecipientMode,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ne, desc, sql, asc, count, and, isNull, or } from "drizzle-orm";
+import { eq, ne, desc, sql, asc, count, and, isNull, or, inArray } from "drizzle-orm";
 import type { RegistrationAnswer } from "@shared/eventRegistrationForm";
 import { s3Service } from "./services/s3Service";
 import { buildUndoCheckInPatch } from "./utils/undoCheckInUpdate";
@@ -81,14 +81,17 @@ export interface IStorage {
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
   getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined>;
   /**
-   * True when the event already has a paid order for this account (when
-   * `userId` is given) or for this document (when one is given).
+   * True when the event already has a paid order for this holder: the
+   * account's own inscription (`userId`; courtesies it redeemed for other
+   * people do not count), the document, or the e-mail (a courtesy attendee
+   * with it, or the own inscription of the account with it).
    */
   isAlreadyRegisteredForEvent(params: {
     eventId: string;
     userId: string | null;
     cpf: string | null;
     foreignDocument: string | null;
+    email: string | null;
   }): Promise<boolean>;
   /**
    * ADR-016 write-once document (+ editable address). A different document
@@ -445,11 +448,27 @@ export class DatabaseStorage implements IStorage {
     userId: string | null;
     cpf: string | null;
     foreignDocument: string | null;
+    email: string | null;
   }): Promise<boolean> {
     const sameHolder = [];
-    if (params.userId) sameHolder.push(eq(orders.userId, params.userId));
+    if (params.userId) {
+      sameHolder.push(and(eq(orders.userId, params.userId), isNull(orders.courtesyAttendeeId)));
+    }
     if (params.cpf) sameHolder.push(eq(orders.cpf, params.cpf));
     if (params.foreignDocument) sameHolder.push(eq(orders.foreignDocument, params.foreignDocument));
+    if (params.email) {
+      const email = params.email.trim().toLowerCase();
+      sameHolder.push(
+        inArray(
+          orders.courtesyAttendeeId,
+          db.select({ id: courtesyAttendees.id }).from(courtesyAttendees).where(sql`lower(${courtesyAttendees.email}) = ${email}`),
+        ),
+        and(
+          isNull(orders.courtesyAttendeeId),
+          inArray(orders.userId, db.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = ${email}`)),
+        ),
+      );
+    }
     if (sameHolder.length === 0) return false;
     const existing = await db
       .select({ id: orders.id })

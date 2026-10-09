@@ -106,3 +106,9 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Symptom:** on 2026-10-06 a foreign buyer's card checkout returned 500 "Erro ao processar pagamento". The log held the raw Asaas body: 400 "Sua conta não tem permissão para gerar pagadores estrangeiros…" + "O CPF/CNPJ informado é inválido.".
 - **Root cause:** `asaasService` hardcoded `https://api.asaas.com/v3` and ignored `ASAAS_API_URL`, so local dev with a production key hit production. Every Asaas error became `Error("…" + JSON.stringify(body))`, logged raw, and the route answered 500 for all of them. The vault described the URL as configurable, so nobody looked.
 - **Prevention:** external-service base URLs come from env with a production default and a unit test. Asaas HTTP errors throw `AsaasApiError` (status + codes only), and `checkoutPaymentErrorResponse` maps them (503 foreign payers not enabled, 502 other Asaas errors). The client toast uses `parseApiErrorMessage`, never `error.message`.
+
+## 2026-10-09 — a dedupe keyed on the account blocked people a sponsor had invited
+- **Symptom:** found by the pre-merge refuter on the combined ADR-016 branch, reproduced against a local server: an account that redeemed a courtesy for a teammate could no longer subscribe itself (409), and a 5-ticket online courtesy link accepted only one attendee per account (400). Prod code was not affected.
+- **Root cause:** ADR-016 added the account id to the "already registered" check because 4-field accounts may have no document, but courtesy orders belong to the redeeming account, not the attendee.
+- **Prevention:** an inscription dedupe matches the person who attends: own inscriptions by account (`courtesy_attendee_id IS NULL`), courtesies by the attendee's document or e-mail. Integration tests cover sponsor → teammates and sponsor → self.
+

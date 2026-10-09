@@ -761,6 +761,127 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
       expect(second.status).toBe(400);
     });
 
+    function onlineCourtesy(code: string, email: string) {
+      return {
+        code,
+        name: "Convidada Online",
+        email,
+        emailConfirm: email,
+        partnerCompany: "Empresa",
+        occupation: "Analista",
+        phone: "595981123456",
+      };
+    }
+
+    it("lets one account redeem an online courtesy for two attendees with different e-mails", async () => {
+      const eventId = await createEvent({ modality: "online", isFree: false });
+      const admin = await createBareUser({ isAdmin: true });
+      const sponsor = await createBareUser();
+      const code = await courtesyCode(eventId, admin.id);
+      const tag = sponsor.id.slice(0, 8);
+
+      const first = await api("POST", "/api/courtesy/redeem", {
+        token: sponsor.token,
+        body: onlineCourtesy(code, `forms-team-a-${tag}@example.test`),
+      });
+      const second = await api("POST", "/api/courtesy/redeem", {
+        token: sponsor.token,
+        body: onlineCourtesy(code, `forms-team-b-${tag}@example.test`),
+      });
+
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+    });
+
+    it("rejects an online courtesy for an e-mail whose account already subscribed itself", async () => {
+      const eventId = await createEvent({ modality: "online", isFree: true });
+      const admin = await createBareUser({ isAdmin: true });
+      const member = await createBareUser();
+      const sponsor = await createBareUser();
+      expect((await api("POST", `/api/events/${eventId}/subscribe`, { token: member.token, body: {} })).status).toBe(201);
+
+      const res = await api("POST", "/api/courtesy/redeem", {
+        token: sponsor.token,
+        body: onlineCourtesy(await courtesyCode(eventId, admin.id), member.email.toUpperCase()),
+      });
+
+      expect(res.status).toBe(400);
+    });
+
+    it("lets an account that redeemed an online courtesy for someone else subscribe itself", async () => {
+      const eventId = await createEvent({ modality: "online", isFree: true });
+      const admin = await createBareUser({ isAdmin: true });
+      const sponsor = await createBareUser();
+      const redeemed = await api("POST", "/api/courtesy/redeem", {
+        token: sponsor.token,
+        body: onlineCourtesy(await courtesyCode(eventId, admin.id), `forms-guest-${sponsor.id.slice(0, 8)}@example.test`),
+      });
+
+      const res = await api("POST", `/api/events/${eventId}/subscribe`, { token: sponsor.token, body: {} });
+
+      expect(redeemed.status).toBe(201);
+      expect(res.status).toBe(201);
+    });
+
+    it("rejects a free subscribe from an account whose own e-mail already holds an online courtesy", async () => {
+      const eventId = await createEvent({ modality: "online", isFree: true });
+      const admin = await createBareUser({ isAdmin: true });
+      const guest = await createBareUser();
+      const redeemed = await api("POST", "/api/courtesy/redeem", {
+        token: guest.token,
+        body: onlineCourtesy(await courtesyCode(eventId, admin.id), guest.email),
+      });
+
+      const res = await api("POST", `/api/events/${eventId}/subscribe`, { token: guest.token, body: {} });
+
+      expect(redeemed.status).toBe(201);
+      expect(res.status).toBe(409);
+    });
+
+    it("lets an account that redeemed an in-person courtesy for someone else subscribe itself", async () => {
+      const eventId = await createEvent({ modality: "presencial", isFree: true });
+      const admin = await createBareUser({ isAdmin: true });
+      const sponsor = await createBareUser();
+      const redeemed = await api("POST", "/api/courtesy/redeem", {
+        token: sponsor.token,
+        body: inPersonCourtesy(
+          await courtesyCode(eventId, admin.id),
+          `forms-guest-${sponsor.id.slice(0, 8)}@example.test`,
+          nextCpf(),
+        ),
+      });
+      const identity = await api("PUT", "/api/profile/identity", {
+        token: sponsor.token,
+        body: { isForeigner: false, cpf: nextCpf(), address: ADDRESS },
+      });
+
+      const res = await api("POST", `/api/events/${eventId}/subscribe`, { token: sponsor.token, body: {} });
+
+      expect(redeemed.status).toBe(201);
+      expect(identity.status).toBe(200);
+      expect(res.status).toBe(201);
+    });
+
+    it("lists a courtesy row with the attendee's CPF when the redeeming account has no document", async () => {
+      const eventId = await createEvent({ modality: "presencial", isFree: false });
+      const admin = await createBareUser({ isAdmin: true });
+      const sponsor = await createBareUser();
+      const attendeeCpf = nextCpf();
+      await api("POST", "/api/courtesy/redeem", {
+        token: sponsor.token,
+        body: inPersonCourtesy(
+          await courtesyCode(eventId, admin.id),
+          `forms-guest-${sponsor.id.slice(0, 8)}@example.test`,
+          attendeeCpf,
+        ),
+      });
+
+      const res = await api("GET", `/api/admin/events/${eventId}/participants`, { token: admin.token });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toEqual([expect.objectContaining({ cpf: attendeeCpf, orderStatus: "courtesy" })]);
+    });
+
     it("still requires the CPF on an in-person courtesy", async () => {
       const eventId = await createEvent({ modality: "presencial", isFree: false });
       const admin = await createBareUser({ isAdmin: true });

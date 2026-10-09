@@ -1428,6 +1428,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           foreignDocument: users.foreignDocument,
           userIsForeigner: users.isForeigner,
           userAddress: users.address,
+          attendeeCpf: courtesyAttendees.cpf,
+          attendeeForeignDocument: courtesyAttendees.foreignDocument,
           attendeeIsForeigner: courtesyAttendees.isForeigner,
           attendeeAddress: courtesyAttendees.address,
           registrationAnswers: orders.registrationAnswers,
@@ -1471,7 +1473,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return {
           userId: r.userId,
           name: r.name,
-          cpf: r.cpf ?? r.foreignDocument ?? "",
+          cpf: r.attendeeCpf ?? r.attendeeForeignDocument ?? r.cpf ?? r.foreignDocument ?? "",
           email: r.email,
           phone: r.phone,
           ticketId: r.ticketId,
@@ -2618,6 +2620,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userId,
         cpf,
         foreignDocument,
+        email: req.user.email ?? null,
       });
       if (alreadyRegistered) {
         return res
@@ -3408,13 +3411,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "CPF inválido" });
       }
 
-      // In-person: by the attendee's document, as before (one account may
-      // redeem for several attendees). Online has no document: by account.
+      // By the attendee, never the redeeming account (one account may redeem
+      // for several attendees): in-person by document, as before; online has
+      // no document, so by the attendee's e-mail.
       const alreadyRegistered = await storage.isAlreadyRegisteredForEvent({
         eventId: link.eventId,
-        userId: online ? userId : null,
+        userId: null,
         cpf: attendeeCpf,
         foreignDocument,
+        email: online ? userData.email : null,
       });
       if (alreadyRegistered) {
         return res.status(400).json({
@@ -3422,7 +3427,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             ? "Documento já cadastrado para este evento"
             : attendeeCpf
               ? "CPF já cadastrado para este evento"
-              : "Você já possui inscrição confirmada para este evento.",
+              : "E-mail já inscrito neste evento.",
         });
       }
 

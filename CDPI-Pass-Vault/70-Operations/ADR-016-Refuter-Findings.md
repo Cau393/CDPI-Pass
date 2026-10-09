@@ -1,0 +1,22 @@
+# ADR-016 refuter findings (2026-10-09)
+
+An adversarial review (`reviewer` subagent on Opus, instructed to be against the change, evidence-only) of `feat/registration-forms-all` @ b5d8e44 versus prod `b0a6359`, then each point verified by the lead. Input for [[70-Operations/Prompt-ADR-016-Rollout]].
+
+| # | Finding | Refuter | Lead verdict | Status |
+|---|---|---|---|---|
+| 1 | `asaasService` now honours `ASAAS_API_URL`; if the EC2 `.env` points at the sandbox, every paid checkout gets 401 → 502 | PROD-BREAK, LIKELY | Covered by gate (a): the owner confirmed on 2026-10-08 that prod's `ASAAS_API_URL` host is `api.asaas.com`. The first real low-value charge after the merge is the live proof. | accepted (gate a) |
+| 2 | Free subscribe refused (409) for an account that redeemed a courtesy for someone else | PROD-BREAK, CONFIRMED | Confirmed: the dedupe matched any paid order of the account, and courtesy orders belong to the redeemer. Prod code matched Brazilians by CPF only. | **fixed**: account match only on own inscriptions (`courtesy_attendee_id IS NULL`) |
+| 3 | Online courtesy link: one redemption per account (team tickets blocked) | PROD-BREAK, CONFIRMED | Confirmed (old code matched the attendee's CPF). | **fixed**: online courtesy matches the attendee's e-mail; subscribe also matches the account's e-mail on a courtesy attendee |
+| 4 | Participants list / Excel: courtesy row shows the buyer's CPF (blank for a 4-field buyer) next to the attendee's address | DEGRADED, CONFIRMED | Confirmed for the CPF column (the blank CPF is new with the 4-field signup). Name, e-mail and phone from the buyer's account is **pre-existing** in prod. | **fixed** for the document (attendee CPF/passport first, like `commercialSalesMapper`); name/e-mail/phone → rollout C2 |
+| 5 | An open tab with the old signup bundle registers 201 but its CPF, birth date, address and work fields are dropped; that tab then gets a raw `identity_required` | DATA-LOSS (open tabs only), CONFIRMED | Confirmed; `index.html` is `max-age=0` and there is no service worker, so only tabs open across the deploy. | rollout decision: deploy off-peak, or 409 "atualize a página" when an old-shape body arrives |
+| 6 | `staleTime: Infinity`: after an admin edits a live event's form, open tabs fail every retry with 400 until reload | DEGRADED, LIKELY | Plausible from code; not reproduced. | rollout C2: invalidate the event query on those 400s |
+| 7 | Paid checkout offers "Sou estrangeiro"; a Brazilian who ticks it is locked into international card (503 until Asaas enables foreign payers) and the document is write-once | DEGRADED, LIKELY | Plausible; gate (b) is still pending. | rollout decision |
+| 8 | `EventDetailsPage.test.tsx` override-price test flaky (1/5) | MINOR, CONFIRMED | Known follow-up. | rollout C2 |
+| 9 | PATCH compares forms with `JSON.stringify`; jsonb key order differs, so every save rewrites the form | MINOR, LIKELY | Harmless (same content). | rollout C2 (low) |
+| S1 | `/api/auth/me`, `PUT /api/profile` and `PUT /api/profile/identity` return `emailVerificationCode` | speculative, pre-existing | Pre-existing shape (`req.user` minus password). Security-relevant if an e-mail change sets a code while logged in. | rollout C2: one response sanitizer for all three |
+| S2 | `/api/courtesy-links/:code` returns the full event incl. `meetingUrl` / `meetingPassword` | speculative, pre-existing | Pre-existing. | rollout C2 |
+| S3 | The courtesy webhook payload now has null `birthDate` / `address` for online courtesies | speculative | Check the downstream automation. | rollout A1 |
+
+Checked by the refuter with no problem found: prod schema matches HEAD `schema.ts` (the diff after ffbe0e5 is Zod and a constant only); 4-field signup 201 under prod CHECKs; identity gate per modality; concurrent `PUT /api/profile/identity`; old admin bundle leaves the form unchanged; "Nao aplicavel" is never printed (badges, certificates, e-mails, Make payload); participants endpoint has no N+1; tsc and test suites; Vite build 874 MB RSS; Asaas error mapping.
+
+Proof of the fixes: 6 new integration tests in `server/test/integration/registrationForms.integration.test.ts` (5 failed before the fix with the refuter's exact symptoms: 400/409/blank CPF; all pass after), integration 72/72.
