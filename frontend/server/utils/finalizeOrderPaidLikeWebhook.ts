@@ -1,69 +1,48 @@
 import axios from "axios";
 import { confirmationKindForPaymentMethod } from "./ticketEmailTemplate";
 import type { Order } from "@shared/schema";
-import { storage } from "../storage";
-import { asaasService } from "../services/asaasService";
+import { storage, type DuplicatePaidPolicy } from "../storage";
+import { asaasService, type ReceivedAsaasPayment } from "../services/asaasService";
+import { s3Service } from "../services/s3Service";
 import { sendPurchaseConfirmationEmail } from "./sendPurchaseConfirmationEmail";
+import { refundAndNotify } from "./refundReceivedPayment";
 
 const MAKE_WEBHOOK_URL =
   "https://hook.us2.make.com/wrlqnqumlmgvfjicglpdrc3gv8lkbqce";
 
 export type FinalizeOrderPaidResult =
   | { ok: true }
-  | {
-      ok: false;
-      code: "already_paid" | "not_pending" | "duplicate_other_paid";
-    };
+  | { ok: false; code: "already_paid" | "duplicate_other_paid" }
+  /** `status`: the order's status when known, e.g. "cancelled" for a payment that came late. */
+  | { ok: false; code: "not_pending"; status: string | null };
 
 export type PaymentMetaForFinalize = {
   /** Asaas `billingType` (e.g. CREDIT_CARD) or manual label. */
   billingType: string;
-  /** Optional override; defaults to `order.amount` (numeric from DB). */
+  /** Amount of the Asaas payment; null for a manual mark. */
   value?: number | null;
+  /** The Asaas payment that came in. A refund always goes to it, never to the order's link id. */
+  paymentId?: string | null;
+  /** Card installment plan of that payment, when bought in installments. */
+  installment?: string | null;
 };
 
 export type FinalizeOrderOptions = {
-  /**
-   * When another paid order exists for the same CPF+event:
-   * - refund_then_discard: cancel Asaas charge (best-effort) and discard this pending order
-   * - reject_only: return duplicate_other_paid without side effects (admin mark-paid-external)
-   */
-  duplicatePolicy?: "refund_then_discard" | "reject_only";
+  /** Default refund_then_discard; admin "mark paid externally" uses reject_only. */
+  duplicatePolicy?: DuplicatePaidPolicy;
 };
 
-async function handleDuplicatePaidInscription(
-  order: Order,
-  policy: "refund_then_discard" | "reject_only",
-): Promise<FinalizeOrderPaidResult> {
-  if (policy === "reject_only") {
-    return { ok: false, code: "duplicate_other_paid" };
-  }
-
-  if (order.asaasPaymentId) {
-    try {
-      await asaasService.cancelPayment(order.asaasPaymentId);
-    } catch (e) {
-      console.error(
-        `Erro ao estornar/cancelar cobrança Asaas (order ${order.id}):`,
-        e,
-      );
-    }
-  }
-
-  const discard = await storage.discardPendingOrder(order.id);
-  if (!discard.ok && discard.code !== "already_cancelled") {
-    console.error(
-      `Falha ao descartar pedido duplicado ${order.id}:`,
-      discard,
-    );
-  }
-
-  return { ok: false, code: "duplicate_other_paid" };
+function receivedPayment(meta: PaymentMetaForFinalize): ReceivedAsaasPayment | null {
+  if (!meta.paymentId) return null;
+  return { id: meta.paymentId, billingType: meta.billingType, value: meta.value, installment: meta.installment };
 }
 
 /**
- * Same business effects as a successful `PAYMENT_RECEIVED` / `PAYMENT_CONFIRMED` Asaas webhook:
- * set `paid`, optional courtesy link usage, +1 attendees, Make.com, ticket e-mail.
+ * Same business effects as a successful `PAYMENT_RECEIVED` / `PAYMENT_CONFIRMED` Asaas webhook.
+ * Callers hold a snapshot read earlier (webhook, check-status poll, paymentStatusService), and
+ * concurrent deliveries can all see "pending": `storage.claimPaidOrder` decides in one locked
+ * transaction (paid, duplicate discarded, or nothing). Only after it commits, best-effort:
+ * the ticket e-mail for a paid order, the refund for a discarded duplicate.
  * Cortesia is expressed only via `orders.paymentMethod` (and optional courtesy fields), never via status.
  */
 export async function finalizeOrderPaidLikeWebhook(
@@ -71,60 +50,51 @@ export async function finalizeOrderPaidLikeWebhook(
   paymentMeta: PaymentMetaForFinalize,
   options: FinalizeOrderOptions = {},
 ): Promise<FinalizeOrderPaidResult> {
-  const duplicatePolicy = options.duplicatePolicy ?? "refund_then_discard";
-
   if (order.status === "paid") {
     return { ok: false, code: "already_paid" };
   }
   if (order.status !== "pending") {
-    return { ok: false, code: "not_pending" };
+    return { ok: false, code: "not_pending", status: order.status };
   }
 
-  let hasOtherPaid = false;
-  if (order.cpf) {
-    hasOtherPaid = await storage.existsOtherPaidOrderForCpfAndEvent(
-      order.id,
-      order.cpf,
-      order.eventId,
-    );
-  } else {
-    if (order.foreignDocument) {
-      hasOtherPaid = await storage.existsOtherPaidOrderForForeignDocumentAndEvent(
-        order.id,
-        order.foreignDocument,
-        order.eventId,
-      );
-    }
-    if (!hasOtherPaid) {
-      hasOtherPaid = await storage.existsOtherPaidOrderForUserAndEvent(
-        order.id,
-        order.userId,
-        order.eventId,
-      );
-    }
+  const claim = await storage.claimPaidOrder(order.id, options.duplicatePolicy ?? "refund_then_discard");
+  switch (claim.outcome) {
+    case "already_paid":
+      return { ok: false, code: "already_paid" };
+    case "not_pending":
+      return { ok: false, code: "not_pending", status: claim.status };
+    case "duplicate_rejected":
+      return { ok: false, code: "duplicate_other_paid" };
+    case "duplicate_discarded":
+      await deleteQrObject(claim.order);
+      await refundAndNotify(claim.order, receivedPayment(paymentMeta), "duplicate");
+      return { ok: false, code: "duplicate_other_paid" };
+    case "paid":
+      try {
+        await afterPaid(claim.order, paymentMeta);
+      } catch (error) {
+        // Committed: a 500 here would make Asaas retry into already_paid, sending nothing.
+        console.error(`TICKET_EMAIL_FAILED order=${claim.order.id}:`, error);
+      }
+      return { ok: true };
   }
-  if (hasOtherPaid) {
-    return handleDuplicatePaidInscription(order, duplicatePolicy);
-  }
+}
 
-  // Callers hold a snapshot read earlier: concurrent deliveries (installments of one
-  // link purchase, Asaas redeliveries, the check-status poll) can all see "pending".
-  // Only the one that flips the row does the side effects below.
-  if (!(await storage.markPendingOrderPaid(order.id))) {
-    const current = await storage.getOrder(order.id);
-    return { ok: false, code: current?.status === "paid" ? "already_paid" : "not_pending" };
+async function deleteQrObject(order: Order): Promise<void> {
+  if (!order.qr_code_s3_url) return;
+  try {
+    await s3Service.deleteFile(s3Service.extractKeyFromUrl(order.qr_code_s3_url));
+  } catch (error) {
+    console.error(`Erro ao deletar QR Code do S3 (Order ${order.id}):`, error);
   }
+}
 
-  if (order.courtesyLinkId) {
-    await storage.incrementCourtesyLinkUsage(order.courtesyLinkId);
-  }
-
+/** Logged, never blocking: the order is paid and committed whatever happens here. */
+async function afterPaid(order: Order, paymentMeta: PaymentMetaForFinalize): Promise<void> {
   const event = await storage.getEvent(order.eventId);
   const user = await storage.getUser(order.userId);
 
   if (event && user) {
-    await storage.incrementEventAttendees(event.id);
-
     const outboundPaymentLabel =
       order.paymentMethod === "courtesy"
         ? "courtesy"
@@ -157,16 +127,36 @@ export async function finalizeOrderPaidLikeWebhook(
       }
     })();
 
-    await sendPurchaseConfirmationEmail({
-      to: user.email,
-      userName: user.name,
-      event,
-      orderId: order.id,
-      qrCodeData: order.qrCodeData || "",
-      qrCodeS3Url: order.qr_code_s3_url || "",
-      confirmationKind: confirmationKindForPaymentMethod(order.paymentMethod),
-    });
+    try {
+      await sendPurchaseConfirmationEmail({
+        to: user.email,
+        userName: user.name,
+        event,
+        orderId: order.id,
+        qrCodeData: order.qrCodeData || "",
+        qrCodeS3Url: order.qr_code_s3_url || "",
+        confirmationKind: confirmationKindForPaymentMethod(order.paymentMethod),
+      });
+    } catch (error) {
+      console.error(`TICKET_EMAIL_FAILED order=${order.id}:`, error);
+    }
   }
 
-  return { ok: true };
+  await logPaidTotalMismatch(order, paymentMeta);
+}
+
+/** A6: the money that came in should match `orders.amount` (card: all installments together). */
+async function logPaidTotalMismatch(order: Order, paymentMeta: PaymentMetaForFinalize): Promise<void> {
+  if (!paymentMeta.paymentId) return;
+  try {
+    const paid = paymentMeta.installment
+      ? await asaasService.installmentTotal(paymentMeta.installment)
+      : Number(paymentMeta.value);
+    const expected = Number.parseFloat(String(order.amount));
+    if (Number.isFinite(paid) && Number.isFinite(expected) && Math.abs(paid - expected) > 0.05) {
+      console.warn(`PAID_TOTAL_MISMATCH order=${order.id} payment=${paymentMeta.paymentId} expected=${expected} paid=${paid}`);
+    }
+  } catch (error) {
+    console.error(`Paid total check failed (order ${order.id}):`, error);
+  }
 }

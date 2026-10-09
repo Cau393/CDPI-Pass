@@ -38,6 +38,7 @@ vi.mock("../../db", async () => {
 });
 
 const ticketEmails: string[] = [];
+const sentEmails: { to: string; subject: string; html: string }[] = [];
 vi.mock("../../services/emailService", () => ({
   emailService: {
     sendTicketEmail: vi.fn(async (to: string) => {
@@ -46,7 +47,10 @@ vi.mock("../../services/emailService", () => ({
     }),
     sendOnlineEventEmail: vi.fn(async () => true),
     sendCardPaymentLinkEmail: vi.fn(async () => true),
-    sendEmail: vi.fn(async () => true),
+    sendEmail: vi.fn(async (to: string, subject: string, html: string) => {
+      sentEmails.push({ to, subject, html });
+      return true;
+    }),
     sendVerificationEmail: vi.fn(async () => true),
   },
 }));
@@ -60,6 +64,11 @@ vi.mock("../../services/s3Service", () => ({
 
 // Make.com forward: never leave the test process.
 vi.mock("axios", () => ({ default: { post: vi.fn(async () => ({ status: 200 })) } }));
+
+/** Every request the app would send to Asaas, as "METHOD /path". Nothing leaves the process. */
+const asaasCalls: string[] = [];
+/** The refunds Asaas accepted. */
+const acceptedRefunds: string[] = [];
 
 let server: Server;
 let baseUrl: string;
@@ -98,8 +107,23 @@ async function pendingOrder(paymentMethod: "pix" | "credit_card", asaasId: strin
      VALUES ($1,$2,$3,'pending','632.00',$4,$5,$6,'qr-data')`,
     [orderId, userId, eventId, paymentMethod, asaasId, cpf],
   );
-  return { eventId, orderId, email };
+  return { eventId, orderId, email, userId, cpf };
 }
+
+/** Another pending order of the same buyer for the same event (a second checkout). */
+async function anotherOrder(o: { eventId: string; userId: string; cpf: string }, asaasId: string, status = "pending") {
+  const orderId = randomUUID();
+  await pool.query(
+    `INSERT INTO orders (id, user_id, event_id, status, amount, payment_method, asaas_payment_id, cpf, qr_code_data)
+     VALUES ($1,$2,$3,$4,'632.00','pix',$5,$6,'qr-data')`,
+    [orderId, o.userId, o.eventId, status, asaasId, o.cpf],
+  );
+  return orderId;
+}
+
+const refunds = (paymentId: string) =>
+  acceptedRefunds.filter((c) => c === `POST /payments/${paymentId}/refund` || c === `POST /payments/${paymentId}/bankSlip/refund`);
+const refundEmails = (to: string) => sentEmails.filter((e) => e.to === to && /estornado/i.test(e.subject));
 
 async function state(orderId: string, eventId: string) {
   const o = await pool.query(`SELECT status FROM orders WHERE id = $1`, [orderId]);
@@ -114,6 +138,27 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     const app = express();
     app.use(express.json());
     server = await registerRoutes(app);
+    // Asaas sandbox behaviour: a payment refunds once; asking again is a 400.
+    const { asaasService } = await import("../../services/asaasService");
+    const { AsaasApiError } = await import("../../utils/asaasErrors");
+    vi.spyOn(asaasService as any, "makeRequest").mockImplementation(async (...args: unknown[]) => {
+      const [endpoint, method = "GET"] = args as [string, string?];
+      const call = `${method} ${endpoint}`;
+      const again = asaasCalls.includes(call);
+      asaasCalls.push(call);
+      if (call.endsWith("/refund")) {
+        if (again) throw new AsaasApiError(400, { errors: [{ code: "invalid_action", description: "Cobrança já estornada" }] });
+        acceptedRefunds.push(call);
+        if (call.endsWith("/bankSlip/refund")) return { requestUrl: "https://sandbox.asaas.com/refund-request/abc", status: "PENDING" };
+        return { id: endpoint.split("/")[2], status: "REFUNDED" };
+      }
+      const paymentRead = /^GET \/payments\/([^/?]+)$/.exec(call);
+      if (paymentRead) {
+        const refunded = acceptedRefunds.some((r) => r.startsWith(`POST /payments/${paymentRead[1]}/`));
+        return { id: paymentRead[1], status: refunded ? "REFUNDED" : "RECEIVED" };
+      }
+      return {};
+    });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
     const addr = server.address();
     if (!addr || typeof addr === "string") throw new Error("no port");
@@ -156,6 +201,9 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     // The other installments of the same purchase confirm too: no extra seat.
     expect(await deliver({ ...body, payment: { ...body.payment, id: `pay_${randomUUID().slice(0, 12)}` } })).toBe(200);
     expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+    // The legit installments of the paying purchase are never refunded.
+    expect(asaasCalls.filter((c) => c.includes("/refund") && c.includes(linkId))).toEqual([]);
+    expect(acceptedRefunds.filter((c) => c.includes(body.payment.id))).toEqual([]);
   });
 
   it("installments delivered at the same time count one seat and send one ticket", async () => {
@@ -255,5 +303,169 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     await deliver({ event: "PAYMENT_RECEIVED", payment: { id: "pay_paid_then_deleted", billingType: "PIX", externalReference: orderId } });
     expect(await deliver({ event: "PAYMENT_DELETED", payment: { id: "pay_paid_then_deleted", externalReference: orderId } })).toBe(200);
     expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+  });
+
+  // --- Hardening batch 1 -------------------------------------------------------------
+
+  it("A1: two orders of the same CPF finalized at once from stale snapshots end with one paid", async () => {
+    const first = await pendingOrder("pix", "pay_a1_first");
+    const secondId = await anotherOrder(first, "pay_a1_second");
+    const { storage } = await import("../../storage");
+    const { finalizeOrderPaidLikeWebhook } = await import("../../utils/finalizeOrderPaidLikeWebhook");
+    const [snapA, snapB] = [(await storage.getOrder(first.orderId))!, (await storage.getOrder(secondId))!];
+
+    await Promise.all([
+      finalizeOrderPaidLikeWebhook(snapA, { billingType: "PIX", value: 637, paymentId: "pay_a1_first" }),
+      finalizeOrderPaidLikeWebhook(snapB, { billingType: "PIX", value: 637, paymentId: "pay_a1_second" }),
+    ]);
+
+    const statuses = [(await state(first.orderId, first.eventId)).status, (await state(secondId, first.eventId)).status];
+    expect(statuses.sort()).toEqual(["cancelled", "paid"]);
+    expect((await state(first.orderId, first.eventId)).attendees).toBe(1);
+    expect(ticketEmails.filter((to) => to === first.email)).toHaveLength(1);
+    // The discarded order's received payment is the one refunded, once.
+    const discardedPayment = (await state(first.orderId, first.eventId)).status === "cancelled" ? "pay_a1_first" : "pay_a1_second";
+    expect(refunds(discardedPayment)).toHaveLength(1);
+  });
+
+  it("A1 reject_only: the admin path leaves the second order pending and refunds nothing", async () => {
+    const first = await pendingOrder("pix", "pay_a1r_first");
+    const secondId = await anotherOrder(first, "pay_a1r_second");
+    const { storage } = await import("../../storage");
+    const { finalizeOrderPaidLikeWebhook } = await import("../../utils/finalizeOrderPaidLikeWebhook");
+    const [snapA, snapB] = [(await storage.getOrder(first.orderId))!, (await storage.getOrder(secondId))!];
+    const meta = { billingType: "CREDIT_CARD", value: 637 };
+
+    const results = await Promise.all([
+      finalizeOrderPaidLikeWebhook(snapA, meta, { duplicatePolicy: "reject_only" }),
+      finalizeOrderPaidLikeWebhook(snapB, meta, { duplicatePolicy: "reject_only" }),
+    ]);
+
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok && r.code === "duplicate_other_paid")).toHaveLength(1);
+    const statuses = [(await state(first.orderId, first.eventId)).status, (await state(secondId, first.eventId)).status];
+    expect(statuses.sort()).toEqual(["paid", "pending"]);
+    expect(refunds("pay_a1r_first").concat(refunds("pay_a1r_second"))).toHaveLength(0);
+  });
+
+  it("A2: a failure after the claim rolls back, answers 500, and the redelivery finalizes once", async () => {
+    const { eventId, orderId, email } = await pendingOrder("pix", "pay_a2");
+    const { storage } = await import("../../storage");
+    const spy = vi.spyOn(storage, "incrementEventAttendees").mockRejectedValueOnce(new Error("db hiccup"));
+    const body = { event: "PAYMENT_RECEIVED", payment: { id: "pay_a2", billingType: "PIX", value: 637, externalReference: orderId } };
+
+    expect(await deliver(body)).toBe(500);
+    expect(await state(orderId, eventId)).toEqual({ status: "pending", attendees: 0 });
+    expect(ticketEmails.filter((to) => to === email)).toHaveLength(0);
+
+    spy.mockRestore();
+    expect(await deliver(body)).toBe(200);
+    expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+    expect(ticketEmails.filter((to) => to === email)).toHaveLength(1);
+  });
+
+  it("A3: a stale pending snapshot of an order that is already paid triggers no refund", async () => {
+    const paid = await pendingOrder("pix", "pay_a3_paid");
+    const { storage } = await import("../../storage");
+    const snapshot = (await storage.getOrder(paid.orderId))!;
+    await anotherOrder(paid, "pay_a3_other_paid", "paid");
+    await pool.query(`UPDATE orders SET status = 'paid' WHERE id = $1`, [paid.orderId]);
+    const { finalizeOrderPaidLikeWebhook } = await import("../../utils/finalizeOrderPaidLikeWebhook");
+
+    await finalizeOrderPaidLikeWebhook(snapshot, { billingType: "PIX", value: 637, paymentId: "pay_a3_paid" });
+
+    expect((await state(paid.orderId, paid.eventId)).status).toBe("paid");
+    expect(asaasCalls.filter((c) => c.includes("pay_a3_paid"))).toEqual([]);
+  });
+
+  it("A3: the same duplicate delivered twice at once is discarded and refunded once", async () => {
+    const holder = await pendingOrder("pix", "pay_a3_dup_first");
+    await pool.query(`UPDATE orders SET status = 'paid' WHERE id = $1`, [holder.orderId]);
+    const dupId = await anotherOrder(holder, "pay_a3_dup");
+    const body = { event: "PAYMENT_RECEIVED", payment: { id: "pay_a3_dup", billingType: "PIX", value: 637, externalReference: dupId } };
+
+    expect(await Promise.all([deliver(body), deliver(body)])).toEqual([200, 200]);
+
+    expect((await state(dupId, holder.eventId)).status).toBe("cancelled");
+    expect(refunds("pay_a3_dup")).toHaveLength(1);
+    expect(asaasCalls.filter((c) => c.startsWith("DELETE"))).toEqual([]);
+    expect(refundEmails(holder.email)).toHaveLength(1);
+  });
+
+  it("A4: PIX paid after the order was cancelled is refunded once and the buyer is told once", async () => {
+    const { eventId, orderId, email } = await pendingOrder("pix", "pay_a4");
+    await deliver({ event: "PAYMENT_OVERDUE", payment: { id: "pay_a4", externalReference: orderId } });
+    const paidLate = { event: "PAYMENT_RECEIVED", payment: { id: "pay_a4", billingType: "PIX", value: 637, externalReference: orderId } };
+
+    expect(await deliver(paidLate)).toBe(200);
+    expect(await state(orderId, eventId)).toEqual({ status: "cancelled", attendees: 0 });
+    expect(refunds("pay_a4")).toEqual(["POST /payments/pay_a4/refund"]);
+    expect(refundEmails(email)).toHaveLength(1);
+
+    // Redelivery: Asaas refuses a second refund, so no second e-mail.
+    expect(await deliver(paidLate)).toBe(200);
+    expect(refundEmails(email)).toHaveLength(1);
+    expect(ticketEmails.filter((to) => to === email)).toHaveLength(0);
+  });
+
+  it("A4: a boleto paid late goes through bankSlip/refund and the e-mail carries the refund form link", async () => {
+    const { eventId, orderId, email } = await pendingOrder("pix", "pay_a4_boleto");
+    await deliver({ event: "PAYMENT_OVERDUE", payment: { id: "pay_a4_boleto", externalReference: orderId } });
+
+    expect(await deliver({ event: "PAYMENT_RECEIVED", payment: { id: "pay_a4_boleto", billingType: "BOLETO", value: 637, externalReference: orderId } })).toBe(200);
+
+    expect(await state(orderId, eventId)).toEqual({ status: "cancelled", attendees: 0 });
+    expect(refunds("pay_a4_boleto")).toEqual(["POST /payments/pay_a4_boleto/bankSlip/refund"]);
+    expect(refundEmails(email)).toHaveLength(1);
+    expect(refundEmails(email)[0].html).toContain("https://sandbox.asaas.com/refund-request/abc");
+  });
+
+  it("B1: in production a missing ASAAS_WEBHOOK_TOKEN rejects every delivery with 401", async () => {
+    const { eventId, orderId } = await pendingOrder("pix", "pay_b1");
+    const body = { event: "PAYMENT_RECEIVED", payment: { id: "pay_b1", billingType: "PIX", externalReference: orderId } };
+    const saved = { node: process.env.NODE_ENV, token: process.env.ASAAS_WEBHOOK_TOKEN };
+    try {
+      delete process.env.ASAAS_WEBHOOK_TOKEN;
+      process.env.NODE_ENV = "production";
+      expect(await deliver(body, null)).toBe(401);
+      expect(await deliver(body, "anything")).toBe(401);
+      expect(await state(orderId, eventId)).toEqual({ status: "pending", attendees: 0 });
+    } finally {
+      process.env.NODE_ENV = saved.node;
+      process.env.ASAAS_WEBHOOK_TOKEN = saved.token;
+    }
+  });
+
+  it("B2/B3: deliveries without a payment, or of events we do not handle, are acknowledged with 200", async () => {
+    expect(await deliver({ event: "PAYMENT_OVERDUE" })).toBe(200);
+    expect(await deliver({ event: "PAYMENT_DELETED", payment: null })).toBe(200);
+    expect(await deliver({ event: "PAYMENT_RECEIVED" })).toBe(200);
+    expect(await deliver({ event: "PAYMENT_REFUNDED", payment: { id: "pay_whatever" } })).toBe(200);
+    expect(await deliver({})).toBe(200);
+  });
+
+  it("A5 PIX: a second charge paid for an order another charge already paid is refunded once", async () => {
+    const { eventId, orderId, email } = await pendingOrder("pix", "pay_a5_current");
+    await deliver({ event: "PAYMENT_RECEIVED", payment: { id: "pay_a5_current", billingType: "PIX", value: 637, externalReference: orderId } });
+    const second = { event: "PAYMENT_RECEIVED", payment: { id: "pay_a5_old", billingType: "PIX", value: 637, externalReference: orderId } };
+
+    expect(await deliver(second)).toBe(200);
+    expect(await deliver(second)).toBe(200);
+
+    expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+    expect(refunds("pay_a5_old")).toHaveLength(1);
+    expect(refunds("pay_a5_current")).toHaveLength(0);
+    expect(refundEmails(email)).toHaveLength(1);
+  });
+
+  it("a card payment on a cancelled order is never refunded automatically", async () => {
+    const { eventId, orderId, email } = await pendingOrder("pix", "pay_card_cancelled");
+    await pool.query(`UPDATE orders SET status = 'cancelled' WHERE id = $1`, [orderId]);
+
+    expect(await deliver({ event: "PAYMENT_RECEIVED", payment: { id: "pay_card_cancelled", billingType: "CREDIT_CARD", value: 637, externalReference: orderId } })).toBe(200);
+
+    expect(await state(orderId, eventId)).toEqual({ status: "cancelled", attendees: 0 });
+    expect(asaasCalls.filter((c) => c.startsWith("POST") && c.includes("pay_card_cancelled"))).toEqual([]);
+    expect(refundEmails(email)).toHaveLength(0);
   });
 });

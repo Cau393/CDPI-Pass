@@ -7,6 +7,15 @@ export function asaasBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
   return (env.ASAAS_API_URL || DEFAULT_ASAAS_API_URL).replace(/\/+$/, "");
 }
 
+/** The `payment` object of an Asaas webhook (or of GET /payments/{id}). */
+export type ReceivedAsaasPayment = {
+  id: string;
+  billingType?: string | null;
+  value?: number | null;
+  /** Card installment plan id; the same for every installment of one purchase. */
+  installment?: string | null;
+};
+
 interface AsaasCustomer {
   name: string;
   email: string;
@@ -32,6 +41,8 @@ interface AsaasPaymentResponse {
   netValue: number;
   billingType: string;
   status: string;
+  /** Card installment plan id (bought in installments). */
+  installment?: string | null;
   pixTransaction?: {
     qrCode: {
       encodedImage: string;
@@ -290,24 +301,56 @@ export class AsaasService {
     }
   }
 
-  // Webhook signature validation (for production use)
+  /**
+   * The `asaas-access-token` header must match ASAAS_WEBHOOK_TOKEN. In production a missing
+   * token rejects every delivery (fail closed); elsewhere it skips the check, for local runs.
+   */
   validateWebhookSignature(requestToken: string | undefined): boolean {
     const expectedToken = process.env.ASAAS_WEBHOOK_TOKEN;
+    if (!expectedToken) {
+      if (process.env.NODE_ENV === "production") {
+        console.error("ASAAS_WEBHOOK_TOKEN is not set: rejecting the Asaas webhook delivery.");
+        return false;
+      }
+      console.warn("ASAAS_WEBHOOK_TOKEN is not set. Skipping webhook validation (non-production).");
+      return true;
+    }
+    return requestToken === expectedToken;
+  }
 
-        if (!expectedToken) {
-            // If the token is not configured on the server, validation is skipped.
-            // Log a warning in production environments.
-            console.warn("ASAAS_WEBHOOK_TOKEN is not set. Skipping webhook validation.");
-            return true;
-        }
+  /**
+   * Refunds a payment we RECEIVED (the webhook's `payment`, never the order's link id).
+   * - Card bought in installments: the whole installment plan, so no installment is left charged.
+   * - Boleto: Asaas cannot push money back to a boleto payer; it returns `requestUrl`, a form
+   *   where the buyer enters their bank account. The refund completes only after that.
+   * - PIX and single card: refunded directly (PIX needs enough balance in the account).
+   * Asaas rejects a second refund of the same payment, which makes retries harmless.
+   */
+  async refundReceivedPayment(payment: ReceivedAsaasPayment): Promise<{ requestUrl: string | null }> {
+    const description = "Estorno automático CDPI Pass";
+    if (payment.billingType === "CREDIT_CARD" && payment.installment) {
+      await this.makeRequest(`/installments/${payment.installment}/refund`, "POST", {});
+      return { requestUrl: null };
+    }
+    if (payment.billingType === "BOLETO") {
+      const res = await this.makeRequest(`/payments/${payment.id}/bankSlip/refund`, "POST", {});
+      return { requestUrl: typeof res?.requestUrl === "string" ? res.requestUrl : null };
+    }
+    await this.makeRequest(`/payments/${payment.id}/refund`, "POST", { description });
+    return { requestUrl: null };
+  }
 
-        if (!requestToken) {
-            // No token was provided in the request
-            return false;
-        }
+  /** True when Asaas already refunded (or is refunding) this payment. */
+  async isRefunded(paymentId: string): Promise<boolean> {
+    const payment = await this.makeRequest(`/payments/${paymentId}`);
+    return typeof payment?.status === "string" && payment.status.startsWith("REFUND");
+  }
 
-        // Simple, secure string comparison
-        return requestToken === expectedToken;
+  /** Sum of every payment of a card installment plan (one webhook arrives per installment). */
+  async installmentTotal(installmentId: string): Promise<number> {
+    const list = await this.makeRequest(`/payments?installment=${encodeURIComponent(installmentId)}&limit=100`);
+    const rows: { value?: number }[] = Array.isArray(list?.data) ? list.data : [];
+    return rows.reduce((sum, row) => sum + (Number(row.value) || 0), 0);
   }
 
   async cancelPayment(paymentId: string): Promise<any> {
