@@ -30,7 +30,7 @@ How [[60-Decisions/ADR-016-event-registration-forms-and-minimal-signup]] reaches
 |---|---|---|
 | Backfill applied, old code still live | everyone | **No change.** The old code (`b0a6359`) has no `registration_form` / `registration_answers` in `schema.ts` and no `SELECT *` on events (checked with `git grep`). The staging rehearsal (Phase D) checks this at runtime. |
 | New code live, tab on the old bundle | full-profile account: free subscribe or paid checkout | **Works.** The server fills missing `legacy-*` answers from the account's real profile values. |
-| same | 4-field account | Not possible: the old bundle cannot create one, because the new server returns 409 to the old signup body. |
+| same | old-signup account with "Nao aplicavel" work fields (149 of the Peptídeos buyers, 4 of the Jornada's) | 400 "Resposta obrigatória: Cargo que ocupa": the old page cannot show the questions. The user reloads and the new dialog asks them. Same class as the courtesy row below; deploy off-peak. (4-field accounts cannot exist on an old bundle: the new server returns 409 to the old signup body.) |
 | same | old signup tab | 409 "Atualize a página para concluir o cadastro" (refuter #5). No account is created without its data. |
 | same | old courtesy tab | Cargo and Empresa come from the attendee's own fields. "Área de atuação" has no source, so the request gets 400 until the page is reloaded. Accepted risk: rare, and fixed by a reload. Deploy off-peak. |
 | New code, new bundle | everyone | **Full-profile accounts:** the dialog prefills the 3 questions. **4-field accounts:** they answer them. **Courtesy:** the page hides Cargo and Empresa and asks for the area. |
@@ -51,3 +51,15 @@ How [[60-Decisions/ADR-016-event-registration-forms-and-minimal-signup]] reaches
 6. The owner merges PR #4 off-peak.
 7. Post-deploy smoke test.
 8. Rollback: revert the merge commit. The backfill is additive, and old code ignores it.
+
+## Rehearsal evidence (local, 2026-10-09)
+D1 ran on a local copy of the prod schema with the 3 events seeded under their prod ids; the log is in `.claude/worktrees/_e2e-reference/rehearsal/REPORT.md`.
+- **Old code (`b0a6359`) before vs after the backfill:** 22 steps, 0 differences in status, keys or messages. No response contains `registrationForm`. The backfill updated 3 rows, the verification query returned 3/3/3, and a re-run updated 0.
+- **New code with old-bundle requests:**
+  - Full-profile BR and foreigner subscribe and paid orders → 201. The 3 answers are copied from the profile, and paid orders reach the fake Asaas.
+  - "Nao aplicavel" accounts → 400 "Cargo que ocupa".
+  - Old courtesy body → 400 "Área de atuação".
+- **Rollback to old code after the new code ran:** 0 differences on the common steps and no 500s.
+  - 4-field accounts can log in and browse.
+  - They get 400 "Complete seu CPF no perfil…" on subscribe or purchase until they add a CPF, which is the old code's own rule.
+
