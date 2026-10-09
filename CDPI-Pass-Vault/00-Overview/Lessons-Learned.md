@@ -91,3 +91,8 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Symptom:** the ADR-016 Phase 2 schema was applied to the Neon production branch after the owner wrote "you can do it"; minutes later they asked to change only staging until everything is clear. The change was additive and today's prod code passed its 22 integration tests on it, so it was kept, with a backup branch (`backup-pre-adr016-phase2-2026-10-08`).
 - **Root cause:** a prod write was treated as still approved after the owner's scope had narrowed.
 - **Prevention:** right before any prod DB write, re-confirm in the same turn; prove compatibility first by running the prod commit's integration suite against the new schema on a local DB; take a Neon backup branch.
+
+## 2026-10-08 — the profile form sent the whole stored user back, so a nullable column broke "Salvar"
+- **Symptom:** found by a red test while building ADR-016 Phase 4: an account from the four-field signup (no address, no birth date) clicking **Salvar Alterações** got 400, because ProfilePage submitted the full `/api/auth/me` object and `PUT /api/profile` rejects `address: null` / `birthDate: null`.
+- **Root cause:** the form's values were the raw user row, so making a column nullable silently changed what the client sends.
+- **Prevention:** forms send an explicit payload of the fields they edit (`profileUpdatePayload`), leaving empty optional fields out; when a column becomes nullable, grep its client readers and writers in the same PR.

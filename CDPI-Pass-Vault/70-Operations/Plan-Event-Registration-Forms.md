@@ -8,7 +8,7 @@ The step-by-step runbook for [[60-Decisions/ADR-016-event-registration-forms-and
 | 1 | Visible *Cadastre-se* CTA | ✅ PR `feat/register-cta-visibility` |
 | 2 | DB expand (schema only) | ✅ staging and prod applied 2026-10-08 (prod via one transaction; backup branch `backup-pre-adr016-phase2-2026-10-08`); code in PR `feat/registration-forms-db` |
 | 3 | Form builder + locked fields + answers + Excel | 🟡 implemented on `feat/registration-form-builder` (stacked on Phase 2), not merged |
-| 4 | Minimal signup | ⏳ |
+| 4 | Minimal signup | 🟡 implemented on `feat/minimal-signup` (stacked on Phase 3), not merged |
 | 5 | Docs (part of every PR) | ongoing |
 
 ## Who is asked what

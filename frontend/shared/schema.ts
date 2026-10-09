@@ -30,6 +30,9 @@ export const accountEmailSchema = z
   .email("Email inválido");
 
 // Users table
+/** DB default for the work fields an account never filled in (shown as empty). */
+export const NOT_APPLICABLE_PROFILE_VALUE = "Nao aplicavel";
+
 export const users = pgTable(
   "users",
   {
@@ -52,9 +55,9 @@ export const users = pgTable(
     birthDate: timestamp("birth_date"),
     /** Asked by in-person inscriptions (ADR-016); null until then. */
     address: text("address"),
-    occupation: varchar("occupation", { length: 255 }).notNull().default("Nao aplicavel"),
-    partnerCompany: varchar("partner_company", { length: 255 }).notNull().default("Nao aplicavel"),
-    areaOfActivity: varchar("area_of_activity", { length: 255 }).notNull().default("Nao aplicavel"),
+    occupation: varchar("occupation", { length: 255 }).notNull().default(NOT_APPLICABLE_PROFILE_VALUE),
+    partnerCompany: varchar("partner_company", { length: 255 }).notNull().default(NOT_APPLICABLE_PROFILE_VALUE),
+    areaOfActivity: varchar("area_of_activity", { length: 255 }).notNull().default(NOT_APPLICABLE_PROFILE_VALUE),
     isAdmin: boolean("is_admin").default(false).notNull(),
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
@@ -684,11 +687,13 @@ export const insertUserObjectSchema = createInsertSchema(users, {
     .regex(/^\d{8,15}$/, "Telefone deve conter 8 a 15 dígitos (código do país sem +)"),
   password: z.string().min(6, "Senha deve ter pelo menos 6 caracteres"),
   name: z.string().min(2, "Nome deve ter pelo menos 2 caracteres"),
-  address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres"),
-  birthDate: z.date({ required_error: "Data de nascimento é obrigatória" }),
-  partnerCompany: z.string().trim().min(2, "Empresa que trabalha é obrigatória").max(255),
-  occupation: z.string().trim().min(2, "Cargo que ocupa é obrigatório").max(255),
-  areaOfActivity: z.string().trim().min(2, "Área de Atuação é obrigatória").max(255),
+  // ADR-016: signup asks only name, e-mail, phone and password. The document
+  // and address are asked at the first inscription that needs them.
+  address: z.string().min(10, "Endereço deve ter pelo menos 10 caracteres").nullable().optional(),
+  birthDate: z.date().nullable().optional(),
+  partnerCompany: z.string().trim().min(2, "Empresa que trabalha é obrigatória").max(255).optional(),
+  occupation: z.string().trim().min(2, "Cargo que ocupa é obrigatório").max(255).optional(),
+  areaOfActivity: z.string().trim().min(2, "Área de Atuação é obrigatória").max(255).optional(),
 }).omit({
   id: true,
   createdAt: true,
@@ -697,7 +702,17 @@ export const insertUserObjectSchema = createInsertSchema(users, {
   isAdmin: true,
 });
 
-export const insertUserSchema = insertUserObjectSchema.superRefine(refineAccountDocument);
+export const insertUserSchema = insertUserObjectSchema;
+
+/** POST /api/auth/register (ADR-016 Phase 4). Every other key is stripped. */
+export const registerUserSchema = z.object({
+  name: z.string().trim().min(2, "Nome deve ter pelo menos 2 caracteres").max(255),
+  email: accountEmailSchema,
+  phone: z
+    .string({ required_error: "Telefone é obrigatório" })
+    .regex(/^\d{8,15}$/, "Telefone deve conter 8 a 15 dígitos (código do país sem +)"),
+  password: z.string().min(6, "Senha deve ter pelo menos 6 caracteres"),
+});
 
 export const insertEventSchema = createInsertSchema(events).omit({
   id: true,

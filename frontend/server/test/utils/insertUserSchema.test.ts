@@ -4,6 +4,7 @@ import {
   insertUserSchema,
   loginSchema,
   onlineCourtesyRedemptionSchema,
+  registerUserSchema,
 } from "@shared/schema";
 
 const validUser = {
@@ -20,14 +21,14 @@ const validUser = {
 };
 
 describe("insertUserSchema registration", () => {
-  it("requires occupation, partnerCompany, and areaOfActivity", () => {
-    const { occupation: _occupation, ...withoutOccupation } = validUser;
-    const { partnerCompany: _partnerCompany, ...withoutCompany } = validUser;
-    const { areaOfActivity: _areaOfActivity, ...withoutArea } = validUser;
-
-    expect(insertUserSchema.safeParse(withoutOccupation).success).toBe(false);
-    expect(insertUserSchema.safeParse(withoutCompany).success).toBe(false);
-    expect(insertUserSchema.safeParse(withoutArea).success).toBe(false);
+  it("accepts an account with only name, e-mail, phone and password (ADR-016: the rest is asked later)", () => {
+    const parsed = insertUserSchema.safeParse({
+      email: "maria@example.com",
+      password: "secret1",
+      name: "Maria Silva",
+      phone: "5511999999999",
+    });
+    expect(parsed.success).toBe(true);
   });
 
   it("rejects null, empty, and whitespace-only occupation, partnerCompany, and areaOfActivity", () => {
@@ -60,41 +61,6 @@ describe("insertUserSchema registration", () => {
       email: " User@Example.COM ",
     });
     expect(parsed.email).toBe("user@example.com");
-  });
-
-  it("accepts a foreigner with a passport and no CPF", () => {
-    const { cpf: _cpf, ...withoutCpf } = validUser;
-    const parsed = insertUserSchema.parse({
-      ...withoutCpf,
-      isForeigner: true,
-      foreignDocument: "ab-12345",
-    });
-    expect(parsed.isForeigner).toBe(true);
-    expect(parsed.foreignDocument).toBe("ab-12345");
-  });
-
-  it("rejects a foreigner without a passport", () => {
-    const { cpf: _cpf, ...withoutCpf } = validUser;
-    const result = insertUserSchema.safeParse({
-      ...withoutCpf,
-      isForeigner: true,
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects CPF and passport together", () => {
-    const result = insertUserSchema.safeParse({
-      ...validUser,
-      isForeigner: true,
-      foreignDocument: "AB12345",
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects a Brazilian registration without CPF", () => {
-    const { cpf: _cpf, ...withoutCpf } = validUser;
-    expect(insertUserSchema.safeParse(withoutCpf).success).toBe(false);
-    expect(insertUserSchema.safeParse({ ...withoutCpf, isForeigner: false }).success).toBe(false);
   });
 
   it("rejects an invalid email with Email inválido", () => {
@@ -203,5 +169,45 @@ describe("onlineCourtesyRedemptionSchema (ADR-016)", () => {
     expect(
       onlineCourtesyRedemptionSchema.safeParse({ ...online, emailConfirm: "other@example.com" }).success,
     ).toBe(false);
+  });
+});
+
+describe("registerUserSchema (ADR-016 Phase 4 signup)", () => {
+  const signup = { name: "Maria Silva", email: "maria@example.com", phone: "5511999999999", password: "secret1" };
+
+  it("accepts the four signup fields", () => {
+    expect(registerUserSchema.parse(signup)).toEqual(signup);
+  });
+
+  it("accepts a foreign visitor's Paraguay phone", () => {
+    expect(registerUserSchema.safeParse({ ...signup, phone: "595981123456" }).success).toBe(true);
+  });
+
+  it("drops the document, birth date, address and work fields an old client still sends", () => {
+    const parsed = registerUserSchema.parse({
+      ...signup,
+      cpf: "529.982.247-25",
+      isForeigner: true,
+      foreignDocument: "AB12345",
+      birthDate: "15/01/1990",
+      address: "Rua das Flores 123",
+      occupation: "Medica",
+      partnerCompany: "CDPI",
+      areaOfActivity: "Dermatologia",
+      isAdmin: true,
+    });
+    expect(parsed).toEqual(signup);
+  });
+
+  it("requires the phone", () => {
+    const { phone: _phone, ...withoutPhone } = signup;
+    expect(registerUserSchema.safeParse(withoutPhone).success).toBe(false);
+    expect(registerUserSchema.safeParse({ ...signup, phone: "" }).success).toBe(false);
+  });
+
+  it("rejects a short password, a short name and an invalid e-mail", () => {
+    expect(registerUserSchema.safeParse({ ...signup, password: "12345" }).success).toBe(false);
+    expect(registerUserSchema.safeParse({ ...signup, name: "M" }).success).toBe(false);
+    expect(registerUserSchema.safeParse({ ...signup, email: "not-an-email" }).success).toBe(false);
   });
 });

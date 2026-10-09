@@ -17,7 +17,7 @@
 | `/` | HomePage |
 | `/eventos` | EventsPage |
 | `/event/:id` | EventDetailsPage (`?promo=` checkout, `?cortesia=` free redeem) |
-| `/login`, `/register` | Login / Register. Register requires **Cargo que ocupa**, **Empresa que trabalha**, and **Área de Atuação** (after Endereço Completo, before Senha). Empty submit shows those field errors. Labels have no asterisk. Checkbox **Sou estrangeiro / I'm a foreign visitor** (shared `DocumentFields`, also used by the registration dialog) hides CPF and asks for **Passaporte / Passport**; the in-person courtesy form keeps its own toggle; email stays required and unique. The same checkbox is on courtesy redeem. Profile shows the passport read-only for foreign accounts. Paid checkout for a foreigner offers only an international card (no PIX, boleto, or parcelamento) |
+| `/login`, `/register` | Login / Register. Register (ADR-016 Phase 4) asks only **Nome Completo**, **E-mail** + confirmation, **Telefone** (`PhoneInputE164`, any country), **Senha** + confirmation and the terms; it keeps `?next=`. No CPF, passport, birth date, address or work fields: the registration dialog asks the document/address at the first paid or in-person inscription. Profile shows the CPF/passport read-only (empty until given), the `Nao aplicavel` work defaults and a missing address as empty inputs, and leaves empty optional fields out of `PUT /api/profile`. Paid checkout for a foreigner offers only an international card (no PIX, boleto, or parcelamento) |
 | `/forgot-password`, `/reset-password` | Password recovery |
 | `/verify-email` | VerifyCodePage (6-digit code) |
 | `/cortesia` | CourtesyRedeemPage (manual code, or the attendee form after the guest chooses to redeem) |

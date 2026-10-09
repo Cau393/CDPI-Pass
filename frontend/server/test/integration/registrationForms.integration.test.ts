@@ -231,6 +231,89 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
+  describe("POST /api/auth/register with four fields (ADR-016 Phase 4)", () => {
+    async function register(body: Record<string, unknown>) {
+      const res = await api("POST", "/api/auth/register", { body });
+      const { rows } = await pool.query(
+        `SELECT id, cpf, is_foreigner, foreign_document, birth_date, address, phone, occupation FROM users WHERE email = $1`,
+        [body.email],
+      );
+      if (rows[0]) createdUserIds.push(rows[0].id);
+      return { res, row: rows[0] };
+    }
+
+    it("creates a Brazilian account with no document, birth date or address", async () => {
+      const email = `forms-signup-${randomUUID().slice(0, 8)}@example.test`;
+
+      const { res, row } = await register({ name: "maria silva", email, phone: "5561987654321", password: "secret1" });
+
+      expect(res.status).toBe(201);
+      expect(row).toMatchObject({
+        cpf: null,
+        is_foreigner: false,
+        foreign_document: null,
+        birth_date: null,
+        address: null,
+        phone: "5561987654321",
+        occupation: "Nao aplicavel",
+      });
+    });
+
+    it("creates a foreign visitor's account with a Paraguay phone, then lets it join a free online event", async () => {
+      const email = `forms-signup-py-${randomUUID().slice(0, 8)}@example.test`;
+      const eventId = await createEvent({ modality: "online", isFree: true });
+
+      const { res, row } = await register({ name: "Pedro Gómez", email, phone: "595981123456", password: "secret1" });
+      await pool.query(`UPDATE users SET email_verified = true WHERE id = $1`, [row.id]);
+      const loginRes = await api("POST", "/api/auth/login", { body: { email, password: "secret1" } });
+      const subscribe = await api("POST", `/api/events/${eventId}/subscribe`, { token: loginRes.body.token, body: {} });
+
+      expect(res.status).toBe(201);
+      expect(row).toMatchObject({ phone: "595981123456", cpf: null, foreign_document: null });
+      expect(loginRes.status).toBe(200);
+      expect(subscribe.status).toBe(201);
+    });
+
+    it("ignores the document and profile fields an old cached client still sends", async () => {
+      const email = `forms-signup-old-${randomUUID().slice(0, 8)}@example.test`;
+
+      const { res, row } = await register({
+        name: "Cliente Antigo",
+        email,
+        phone: "5511987654321",
+        password: "secret1",
+        cpf: nextCpf(),
+        birthDate: "11/08/1988",
+        address: ADDRESS,
+        occupation: "Analista",
+        partnerCompany: "Empresa",
+        areaOfActivity: "Farmácia",
+      });
+
+      expect(res.status).toBe(201);
+      expect(row).toMatchObject({ cpf: null, birth_date: null, address: null });
+    });
+
+    it("still rejects a missing or invalid phone and a duplicate e-mail with 400", async () => {
+      const email = `forms-signup-dup-${randomUUID().slice(0, 8)}@example.test`;
+      await register({ name: "Primeira Conta", email, phone: "5511987654321", password: "secret1" });
+
+      const noPhone = await api("POST", "/api/auth/register", {
+        body: { name: "Sem Telefone", email: `x-${email}`, password: "secret1" },
+      });
+      const badPhone = await api("POST", "/api/auth/register", {
+        body: { name: "Telefone Ruim", email: `y-${email}`, phone: "55119999", password: "secret1" },
+      });
+      const duplicate = await api("POST", "/api/auth/register", {
+        body: { name: "Segunda Conta", email: email.toUpperCase(), phone: "5511987654321", password: "secret1" },
+      });
+
+      expect(noPhone.status).toBe(400);
+      expect(badPhone).toMatchObject({ status: 400, body: { message: "Telefone inválido" } });
+      expect(duplicate).toMatchObject({ status: 400, body: { message: "Email já cadastrado" } });
+    });
+  });
+
   describe("free online event", () => {
     it("subscribes a bare account with no document, and the order has no document", async () => {
       const eventId = await createEvent({ modality: "online", isFree: true });

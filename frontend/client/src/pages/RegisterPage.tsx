@@ -6,18 +6,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { accountEmailSchema, insertUserObjectSchema, refineAccountDocument } from "@shared/schema";
+import { accountEmailSchema, registerUserSchema } from "@shared/schema";
 import { z } from "zod";
 import { useState, useMemo } from "react";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
-import { DocumentFields } from "@/components/DocumentFields";
 
-const registerFormSchema = insertUserObjectSchema.extend({
-  birthDate: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, "Data deve estar no formato dd/mm/aaaa"),
+// ADR-016: name, e-mail, phone and password only. The document and address
+// are asked at the first inscription that needs them.
+const registerFormSchema = registerUserSchema.extend({
   emailConfirm: accountEmailSchema,
   passwordConfirm: z.string().min(6, "Confirmação de senha é obrigatória"),
   acceptTerms: z.boolean().refine(val => val === true, "Você deve aceitar os termos"),
@@ -27,7 +26,7 @@ const registerFormSchema = insertUserObjectSchema.extend({
 }).refine((data) => data.password === data.passwordConfirm, {
   message: "As senhas não coincidem",
   path: ["passwordConfirm"],
-}).superRefine(refineAccountDocument);
+});
 
 type RegisterFormData = z.infer<typeof registerFormSchema>;
 
@@ -43,17 +42,9 @@ export default function RegisterPage() {
     resolver: zodResolver(registerFormSchema),
     defaultValues: {
       name: "",
-      isForeigner: false,
-      cpf: "",
-      foreignDocument: "",
-      birthDate: "",
       email: "",
       emailConfirm: "",
       phone: "",
-      address: "",
-      occupation: "",
-      partnerCompany: "",
-      areaOfActivity: "",
       password: "",
       passwordConfirm: "",
       acceptTerms: false,
@@ -63,8 +54,6 @@ export default function RegisterPage() {
   const registerMutation = useMutation({
     mutationFn: async (data: RegisterFormData) => {
       const { emailConfirm, passwordConfirm, acceptTerms, ...registerData } = data;
-      
-      // Send birthDate as string in dd/mm/yyyy format - server will convert it
       const response = await apiRequest("POST", "/api/auth/register", registerData);
       return response.json();
     },
@@ -127,34 +116,6 @@ export default function RegisterPage() {
                 )}
               </div>
 
-              <DocumentFields form={form} />
-
-              <div>
-                <Label htmlFor="birthDate" className="block text-sm font-medium text-gray-700 mb-2">
-                  Data de Nascimento
-                </Label>
-                <Input
-                  id="birthDate"
-                  type="text"
-                  placeholder="dd/mm/aaaa"
-                  {...form.register("birthDate")}
-                  onChange={(e) => {
-                    let value = e.target.value.replace(/\D/g, '');
-                    value = value.replace(/(\d{2})(\d)/, '$1/$2');
-                    value = value.replace(/(\d{2})(\d)/, '$1/$2');
-                    form.setValue("birthDate", value);
-                  }}
-                  maxLength={10}
-                  className="w-full"
-                  data-testid="input-birth-date"
-                />
-                {form.formState.errors.birthDate && (
-                  <p className="text-red-600 text-sm mt-1" data-testid="text-birth-date-error">
-                    {form.formState.errors.birthDate.message}
-                  </p>
-                )}
-              </div>
-
               <div>
                 <Label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
                   E-mail
@@ -212,78 +173,6 @@ export default function RegisterPage() {
                 {form.formState.errors.phone && (
                   <p className="mt-1 text-sm text-red-600" data-testid="text-phone-error">
                     {form.formState.errors.phone.message}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <Label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-2">
-                  Endereço Completo
-                </Label>
-                <Textarea
-                  id="address"
-                  {...form.register("address")}
-                  rows={3}
-                  className="w-full"
-                  data-testid="input-address"
-                />
-                {form.formState.errors.address && (
-                  <p className="text-red-600 text-sm mt-1" data-testid="text-address-error">
-                    {form.formState.errors.address.message}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <Label htmlFor="occupation" className="block text-sm font-medium text-gray-700 mb-2">
-                  Cargo que ocupa
-                </Label>
-                <Input
-                  id="occupation"
-                  type="text"
-                  {...form.register("occupation")}
-                  className="w-full"
-                  data-testid="input-occupation"
-                />
-                {form.formState.errors.occupation && (
-                  <p className="text-red-600 text-sm mt-1" data-testid="text-occupation-error">
-                    {form.formState.errors.occupation.message}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <Label htmlFor="partnerCompany" className="block text-sm font-medium text-gray-700 mb-2">
-                  Empresa que trabalha
-                </Label>
-                <Input
-                  id="partnerCompany"
-                  type="text"
-                  {...form.register("partnerCompany")}
-                  className="w-full"
-                  data-testid="input-partner-company"
-                />
-                {form.formState.errors.partnerCompany && (
-                  <p className="text-red-600 text-sm mt-1" data-testid="text-partner-company-error">
-                    {form.formState.errors.partnerCompany.message}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <Label htmlFor="areaOfActivity" className="block text-sm font-medium text-gray-700 mb-2">
-                  Área de Atuação
-                </Label>
-                <Input
-                  id="areaOfActivity"
-                  type="text"
-                  {...form.register("areaOfActivity")}
-                  className="w-full"
-                  data-testid="input-area-of-activity"
-                />
-                {form.formState.errors.areaOfActivity && (
-                  <p className="text-red-600 text-sm mt-1" data-testid="text-area-of-activity-error">
-                    {form.formState.errors.areaOfActivity.message}
                   </p>
                 )}
               </div>

@@ -22,8 +22,7 @@ import {
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { 
-  insertUserObjectSchema,
-  refineAccountDocument,
+  registerUserSchema,
   loginSchema, 
   insertOrderSchema,
   courtesyRedemptionSchema,
@@ -45,7 +44,6 @@ import { validateEmail } from "./utils/validation";
 import { resolveRegisterIdentity, normalizeForeignDocument } from "./utils/registerIdentity";
 import {
   isUsersEmailUniqueViolation,
-  isUsersForeignDocumentUniqueViolation,
 } from "./utils/usersEmailUnique";
 import { parseBrazilEventLocalDateTime } from "./utils/eventDateTime";
 import { sanitizeCourtesyTemplateHtml } from "./utils/courtesyTemplateSanitize";
@@ -205,16 +203,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth routes
   app.post("/api/auth/register", async (req, res) => {
     try {
-      // Create a custom schema for API that accepts string date
-      const apiUserSchema = insertUserObjectSchema.extend({
-        birthDate: z.string().regex(/^\d{2}\/\d{2}\/\d{4}$/, "Data deve estar no formato dd/mm/aaaa")
-      }).superRefine(refineAccountDocument);
-      
-      const body = apiUserSchema.parse(req.body);
-      const identity = resolveRegisterIdentity(body);
-      if (!identity.ok) {
-        return res.status(400).json({ message: identity.message });
-      }
+      // ADR-016: name, e-mail, phone and password only. The document and
+      // address are asked at the first inscription that needs them
+      // (PUT /api/profile/identity); keys an old client still sends are stripped.
+      const body = registerUserSchema.parse(req.body);
 
       let phone: string;
       try {
@@ -229,33 +221,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Email já cadastrado" });
       }
 
-      if (identity.cpf) {
-        const existingCpf = await storage.getUserByCpf(identity.cpf);
-        if (existingCpf) {
-          return res.status(400).json({ message: "CPF já cadastrado" });
-        }
-      } else if (identity.foreignDocument) {
-        const existingDocument = await storage.getUserByForeignDocument(identity.foreignDocument);
-        if (existingDocument) {
-          return res.status(400).json({ message: "Documento já cadastrado" });
-        }
-      }
-
-      // Convert birthDate string from dd/mm/yyyy to Date object for database
-      const [day, month, year] = body.birthDate.split('/');
-      const birthDateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-
       // Hash password
       const hashedPassword = await bcrypt.hash(body.password, 10);
 
       // Create user
       const user = await storage.createUser({
-        ...body,
-        birthDate: birthDateObj,
+        email: body.email,
         password: hashedPassword,
-        cpf: identity.cpf,
-        isForeigner: identity.isForeigner,
-        foreignDocument: identity.foreignDocument,
         name: toTitleCaseName(body.name),
         phone,
       });
@@ -275,9 +247,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       if (isUsersEmailUniqueViolation(error)) {
         return res.status(400).json({ message: "Email já cadastrado" });
-      }
-      if (isUsersForeignDocumentUniqueViolation(error)) {
-        return res.status(400).json({ message: "Documento já cadastrado" });
       }
       res.status(500).json({ message: "Erro interno do servidor" });
     }
