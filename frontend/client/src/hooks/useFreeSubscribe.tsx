@@ -11,6 +11,7 @@ import {
   identityRequiredMissing,
   needsRegistrationDialog,
   refreshAfterStaleRegistration,
+  RELOAD_PAGE_MESSAGE,
 } from "@/lib/eventRegistration";
 import { EventRegistrationDialog } from "@/components/EventRegistrationDialog";
 import type { Event } from "@shared/schema";
@@ -71,7 +72,16 @@ export function useFreeSubscribe() {
       setLocation("/profile");
     },
     onError: (error: Error, input) => {
-      refreshAfterStaleRegistration(error, input.event.id);
+      // The form may have changed since this event was cached. Refetch in the
+      // background (the mutation settles now) and swap the fresh event into the
+      // open dialog when it arrives.
+      void refreshAfterStaleRegistration(error, input.event.id).then(({ stale, event: fresh }) => {
+        if (fresh) {
+          setPrompt((current) => (current ? { ...current, event: fresh } : current));
+        } else if (stale === "form") {
+          setPromptError(RELOAD_PAGE_MESSAGE);
+        }
+      });
       const missing = identityRequiredMissing(error);
       if (missing) {
         // Said inline, so a reopen that asks nothing new is never silent.

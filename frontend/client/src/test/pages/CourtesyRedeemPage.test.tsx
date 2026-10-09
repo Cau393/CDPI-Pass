@@ -339,6 +339,48 @@ describe("CourtesyRedeemPage — registration questions", () => {
     });
   });
 
+  it("shows the question an admin added after the page loaded, once the redeem is refused for the old form", async () => {
+    authState.user = { email: "juan@example.com", name: "Juan Pérez", phone: "595981123456" };
+    const turno = {
+      id: "q-turno",
+      type: "radio",
+      label: "Turno preferido",
+      options: ["Manhã", "Tarde"],
+      required: true,
+      archived: false,
+    };
+    const event = { id: EVENT_ID, title: "Webinar CDPI", modality: "online" };
+    let redeemed = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const json = (status: number, body: unknown) =>
+          new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+        if (String(input) === "/api/courtesy/redeem" && init?.method === "POST") {
+          redeemed = true;
+          return json(400, { message: "Responda a pergunta obrigatória: Turno preferido" });
+        }
+        // The admin replaced the form between the first load and the redeem.
+        return json(200, {
+          code: CODE,
+          overridePrice: null,
+          remainingTickets: 1,
+          event: { ...event, registrationForm: [redeemed ? turno : origem] },
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(await screen.findByTestId("input-partner-company"), "Laboratorio Asunción");
+    await user.type(screen.getByTestId("input-occupation"), "Farmacéutico");
+    await user.click(screen.getByRole("radio", { name: "Instagram" }));
+    await user.click(screen.getByTestId("button-redeem"));
+
+    expect(await screen.findByText("Turno preferido")).toBeInTheDocument();
+    expect(screen.queryByText("Como soube do evento")).not.toBeInTheDocument();
+  });
+
   it("blocks a blank required question with an inline error", async () => {
     authState.user = { email: "juan@example.com", name: "Juan Pérez", phone: "595981123456" };
     const fetchMock = mockRedeem({

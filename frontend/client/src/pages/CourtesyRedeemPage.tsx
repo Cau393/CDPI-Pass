@@ -1,6 +1,6 @@
 import { useState, useEffect, type FormEvent, type ReactNode } from "react";
 import { useLocation, useSearch } from "wouter";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { z } from "zod";
@@ -9,7 +9,11 @@ import { isOnlineEvent } from "@shared/eventModality";
 import { COURTESY_FILLED_LEGACY_IDS, type RegistrationField } from "@shared/eventRegistrationForm";
 import { RegistrationFields } from "@/components/RegistrationFields";
 import { parseApiErrorMessage } from "@/lib/eventForm";
-import { registrationAnswerErrors, registrationAnswersPayload } from "@/lib/eventRegistration";
+import {
+  registrationAnswerErrors,
+  registrationAnswersPayload,
+  staleRegistrationError,
+} from "@/lib/eventRegistration";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -66,6 +70,7 @@ export default function CourtesyRedeemPage() {
   const [isResolvingCode, setIsResolvingCode] = useState(false);
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   // Fetch courtesy link details
   const { data: linkData, isLoading: linkLoading, error: linkError } = useQuery({
@@ -166,6 +171,11 @@ export default function CourtesyRedeemPage() {
       });
     },
     onError: (error: Error) => {
+      // The admin may have edited the form since this page loaded the link.
+      if (staleRegistrationError(error)) {
+        void queryClient.invalidateQueries({ queryKey: ["/api/courtesy-links", code] });
+        void queryClient.invalidateQueries({ queryKey: ["/api/events"] });
+      }
       toast({
         title: "Erro ao resgatar cortesia",
         description: parseApiErrorMessage(error),

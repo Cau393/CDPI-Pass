@@ -184,6 +184,31 @@ describe("PaymentModal — registration answers", () => {
       expect(keys).toContainEqual(["/api/auth/me"]);
     });
 
+    it("hands the refetched event back with identity_required, not the captured one", async () => {
+      authState.user = { isForeigner: false };
+      const fresh = { ...event, title: "Congresso (formulário novo)", registrationForm: [{ id: "q-new", type: "text", label: "Nova", options: [], required: false, archived: false }] };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          const json = (status: number, body: unknown) =>
+            new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+          if (url === "/api/orders") {
+            return json(400, { code: "identity_required", missing: ["document"], message: "Complete seus dados" });
+          }
+          return json(200, fresh);
+        }),
+      );
+      const user = userEvent.setup();
+      const { onIdentityRequired } = renderModal();
+
+      await user.click(screen.getByTestId("button-confirm-payment"));
+
+      await waitFor(() =>
+        expect(onIdentityRequired).toHaveBeenCalledWith(["document"], "Complete seus dados", fresh),
+      );
+    });
+
     it("refetches the event when an answer targets an archived or unknown question", async () => {
       const keys = await pay({ message: "Resposta para uma pergunta que não existe neste evento." });
 

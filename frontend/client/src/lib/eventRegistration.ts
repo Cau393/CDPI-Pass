@@ -66,6 +66,8 @@ export function identityRequiredMissing(err: unknown): SystemField[] | null {
   }
 }
 
+const RELOAD_REQUIRED_MESSAGE = "Atualize a página";
+
 /**
  * Why an inscription 400 says the client's copy of the event or account is
  * stale (an admin edited the form after it was cached with staleTime
@@ -75,7 +77,7 @@ export function identityRequiredMissing(err: unknown): SystemField[] | null {
 export function staleRegistrationError(err: unknown): "identity" | "form" | null {
   if (identityRequiredMissing(err)) return "identity";
   if (!(err instanceof Error)) return null;
-  const match = /^400:\s*([\s\S]*)$/.exec(err.message);
+  const match = /^(?:400|409):\s*([\s\S]*)$/.exec(err.message);
   if (!match) return null;
   try {
     const { message } = JSON.parse(match[1]) as { message?: unknown };
@@ -84,6 +86,8 @@ export function staleRegistrationError(err: unknown): "identity" | "form" | null
       REGISTRATION_ANSWER_UNKNOWN_FIELD,
       REGISTRATION_ANSWER_REQUIRED,
       REGISTRATION_ANSWER_INVALID_OPTION,
+      // 409 an old signup/inscription bundle gets from the server.
+      RELOAD_REQUIRED_MESSAGE,
     ];
     return staleMessages.some((known) => message.startsWith(known)) ? "form" : null;
   } catch {
@@ -91,12 +95,30 @@ export function staleRegistrationError(err: unknown): "identity" | "form" | null
   }
 }
 
-/** Drops the cached event (and the account, for identity_required) so a retry uses the fresh form. */
-export function refreshAfterStaleRegistration(err: unknown, eventId: string): void {
+export const RELOAD_PAGE_MESSAGE = "Atualize a página para continuar.";
+
+/**
+ * Drops every cached copy of the event (detail and the `/api/events` list that
+ * HomePage and EventsPage read, all `staleTime: Infinity`) and the account for
+ * identity_required, then refetches the event so an open dialog can switch to
+ * the fresh form instead of the one it captured. `stale` is null when the error
+ * is not a stale one; `event` is null when the refetch failed or the event is
+ * gone (the caller then tells the user to reload).
+ */
+export async function refreshAfterStaleRegistration(
+  err: unknown,
+  eventId: string,
+): Promise<{ stale: "identity" | "form" | null; event: Event | null }> {
   const stale = staleRegistrationError(err);
-  if (!stale) return;
+  if (!stale) return { stale, event: null };
+  void queryClient.invalidateQueries({ queryKey: ["/api/events"] });
   void queryClient.invalidateQueries({ queryKey: [`/api/events/${eventId}`] });
   if (stale === "identity") void queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+  try {
+    return { stale, event: await queryClient.fetchQuery<Event>({ queryKey: [`/api/events/${eventId}`], staleTime: 0 }) };
+  } catch {
+    return { stale, event: null };
+  }
 }
 
 /** Inline error per question, using the same rules (and messages) as the server. */
