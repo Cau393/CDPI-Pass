@@ -1,5 +1,7 @@
 # Prompt: hardening batch 2 (security code fixes C1–C5), then write batch 3's prompt
 
+> **Executed 2026-10-13: batch 2 deployed.** PR #17 merged as `ffdb2c4` at 13:16 BRT on the owner's explicit go (launch day). CI run 38429128533 went green on rerun (attempt 1 hit an unrelated integration deadlock, fixed in the docs PR). EC2 `9e104d9..ffdb2c4`, the worker restarted `online`, `prod-smoke.mjs` clean. The 35 unverified accounts were grandfathered before the merge. Next: `Prompt-Hardening-Batch-3.md`.
+
 How to use it: open a new Claude Code session at `/Users/cauecasonato/Envs/CDPI-Pass` and say: "Read `CDPI-Pass-Vault/70-Operations/Prompt-Hardening-Batch-2.md` on `origin/hotfix-frontend-update` and execute batch 2." If the docs PR that adds this file is not merged yet, read it from branch `docs/hardening-batch1-deployed`, in the worktree `.claude/worktrees/b1-payments`.
 
 Written 2026-10-13 ~10:50 BRT, right after batch 1 was deployed. One batch per session (rule in `~/.claude/CLAUDE.md`, "Context budget").

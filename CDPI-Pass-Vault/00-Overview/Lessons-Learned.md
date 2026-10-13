@@ -166,3 +166,33 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Symptom:** deploying batch 1 (PR #15) hit three things the plan had not written down. Claude Code's auto-mode classifier refused `gh pr merge` ("Merge Without Review"), so the owner ran the merge. The deploy restarted `cdpi-pass` but left `cdpi-pass-email-worker` on its 2-day-old process. And CI's first pull from `public.ecr.aws` (E3) also got `toomanyrequests: Rate exceeded`; the runner's automatic retry succeeded.
 - **Fix:** none needed for batch 1. The refund e-mail is sent by the web process, and the only change in the worker's import graph was an `export` keyword. The merge command is now handed to the owner in the prompt, ready to paste with `!`.
 - **Prevention:** a deploy prompt states that the owner runs `gh pr ready` + `gh pr merge` themselves and stays at the keyboard. Any change under `server/workers/`, `emailService.ts`, `storage.ts` or the templates the worker renders needs `pm2 restart cdpi-pass-email-worker` until `deploy.yml` restarts it (proposed in hardening batch 2). ECR public is not immune to rate limits; a red "Initialize containers" step is a rerun, not a code failure.
+
+## 2026-10-13 — hardening batch 2: integration files share one database
+- **Symptom:** three failures came from the shared integration database, not from the code under test.
+  - On the BRT dev machine, a freshly written verification code read as expired.
+  - The batch-2 users hit `users_cpf_unique` only when the whole suite ran.
+  - The merge of PR #17 failed in CI with `deadlock detected` (40P01) in `registrationFormsSchema.integration.test.ts:193`, a test from ADR-016, so the deploy was skipped. The rerun of run `38429128533` passed.
+- **Root cause:**
+  - **Timestamps:** the fixture passed a JS `Date` to raw `pg`. node-postgres sends it in the machine's zone, a `timestamp without time zone` column keeps that wall time, and Drizzle reads it back as UTC: 3 h off in BRT. CI runs in UTC and never sees it.
+  - **CPF prefix:** test files run in parallel on one database, and `888.` was already used by `eventOnlineAccess`.
+  - **Deadlock:** the ADR-016 test ran `ALTER TABLE` on `users`, `courtesy_attendees` and `orders` inside one transaction. It held `ACCESS EXCLUSIVE` on `users` while another file's transaction held a share lock on `courtesy_attendees` and waited for `users`. Batch 2's concurrent courtesy redeems made that overlap more likely.
+- **Fix:**
+  - Fixtures write `date.toISOString()`.
+  - Batch 2 uses CPF prefix `777.`.
+  - The DDL test now runs on empty `CREATE TEMP TABLE … (LIKE public.… INCLUDING CONSTRAINTS)` copies (docs PR after #17). The new test "takes no ACCESS EXCLUSIVE lock on the tables the other suites use" found 3 such locks with the old approach and 0 now. The full suite passed twice, 129 passed / 4 skipped.
+- **Prevention:** rules in `testing.md`: ISO strings for raw `pg` timestamps, one CPF prefix per file (999, 888, 111, 123, 222 and 777 are taken), and no DDL on shared tables. `deployment.md`: rerunning a red job ships the deploy, and the flaky test is fixed in the next PR. The CI rerun broke the "never retry to make it pass" rule once, to get the launch-day deploy out, and this fix pays that back.
+
+## 2026-10-13 — hardening batch 2: tests that pass for the wrong reason, and a gate on existing accounts
+- **Symptom:**
+  - The C5 concurrent-redeem test passed in a full-file run on unfixed code.
+  - Deleting the Make.com post broke an e2e test, even though nothing was wrong.
+  - At deploy time, the verified-e-mail gate (#16) would have stopped 35 existing accounts at checkout on launch day.
+- **Root cause:**
+  - **Race test:** it only fails when the requests overlap, and in the full run the timing hid it. Run alone, it failed 10/10.
+  - **e2e test:** `network-guard.spec.ts` asserted that the guard *blocked* the outbound call. With the call gone there was nothing to block, so it failed.
+  - **The gate:** the PR counted the affected accounts but left what to do with them to deploy time.
+- **Fix:**
+  - C5 was proven by running the test alone in a loop: 0/10 before the change, 10/10 after.
+  - The e2e test now asserts "a paid finalize makes no outbound call", after a later log marker.
+  - The owner grandfathered the 35 accounts before the merge, with the same write that `verify-code` makes. Afterwards, 0 of 816 users were unverified.
+- **Prevention:** rules in `testing.md` (race tests in a solo loop, rewrite guard tests when a call is removed) and `deployment.md` (a new gate on existing accounts ships with a decision for the rows it blocks).

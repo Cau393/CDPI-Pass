@@ -13,7 +13,7 @@ Priority key: **P1** exploitable now or silent data loss · **P2** broken featur
 | 3 | P1 | IAM user `cdpi-s3-uploader` has `AmazonS3FullAccess` + `AWSLambda_FullAccess` | open |
 | 4 | P1 | Static AWS keys in `~/CDPI-Pass/frontend/.env` on EC2; no instance profile, no SSM | open |
 | 5 | P2 | Asaas API key is invalid (paid checkout fails) | open |
-| 6 | P2 | `JWT_SECRET` falls back to `"your-secret-key"` | open (hardening batch 2, C4) |
+| 6 | P2 | `JWT_SECRET` falls back to `"your-secret-key"` | resolved 2026-10-13 (hardening batch 2, PR #17, `ffdb2c4`) |
 | 7 | P2 | GuardDuty findings go nowhere (one is severity 8.0) | open |
 | 8 | P2 | `sql/` migrations have no applied-state tracking (the `nps_responses` incident) | open |
 | 9 | P2 | SSH ingress pinned to a stale IP again; no out-of-band access path | open |
@@ -21,9 +21,10 @@ Priority key: **P1** exploitable now or silent data loss · **P2** broken featur
 | 11 | P3 | `cdpi-pass-frontend-prod` bucket fully public, no ACL blocks | open |
 | 12 | P3 | Neon point-in-time restore window unconfirmed | open |
 | 13 | P3 | GitHub Actions deploy uses static keys although an OIDC role exists | open |
-| 14 | unrated | Outbound Make.com webhook posts buyer PII and `meetingUrl`; hook URL public in git | open (hardening batch 2, C1) |
-| 15 | unrated | Login rate limiter keyed on a client-controlled `X-Forwarded-For` | open (hardening batch 2, C2) |
-| 16 | unrated | Unverified accounts can subscribe, order and redeem courtesies (login stays open, owner decision) | open (hardening batch 2, C3) |
+| 14 | unrated | Outbound Make.com webhook posts buyer PII and `meetingUrl`; hook URL public in git | resolved 2026-10-13 (hardening batch 2, PR #17, `ffdb2c4`) |
+| 15 | unrated | Login rate limiter keyed on a client-controlled `X-Forwarded-For` | resolved 2026-10-13 (hardening batch 2, PR #17, `ffdb2c4`) |
+| 16 | unrated | Unverified accounts can subscribe, order and redeem courtesies (login stays open, owner decision) | resolved 2026-10-13 (hardening batch 2, PR #17, `ffdb2c4`) |
+| 17 | unrated | No admin-visible signal for refunds Asaas holds at `AWAITING_CRITICAL_ACTION_AUTHORIZATION` | open (owner: backlog, not batch 2) |
 
 ---
 
@@ -157,6 +158,8 @@ This is the local `.env`; the EC2 copy could not be checked (item 9), but `infra
 **Fix**: generate a new key in the Asaas dashboard for the environment actually used in prod, set `ASAAS_API_URL` to match, update the EC2 `.env`, restart, and place one real R$1 test order end to end before the next event goes on sale. Store the key in SSM Parameter Store once item 4 lands.
 
 ### 6. `JWT_SECRET` fallback `"your-secret-key"`
+
+**Resolved 2026-10-13** by hardening batch 2 (PR #17, merge `ffdb2c4`). Proof in [[#2026-10-13 — hardening batch 2: secrets, outbound posts, auth limit, verified e-mail (PR #17, deployed `ffdb2c4`)]]. The finding is kept below as it was written.
 
 If the env var is ever missing (a bad deploy, a new box, a `.env` typo), the server boots normally and signs 7-day tokens with a public string. Anyone can then mint `{userId: <admin id>}` and pass `authenticateToken` + the `isAdmin` check. It is duplicated in two files, so a fix in one leaves the other.
 
@@ -307,6 +310,8 @@ aws iam list-access-keys --user-name cdpi-pass-deployer --query 'AccessKeyMetada
 
 ### 14. Outbound webhooks the owner does not recognise (found 2026-10-09, ADR-016 rollout)
 
+**Resolved 2026-10-13** by hardening batch 2 (PR #17, merge `ffdb2c4`). Proof in [[#2026-10-13 — hardening batch 2: secrets, outbound posts, auth limit, verified e-mail (PR #17, deployed `ffdb2c4`)]]. The finding is kept below as it was written.
+
 The owner said on 2026-10-09 that the server's only webhook is Asaas's, which is inbound. The code also **sends** data out in two places:
 - **Make.com, hardcoded and live:** `server/utils/finalizeOrderPaidLikeWebhook.ts` (`MAKE_WEBHOOK_URL = https://hook.us2.make.com/…`, added 2025-10-22 "Real time sells updates added"). On every order that becomes paid, including courtesies, it posts the buyer's name and e-mail, the event's title, date, location, modality and **`meetingUrl`**, and the order's id, amount, status and method. **The repo `Cau393/CDPI-Pass` is public (checked 2026-10-09), so the hook URL is in public git history:** anyone can post fake "paid order" events into that scenario, and the payload carries PII and the online meeting link.
 - **`COURTESY_WEBHOOK_URL`, env-gated:** `server/routes.ts`, courtesy redeem (added 2025-10-20 "Added Real Time Automation for Courtesy Redeems"). When the variable is set, it posts the full courtesy attendee: name, e-mail, phone, CPF/passport, birth date, address, cargo and empresa.
@@ -328,6 +333,8 @@ grep -c '^COURTESY_WEBHOOK_URL=' .env
 
 ### 15. Login rate limiter keyed on a client-controlled header (found 2026-10-09, ADR-016 rollout review)
 
+**Resolved 2026-10-13** by hardening batch 2 (PR #17, merge `ffdb2c4`). Proof in [[#2026-10-13 — hardening batch 2: secrets, outbound posts, auth limit, verified e-mail (PR #17, deployed `ffdb2c4`)]]. The finding is kept below as it was written.
+
 `server/routes.ts` `authLimiter.keyGenerator` (added 2025-11-12 "Limit individual ips") uses the **first** `X-Forwarded-For` entry. nginx appends the real client IP at the end, so the first entry is whatever the client sent. Sending a random `X-Forwarded-For` per request bypasses the 100-per-15-minutes limit on `/api/auth/*`, the brute-force guard for login.
 
 ```bash
@@ -341,6 +348,8 @@ grep -n "trust proxy" frontend/server/index.ts   # app.set('trust proxy', 1)
 
 ### 16. Login does not require a verified e-mail (found 2026-10-09, ADR-016 refuter round 2)
 
+**Resolved 2026-10-13** by hardening batch 2 (PR #17, merge `ffdb2c4`). Proof in [[#2026-10-13 — hardening batch 2: secrets, outbound posts, auth limit, verified e-mail (PR #17, deployed `ffdb2c4`)]]. The finding is kept below as it was written.
+
 `POST /api/auth/login` (`server/routes.ts`, comment "Skip email verification check for MVP") lets an unverified account log in. Before ADR-016 the signup's CPF uniqueness limited throwaway accounts. With the 4-field signup, anyone can create unverified accounts and subscribe them to free online events. Each subscription sends the confirmation and meeting e-mails to whatever address was typed, which makes it a spam relay and inflates attendance.
 
 **Fix (owner decision)**:
@@ -348,6 +357,14 @@ grep -n "trust proxy" frontend/server/index.ts   # app.set('trust proxy', 1)
 - Count unverified accounts with orders first, so existing customers are not locked out.
 
 Related: the three legacy questions (`legacy-*` ids) are not locked in the form builder. An admin who removes one and adds it back creates a new id, so the profile fallback and the Excel merge stop applying to it. [[70-Operations/Operator-Guides]] says not to. Locking those rows in the builder would enforce it.
+
+---
+
+### 17. No admin signal for refunds held for authorization (found 2026-10-12, batch-1 sandbox run)
+
+Prod Asaas has critical-action authorization on, so every API refund (late PIX/boleto, duplicate payment) waits at `AWAITING_CRITICAL_ACTION_AUTHORIZATION` until someone approves it in the Asaas panel. The buyer's e-mail already says "estornamos", and nothing in the admin shows that a refund is waiting. A refund nobody approves never reaches the buyer.
+
+**Fix (not scheduled; the owner kept it out of batch 2 on 2026-10-13)**: show refunds that are still pending authorization in the admin, from the refund status the webhook path already reads (`refunds[]`), or allowlist the server IP in Asaas so API refunds skip the panel approval.
 
 ---
 
@@ -376,3 +393,28 @@ _(move items here with the date and the command output that shows them closed)_
 - **Webhook fails open when `ASAAS_WEBHOOK_TOKEN` is unset (B1):** in production it now answers 401 and logs loudly. Malformed or unhandled events answer 200 (B2/B3). Proof: integration tests `prod with no token → 401`, `no payment → 200`.
 - **One Asaas id could match two orders (A7):** partial unique index `orders_asaas_payment_id_unique` (`frontend/sql/orders_asaas_payment_id_unique.sql`), applied on prod 2026-10-13 10:39 BRT. Proof: `pg_indexes` + `pg_index` → `indisvalid=true, indisready=true, indisunique=true`.
 - **Residuals accepted by the owner:** a card purchase completed in the ~1–2 s before the paid link is switched off; card payment on a cancelled order is logged `REFUND_NEEDED`, never auto-refunded.
+
+### 2026-10-13 — hardening batch 2: secrets, outbound posts, auth limit, verified e-mail (PR #17, deployed `ffdb2c4`)
+
+Merged 2026-10-13 13:16 BRT on the owner's explicit go (launch day). CI run `38429128533`: the first attempt failed in Run Tests on an unrelated deadlock (see [[00-Overview/Lessons-Learned]]), so the deploy was skipped. The rerun went green. EC2 fast-forwarded `9e104d9..ffdb2c4`, the log shows "Smoke test OK", then "Deploy OK. Live /api/events -> 200", then `cdpi-pass-email-worker` restarted `online`. `prod-smoke.mjs` came back clean: 6 event pages at 200 with the right CTA and no page errors, and the old-shape register got 409.
+
+- **#6, public secret fallbacks:** `server/utils/requiredSecret.ts` (`getJwtSecret`, `getQrCodeSecret`) throws when the variable is empty and `NODE_ENV=production`. `middleware/auth.ts`, `routes.ts`, `print/printCoordinator.ts`, `services/emailService.ts` and `services/qrCodeService.ts` read it once, at load. The deploy's spare-port smoke test is the guard: a missing secret fails it, and the cutover never happens. The values are unchanged, so issued QR tickets and print-agent tokens keep validating.
+  - Proof: `requiredSecret.test.ts`, 8 tests ("refuses to load in production when it is missing" was red before). The fallbacks now appear only in that helper's development branch:
+    ```
+    server/utils/requiredSecret.ts:22:  return requiredSecret("JWT_SECRET", "your-secret-key");
+    server/utils/requiredSecret.ts:26:  return requiredSecret("QR_CODE_SECRET", "default-secret-key");
+    ```
+  - `SESSION_SECRET`, named in the original fix, is not covered.
+- **#14, outbound posts of buyer data:** the Make.com post in `finalizeOrderPaidLikeWebhook.ts` and the courtesy `COURTESY_WEBHOOK_URL` post are deleted. The owner moved the reports they fed into the app.
+  - Proof: `grep -rn --include='*.ts' 'hook.us2.make.com\|COURTESY_WEBHOOK_URL' frontend/server | grep -v /test/` prints nothing.
+  - Tests: unit "C1: forwards a paid order to no third party", integration "courtesy redeem posts to no third party (#14) › ignores COURTESY_WEBHOOK_URL", and e2e `network-guard.spec.ts` (a paid finalize makes no outbound call).
+  - **Still to do (owner):** delete `COURTESY_WEBHOOK_URL` from `~/CDPI-Pass/frontend/.env` on EC2. No restart is needed. The Make.com hook URL stays in public git history, so disable that scenario in Make.
+- **#15, auth limiter keyed on a client header:** the custom `keyGenerator` is gone, and express-rate-limit keys on `req.ip` (`trust proxy` 1, nginx appends XFF at `infra/nginx/cdpipass.com.br.conf:63`).
+  - Proof: `grep -n -i "x-forwarded-for\|keyGenerator" frontend/server/routes.ts` prints nothing.
+  - Tests: integration "answers 429 on the 101st login even when the client rotates X-Forwarded-For" (0 × 429 before), and `authRateLimitMax.test.ts` (the e2e override is ignored in production).
+- **#16, unverified accounts could sign up:** `requireEmailVerification` (403 `EMAIL_NOT_VERIFIED`) guards `POST /api/orders`, `POST /api/events/:id/subscribe` and `POST /api/courtesy/redeem`. Login stays open. The client hook `useVerifyEmailRedirect` sends the account to `/verify-email?next=…`.
+  - Integration tests: subscribe, paid order and courtesy redeem each get 403 and then 201 after the code.
+  - **Grandfathered on prod (owner's go, 2026-10-13 13:15 BRT, before the merge):** the 35 accounts with `email_verified IS NOT TRUE` were set verified, with their codes cleared, the same write `/api/auth/verify-code` makes. Aggregate after: 0 unverified out of 816 users. Only accounts created from then on must verify.
+- **C5, concurrent courtesy redeems:** the already-registered and event-full checks moved into `storage.claimCourtesyRedeem`'s transaction, after the event row `FOR UPDATE`. Proof: "creates exactly one order for 8 concurrent redeems of the same attendee". Run alone, it failed 10/10 before the change and passed 10/10 after.
+- **deploy.yml** now restarts `cdpi-pass-email-worker --update-env` after the live check. Before, the worker kept the code from its last manual restart.
+- **Residual (C3):** `/verify-email` opens without sending a new code, so an account with an expired code presses "Reenviar" (30 s wait). Grandfathering removed this for existing accounts.
