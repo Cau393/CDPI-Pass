@@ -1,4 +1,4 @@
-import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
+import rateLimit from 'express-rate-limit';
 import type { Express, Response } from "express";
 import { createServer, type Server } from "http";
 import { randomUUID } from "crypto";
@@ -79,7 +79,6 @@ import {
   checkFreeSubscriptionAllowed,
   checkPaidPurchaseAllowed,
   computeOrderTotal,
-  isEventFull,
   normalizeEventPrice,
   parseBooleanField,
   salesBlockedMessage,
@@ -112,6 +111,8 @@ import { qrCodeService } from "./services/qrCodeService";
 import { s3Service } from "./services/s3Service";
 import { invokeGenerateCertificatePdf } from "./services/certificateLambdaService";
 import { requireEmailVerification } from "./middleware/auth"; 
+import { authRateLimitMax } from "./utils/authRateLimitMax";
+import { getJwtSecret } from "./utils/requiredSecret";
 import multer from 'multer';
 import csv from 'csv-parser';
 import { parse } from 'csv-parse/sync';
@@ -147,7 +148,7 @@ const generateCertificateBodySchema = z.discriminatedUnion("npsType", [
   }),
 ]);
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+const JWT_SECRET = getJwtSecret();
 
 interface CSVRow {
   name: string;
@@ -203,24 +204,14 @@ function registrationAnswersFailure(res: Response, body: unknown, message: strin
 
 export async function registerRoutes(app: Express): Promise<Server> {
 
-  // Apply rate limiting to all /api/auth routes
- const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: 'Too many requests from this IP, please try again after 15 minutes',
-  keyGenerator: (req) => {
-    const xForwardedFor = req.headers['x-forwarded-for'];
-
-    if (typeof xForwardedFor === 'string') {
-      const clientIp = xForwardedFor.split(',')[0].trim();
-      return ipKeyGenerator(clientIp);
-    }
-
-    // Normalize IPv6 and always return a string
-    return ipKeyGenerator(req.ip || 'unknown-ip');
-  },
+  // Apply rate limiting to all /api/auth routes. The default key is req.ip, the
+  // address nginx saw (trust proxy 1 in index.ts), never a client-sent header (#15).
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: authRateLimitMax(),
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: 'Too many requests from this IP, please try again after 15 minutes',
   });
 
   app.use('/api/auth', authLimiter);
@@ -2470,7 +2461,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
   // Orders routes
-  app.post("/api/orders", authenticateToken, async (req: any, res) => {
+  app.post("/api/orders", authenticateToken, requireEmailVerification, async (req: any, res) => {
     try {
       const { eventId, paymentMethod, promoCode } = req.body;
       const userId = req.user.id;
@@ -2658,7 +2649,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * The event must actually be free in the DB. The client cannot make a paid
    * event free by calling this route.
    */
-  app.post("/api/events/:id/subscribe", authenticateToken, async (req: any, res) => {
+  app.post("/api/events/:id/subscribe", authenticateToken, requireEmailVerification, async (req: any, res) => {
     try {
       const userId = req.user.id;
 
@@ -3463,7 +3454,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/courtesy/redeem", authenticateToken, async (req: any, res) => {
+  app.post("/api/courtesy/redeem", authenticateToken, requireEmailVerification, async (req: any, res) => {
     try {
       const userId = req.user.id;
       const { code, ...userData } = req.body ?? {};
@@ -3529,36 +3520,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "CPF inválido" });
       }
 
-      // By the attendee, never the redeeming account (one account may redeem
-      // for several attendees): in-person by document, as before; online has
-      // no document, so by the attendee's e-mail.
-      const alreadyRegistered = await storage.isAlreadyRegisteredForEvent({
-        eventId: link.eventId,
-        userId: null,
-        cpf: attendeeCpf,
-        foreignDocument,
-        email: online ? userData.email : null,
-      });
-      if (alreadyRegistered) {
-        return res.status(400).json({
-          message: isForeigner
-            ? "Documento já cadastrado para este evento"
-            : attendeeCpf
-              ? "CPF já cadastrado para este evento"
-              : "E-mail já inscrito neste evento.",
-        });
-      }
-
-      // Check if event is full
-      //
-      // NOTE: `salesClosed` ("Encerrar Vendas") is deliberately NOT checked here.
-      // Closing sales blocks new purchases and free subscriptions only; courtesy
-      // redemption must keep working so invited guests can still claim a seat.
-      // Use `isActive` if the whole event needs to be shut down.
-      if (isEventFull(event)) {
-        return res.status(400).json({ message: "Evento lotado" });
-      }
-
       // Update user information with courtesy data
       const birthDateObj = online ? null : new Date(userData.birthDate);
 
@@ -3571,10 +3532,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Telefone inválido" });
       }
 
+      // The duplicate and capacity checks run inside the claim, on the locked event row.
+      //
+      // NOTE: `salesClosed` ("Encerrar Vendas") is deliberately NOT checked here.
+      // Closing sales blocks new purchases and free subscriptions only; courtesy
+      // redemption must keep working so invited guests can still claim a seat.
+      // Use `isActive` if the whole event needs to be shut down.
       const claim = await storage.claimCourtesyRedeem({
         eventId: link.eventId,
         linkId: link.id,
         userId,
+        // By the attendee, never the redeeming account (one account may redeem
+        // for several attendees): in-person by document, as before; online has
+        // no document, so by the attendee's e-mail.
+        holder: { cpf: attendeeCpf, foreignDocument, email: online ? userData.email : null },
         registrationAnswers: registration.answers,
         attendee: {
           name: nameNorm,
@@ -3591,29 +3562,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
       if (!claim.ok) {
-        return res.status(400).json({ message: COURTESY_LIMIT_REACHED });
+        const message =
+          claim.reason === "already_registered"
+            ? isForeigner
+              ? "Documento já cadastrado para este evento"
+              : attendeeCpf
+                ? "CPF já cadastrado para este evento"
+                : "E-mail já inscrito neste evento."
+            : claim.reason === "event_full"
+              ? "Evento lotado"
+              : COURTESY_LIMIT_REACHED;
+        return res.status(400).json({ message });
       }
       const newAttendee = claim.attendee;
       const order = claim.order;
-
-      if (process.env.COURTESY_WEBHOOK_URL) {
-        try {
-          console.log("Sending courtesy attendee to automation webhook...");
-          // Send the POST request, but don't wait for it to finish
-          // This is "fire-and-forget"
-          fetch(process.env.COURTESY_WEBHOOK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(newAttendee),
-          });
-          // Note: We don't use 'await' on fetch here.
-          // This lets the redemption process continue immediately.
-          
-        } catch (webhookError) {
-          // Log the error, but DO NOT stop the redemption.
-          console.error("Failed to send data to courtesy webhook:", webhookError);
-        }
-      }
 
       let qrCodeData = "";
       let updatedOrder = order;

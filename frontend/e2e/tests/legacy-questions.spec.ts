@@ -46,7 +46,7 @@ const answersOf = async (email: string, eventId: string) => {
 async function bearerFor(email: string): Promise<string> {
   const res = await fetch(`${cfg.baseUrl}/api/auth/login`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-forwarded-for": `10.8.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}` },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password: PASSWORD }),
   });
   return (await res.json()).token as string;
@@ -99,7 +99,7 @@ test.describe("legacy questions (C1)", () => {
     const subscribe = (body: unknown) =>
       fetch(`${cfg.baseUrl}/api/events/${eventId}/subscribe`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "x-forwarded-for": "10.7.1.1" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
       });
     // Old bundle (no answers key) that the profile cannot complete -> 409 "Atualize a página"

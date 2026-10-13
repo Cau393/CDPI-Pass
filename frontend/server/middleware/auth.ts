@@ -2,8 +2,9 @@ import jwt from "jsonwebtoken";
 import { storage } from "../storage";
 import type { Request, Response, NextFunction } from "express";
 import type { User } from "@shared/schema";
+import { getJwtSecret } from "../utils/requiredSecret";
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+const JWT_SECRET = getJwtSecret();
 
 interface AuthenticatedRequest extends Request {
   user?: User;

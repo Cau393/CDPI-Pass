@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Event } from "@shared/schema";
 
-const authState: { user: { isForeigner: boolean } | undefined } = { user: undefined };
+const authState: { user: { isForeigner: boolean; email?: string } | undefined } = { user: undefined };
 vi.mock("../../hooks/useAuth", () => ({
   useAuth: () => ({ user: authState.user, isAuthenticated: true }),
 }));
@@ -13,6 +13,9 @@ const toastSpy = vi.fn();
 vi.mock("../../hooks/use-toast", () => ({
   useToast: () => ({ toast: toastSpy }),
 }));
+
+const setLocation = vi.fn();
+vi.mock("wouter", () => ({ useLocation: () => ["/", setLocation] }));
 
 import PaymentModal from "../../components/PaymentModal";
 import { queryClient as appQueryClient } from "../../lib/queryClient";
@@ -129,6 +132,27 @@ describe("PaymentModal — registration answers", () => {
     await waitFor(() =>
       expect(onIdentityRequired).toHaveBeenCalledWith(["document"], "Complete seus dados"),
     );
+  });
+
+  it("sends an unverified account to /verify-email and back to this event (#16)", async () => {
+    authState.user = { isForeigner: false, email: "maria@example.com" };
+    vi.stubGlobal(
+      "fetch",
+      mockOrders({ status: 403, body: { message: "E-mail não verificado.", code: "EMAIL_NOT_VERIFIED" } }),
+    );
+    window.history.pushState({}, "", `/event/${event.id}?promo=ABC`);
+    const user = userEvent.setup();
+    renderModal();
+
+    await user.click(screen.getByTestId("button-confirm-payment"));
+
+    await waitFor(() => {
+      expect(setLocation).toHaveBeenCalledWith(
+        `/verify-email?email=maria%40example.com&next=${encodeURIComponent(`/event/${event.id}?promo=ABC`)}`,
+      );
+    });
+    expect(toastSpy).not.toHaveBeenCalledWith(expect.objectContaining({ variant: "destructive" }));
+    window.history.pushState({}, "", "/");
   });
 
   it("shows the server's message, not the raw response, for other errors", async () => {

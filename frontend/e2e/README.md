@@ -46,6 +46,7 @@ By default `/Applications/Chromium.app` is used when present (`E2E_CHROMIUM_PATH
 
 - `fixtures/prod-events.json`: the three live prod events (online free, presencial free, presencial paid);
   extend `registrationForm` there to add questions to every flow.
-- `support/`: DB helpers (`createEvent`, `createAccount`), UI flows, the `test` fixture (unique
-  `X-Forwarded-For` per test so the 100/15min auth rate limit is not shared, pageerror guard).
+- `support/`: DB helpers (`createEvent`, `createAccount`), UI flows, the `test` fixture (pageerror
+  guard). Every test logs in from 127.0.0.1, so `harness/serve.ts` raises the 100/15min auth rate
+  limit with `AUTH_RATE_LIMIT_MAX` (ignored when `NODE_ENV=production`).
 - `tests/legacy-questions.spec.ts`: skipped group `legacy questions (pending C1)`.

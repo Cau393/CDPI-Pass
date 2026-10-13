@@ -1,4 +1,3 @@
-import axios from "axios";
 import { confirmationKindForPaymentMethod } from "./ticketEmailTemplate";
 import type { Order } from "@shared/schema";
 import { storage, type DuplicatePaidPolicy } from "../storage";
@@ -6,9 +5,6 @@ import { asaasService, type ReceivedAsaasPayment } from "../services/asaasServic
 import { s3Service } from "../services/s3Service";
 import { sendPurchaseConfirmationEmail } from "./sendPurchaseConfirmationEmail";
 import { refundAndNotify } from "./refundReceivedPayment";
-
-const MAKE_WEBHOOK_URL =
-  "https://hook.us2.make.com/wrlqnqumlmgvfjicglpdrc3gv8lkbqce";
 
 export type FinalizeOrderPaidResult =
   | { ok: true }
@@ -113,38 +109,6 @@ async function afterPaid(order: Order, paymentMeta: PaymentMetaForFinalize): Pro
   const user = await storage.getUser(order.userId);
 
   if (event && user) {
-    const outboundPaymentLabel =
-      order.paymentMethod === "courtesy"
-        ? "courtesy"
-        : paymentMeta.billingType || "unknown";
-
-    (async () => {
-      try {
-        await axios.post(MAKE_WEBHOOK_URL, {
-          user: {
-            name: user.name,
-            email: user.email,
-          },
-          event: {
-            title: event.title,
-            date: event.date,
-            location: event.location,
-            modality: event.modality,
-            meetingUrl: event.meetingUrl,
-          },
-          order: {
-            id: order.id,
-            amount: order.amount || paymentMeta.value || null,
-            status: "paid",
-            paymentMethod: outboundPaymentLabel,
-          },
-        });
-        console.log("✅ Forwarded structured data to Make.com successfully");
-      } catch (err) {
-        console.error("❌ Failed to forward data to Make.com:", err);
-      }
-    })();
-
     try {
       await sendPurchaseConfirmationEmail({
         to: user.email,

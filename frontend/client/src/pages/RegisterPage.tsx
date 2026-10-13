@@ -13,6 +13,7 @@ import { accountEmailSchema, registerUserSchema } from "@shared/schema";
 import { z } from "zod";
 import { useState, useMemo } from "react";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
+import { verifyEmailHref } from "@/lib/authRedirect";
 
 // ADR-016: name, e-mail, phone and password only. The document and address
 // are asked at the first inscription that needs them.
@@ -63,10 +64,7 @@ export default function RegisterPage() {
       title: "Conta criada com sucesso!",
       description: "Enviamos um código para o seu e-mail.",
     });
-    const emailQ = `email=${encodeURIComponent(data.email)}`;
-    const nextQ =
-      nextRaw != null && nextRaw !== "" ? `&next=${encodeURIComponent(nextRaw)}` : "";
-    setLocation(`/verify-email?${emailQ}${nextQ}`);
+    setLocation(verifyEmailHref(data.email, nextRaw));
     }
   },
     onError: (error: Error) => {

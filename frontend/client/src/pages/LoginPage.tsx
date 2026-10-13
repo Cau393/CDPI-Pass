@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation, useSearch } from "wouter";
-import { authEntryHref, getValidatedNextPath } from "@/lib/authRedirect";
+import { authEntryHref, getValidatedNextPath, verifyEmailHref } from "@/lib/authRedirect";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,10 +42,7 @@ export default function LoginPage() {
         setLocation(getValidatedNextPath(nextRaw));
       } else {
         toast({ title: "Verificação necessária", description: "Por favor, verifique seu e-mail." });
-        const emailQ = `email=${encodeURIComponent(data.user.email)}`;
-        const nextQ =
-          nextRaw != null && nextRaw !== "" ? `&next=${encodeURIComponent(nextRaw)}` : "";
-        setLocation(`/verify-email?${emailQ}${nextQ}`);
+        setLocation(verifyEmailHref(data.user.email, nextRaw));
       }
     },
     onError: (error: Error) => {
