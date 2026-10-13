@@ -13,7 +13,7 @@ Priority key: **P1** exploitable now or silent data loss · **P2** broken featur
 | 3 | P1 | IAM user `cdpi-s3-uploader` has `AmazonS3FullAccess` + `AWSLambda_FullAccess` | open |
 | 4 | P1 | Static AWS keys in `~/CDPI-Pass/frontend/.env` on EC2; no instance profile, no SSM | open |
 | 5 | P2 | Asaas API key is invalid (paid checkout fails) | open |
-| 6 | P2 | `JWT_SECRET` falls back to `"your-secret-key"` | open |
+| 6 | P2 | `JWT_SECRET` falls back to `"your-secret-key"` | open (hardening batch 2, C4) |
 | 7 | P2 | GuardDuty findings go nowhere (one is severity 8.0) | open |
 | 8 | P2 | `sql/` migrations have no applied-state tracking (the `nps_responses` incident) | open |
 | 9 | P2 | SSH ingress pinned to a stale IP again; no out-of-band access path | open |
@@ -21,6 +21,9 @@ Priority key: **P1** exploitable now or silent data loss · **P2** broken featur
 | 11 | P3 | `cdpi-pass-frontend-prod` bucket fully public, no ACL blocks | open |
 | 12 | P3 | Neon point-in-time restore window unconfirmed | open |
 | 13 | P3 | GitHub Actions deploy uses static keys although an OIDC role exists | open |
+| 14 | unrated | Outbound Make.com webhook posts buyer PII and `meetingUrl`; hook URL public in git | open (hardening batch 2, C1) |
+| 15 | unrated | Login rate limiter keyed on a client-controlled `X-Forwarded-For` | open (hardening batch 2, C2) |
+| 16 | unrated | Unverified accounts can subscribe, order and redeem courtesies (login stays open, owner decision) | open (hardening batch 2, C3) |
 
 ---
 
@@ -365,3 +368,11 @@ _(move items here with the date and the command output that shows them closed)_
 
 - **S1, user responses leaked `emailVerificationCode`:** `GET /api/auth/me`, `PUT /api/profile` and `PUT /api/profile/identity` returned the user row minus the password only. All three now use `toPublicUser`, which also drops `emailVerificationCode` and `emailVerificationCodeExpiresAt`. Proof: integration tests `user responses carry no secrets (S1)` in `server/test/integration/refuterItems.integration.test.ts` (red before: `emailVerificationCode` present in all three) and the unit test `server/test/utils/publicUser.test.ts`.
 - **S2, `GET /api/courtesy-links/:code` leaked `meetingUrl` / `meetingPassword` to anyone with a code:** it now returns `toPublicEvent(event)`. `CourtesyRedeemPage` only reads `event.id`, `title`, `modality` and `registrationForm`. Proof: integration test `public courtesy link (S2)` (red before: `meetingUrl` present).
+
+### 2026-10-13 — hardening batch 1: payments and the Asaas webhook (PR #15, deployed `9e104d9`)
+
+- **Duplicate and late payments were never refunded:** the old "refund" sent `DELETE /payments/{id}`, which Asaas refuses for a received payment. `refundReceivedPayment` now refunds the received payment (PIX/card `POST /payments/{id}/refund`, card plans `/installments/{id}/refund`, boleto `/bankSlip/refund` with the form link e-mailed). Proof: real Asaas sandbox run 2026-10-11/12 (late PIX, late boleto, duplicate PIX, duplicate card plan; redelivery logs `REFUND_ALREADY_DONE`). Prod holds every API refund at `AWAITING_CRITICAL_ACTION_AUTHORIZATION` until someone approves it in the Asaas panel.
+- **Paid claim race (two orders of one holder both paid, or a seat counted twice):** `storage.claimPaidOrder` runs the duplicate check, pending→paid and the seat/courtesy counters in one transaction with the event row locked. Proof: `asaasWebhook.integration.test.ts` and `finalizeOrderPaidLikeWebhook.test.ts` (red first).
+- **Webhook fails open when `ASAAS_WEBHOOK_TOKEN` is unset (B1):** in production it now answers 401 and logs loudly. Malformed or unhandled events answer 200 (B2/B3). Proof: integration tests `prod with no token → 401`, `no payment → 200`.
+- **One Asaas id could match two orders (A7):** partial unique index `orders_asaas_payment_id_unique` (`frontend/sql/orders_asaas_payment_id_unique.sql`), applied on prod 2026-10-13 10:39 BRT. Proof: `pg_indexes` + `pg_index` → `indisvalid=true, indisready=true, indisunique=true`.
+- **Residuals accepted by the owner:** a card purchase completed in the ~1–2 s before the paid link is switched off; card payment on a cancelled order is logged `REFUND_NEEDED`, never auto-refunded.

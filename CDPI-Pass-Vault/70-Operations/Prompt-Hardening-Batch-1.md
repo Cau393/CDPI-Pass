@@ -1,5 +1,7 @@
 # Prompt: hardening batch 1 (payments + webhook), then batches 2 and 3
 
+> **Executed 2026-10-13: batch 1 deployed.** PR #15 merged as `9e104d9` at 10:34 BRT on the owner's explicit go (10-13 had been a no-deploy day). CI run 38406064415 green, EC2 `f937827..9e104d9`, `prod-smoke.mjs` clean, A7 index live and valid. Next: `Prompt-Hardening-Batch-2.md`.
+
 How to use it: open a new Claude Code session at `/Users/cauecasonato/Envs/CDPI-Pass` and say: "Read `.claude/worktrees/b1-payments/CDPI-Pass-Vault/70-Operations/Prompt-Hardening-Batch-1.md` and execute batch 1."
 
 Written 2026-10-09, when the previous session reached its context budget (rule in `~/.claude/CLAUDE.md`, "Context budget"). One batch per session. At the end of each batch, write the prompt for the next one the same way.
