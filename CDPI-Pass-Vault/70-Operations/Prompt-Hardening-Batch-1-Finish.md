@@ -1,5 +1,7 @@
 # Prompt: finish hardening batch 1 (sandbox proof, A5 card, deploy), then write batch 2's prompt
 
+> Superseded 2026-10-12: steps 1–3 (sandbox run, A5 card, fixes) are done in a626294. Continue with `Prompt-Hardening-Batch-1-Deploy.md`.
+
 How to use it: open a new Claude Code session at `/Users/cauecasonato/Envs/CDPI-Pass` and say: "Read `.claude/worktrees/b1-payments/CDPI-Pass-Vault/70-Operations/Prompt-Hardening-Batch-1-Finish.md` and finish batch 1."
 
 Written 2026-10-09, when the batch-1 session reached its context budget (rule in `~/.claude/CLAUDE.md`, "Context budget").
