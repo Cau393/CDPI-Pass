@@ -125,7 +125,8 @@ async function createUser(opts: { verified: boolean; isAdmin?: boolean }): Promi
   const id = randomUUID();
   const email = `sec-${id.slice(0, 8)}@example.test`;
   const n = createdUserIds.length + 1;
-  const cpf = `888.${String(n).padStart(3, "0")}.${String(n).padStart(3, "0")}-88`;
+  // 777: other integration files use 888/999 and run in parallel on the same database.
+  const cpf = `777.${String(n).padStart(3, "0")}.${String(n).padStart(3, "0")}-88`;
   await pool.query(
     `INSERT INTO users (id, email, email_verified, email_verification_code, email_verification_code_expires_at, password, name, cpf, phone, birth_date, address, occupation, partner_company, area_of_activity, is_admin)
      VALUES ($1,$2,$3,$4,$5,'x','Participante Teste',$6,'5511999999999',$7,'Rua de teste, 123','Nao aplicavel','Nao aplicavel','Nao aplicavel',$8)`,
