@@ -28,7 +28,9 @@ test.describe("network guard", () => {
     expect(results.axiosLocal).toMatchObject({ ok: true, status: 200 });
   });
 
-  test("a paid finalize in the running app blocks the Make.com call instead of sending it", async ({ page, request }) => {
+  // Security backlog #14: the paid finalize used to post the buyer to a Make.com hook
+  // (the guard blocked it here). That post is gone; nothing may leave the box.
+  test("a paid finalize in the running app makes no outbound call", async ({ page, request }) => {
     const ev = await createEvent("presencialPaid");
     const u = makeUser("netpaid");
     await createAccount(u);
@@ -55,8 +57,10 @@ test.describe("network guard", () => {
       .toBe("paid");
 
     expect(existsSync(serverLogPath()), "server log written by harness/serve.ts").toBe(true);
+    // The confirmation e-mail is queued after the point where the old post started.
     await expect
-      .poll(() => readFileSync(serverLogPath(), "utf8").includes("[e2e-guard] blocked outbound request to hook.us2.make.com"), { timeout: 15_000 })
+      .poll(() => readFileSync(serverLogPath(), "utf8").includes(`to: '${u.email}'`), { timeout: 15_000 })
       .toBe(true);
+    expect(readFileSync(serverLogPath(), "utf8")).not.toContain("[e2e-guard] blocked outbound request to hook.us2.make.com");
   });
 });
