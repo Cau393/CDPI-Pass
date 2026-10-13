@@ -1,4 +1,4 @@
-import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
+import rateLimit from 'express-rate-limit';
 import type { Express, Response } from "express";
 import { createServer, type Server } from "http";
 import { randomUUID } from "crypto";
@@ -112,6 +112,7 @@ import { qrCodeService } from "./services/qrCodeService";
 import { s3Service } from "./services/s3Service";
 import { invokeGenerateCertificatePdf } from "./services/certificateLambdaService";
 import { requireEmailVerification } from "./middleware/auth"; 
+import { authRateLimitMax } from "./utils/authRateLimitMax";
 import multer from 'multer';
 import csv from 'csv-parser';
 import { parse } from 'csv-parse/sync';
@@ -203,24 +204,14 @@ function registrationAnswersFailure(res: Response, body: unknown, message: strin
 
 export async function registerRoutes(app: Express): Promise<Server> {
 
-  // Apply rate limiting to all /api/auth routes
- const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: 'Too many requests from this IP, please try again after 15 minutes',
-  keyGenerator: (req) => {
-    const xForwardedFor = req.headers['x-forwarded-for'];
-
-    if (typeof xForwardedFor === 'string') {
-      const clientIp = xForwardedFor.split(',')[0].trim();
-      return ipKeyGenerator(clientIp);
-    }
-
-    // Normalize IPv6 and always return a string
-    return ipKeyGenerator(req.ip || 'unknown-ip');
-  },
+  // Apply rate limiting to all /api/auth routes. The default key is req.ip, the
+  // address nginx saw (trust proxy 1 in index.ts), never a client-sent header (#15).
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: authRateLimitMax(),
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: 'Too many requests from this IP, please try again after 15 minutes',
   });
 
   app.use('/api/auth', authLimiter);
@@ -3595,25 +3586,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const newAttendee = claim.attendee;
       const order = claim.order;
-
-      if (process.env.COURTESY_WEBHOOK_URL) {
-        try {
-          console.log("Sending courtesy attendee to automation webhook...");
-          // Send the POST request, but don't wait for it to finish
-          // This is "fire-and-forget"
-          fetch(process.env.COURTESY_WEBHOOK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(newAttendee),
-          });
-          // Note: We don't use 'await' on fetch here.
-          // This lets the redemption process continue immediately.
-          
-        } catch (webhookError) {
-          // Log the error, but DO NOT stop the redemption.
-          console.error("Failed to send data to courtesy webhook:", webhookError);
-        }
-      }
 
       let qrCodeData = "";
       let updatedOrder = order;

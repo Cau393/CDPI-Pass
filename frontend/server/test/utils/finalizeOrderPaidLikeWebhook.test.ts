@@ -49,6 +49,7 @@ vi.mock("axios", () => ({
 
 import { finalizeOrderPaidLikeWebhook } from "../../utils/finalizeOrderPaidLikeWebhook";
 import { emailService } from "../../services/emailService";
+import axios from "axios";
 
 function baseOrder(overrides: Partial<Order> = {}): Order {
   return {
@@ -107,6 +108,20 @@ describe("finalizeOrderPaidLikeWebhook", () => {
     const r = await finalizeOrderPaidLikeWebhook(baseOrder({ status: "cancelled" }), pixMeta);
     expect(r).toEqual({ ok: false, code: "not_pending", status: "cancelled" });
     expect(claimPaidOrder).not.toHaveBeenCalled();
+  });
+
+  it("C1: forwards a paid order to no third party (the Make.com hook is gone)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      const r = await finalizeOrderPaidLikeWebhook(baseOrder(), pixMeta);
+      // The old post was fire-and-forget: let it run before asserting.
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(r).toEqual({ ok: true });
+      expect(axios.post).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it("claims with refund_then_discard by default and reject_only when asked", async () => {

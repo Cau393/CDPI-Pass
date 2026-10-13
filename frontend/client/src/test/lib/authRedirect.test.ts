@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { authEntryHref, getValidatedNextPath } from "../../lib/authRedirect";
+import { authEntryHref, getValidatedNextPath, isEmailNotVerified, verifyEmailHref } from "../../lib/authRedirect";
 
 describe("getValidatedNextPath", () => {
   beforeEach(() => {
@@ -132,5 +132,31 @@ describe("authEntryHref", () => {
     expect(authEntryHref("/login", "/register?next=https%3A%2F%2Fevil.example")).toBe(
       "/login",
     );
+  });
+});
+
+describe("verifyEmailHref", () => {
+  it("carries the e-mail and the return path, encoded", () => {
+    expect(verifyEmailHref("maria@example.com", "/event/abc?promo=X")).toBe(
+      "/verify-email?email=maria%40example.com&next=%2Fevent%2Fabc%3Fpromo%3DX",
+    );
+  });
+
+  it("leaves next out when there is none", () => {
+    expect(verifyEmailHref("maria@example.com", null)).toBe("/verify-email?email=maria%40example.com");
+    expect(verifyEmailHref("maria@example.com", "")).toBe("/verify-email?email=maria%40example.com");
+  });
+});
+
+describe("isEmailNotVerified", () => {
+  it("recognizes the server's 403 EMAIL_NOT_VERIFIED", () => {
+    expect(isEmailNotVerified(new Error('403: {"message":"E-mail não verificado.","code":"EMAIL_NOT_VERIFIED"}'))).toBe(true);
+  });
+
+  it("ignores other errors", () => {
+    expect(isEmailNotVerified(new Error('403: {"message":"Acesso negado"}'))).toBe(false);
+    expect(isEmailNotVerified(new Error('400: {"code":"EMAIL_NOT_VERIFIED"}'))).toBe(false);
+    expect(isEmailNotVerified(new Error("403: Forbidden"))).toBe(false);
+    expect(isEmailNotVerified("403")).toBe(false);
   });
 });

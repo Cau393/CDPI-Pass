@@ -5,12 +5,15 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import type { ReactNode } from "react";
 import type { Event } from "@shared/schema";
 
-const authState: { user: { isForeigner: boolean; cpf?: string | null } } = { user: { isForeigner: false, cpf: "52998224725" } };
+const authState: { user: { isForeigner: boolean; cpf?: string | null; email?: string } } = {
+  user: { isForeigner: false, cpf: "52998224725", email: "maria@example.com" },
+};
 vi.mock("../../hooks/useAuth", () => ({
   useAuth: () => ({ user: authState.user, isAuthenticated: true }),
 }));
 vi.mock("../../hooks/use-toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
-vi.mock("wouter", () => ({ useLocation: () => ["/", vi.fn()] }));
+const setLocation = vi.fn();
+vi.mock("wouter", () => ({ useLocation: () => ["/", setLocation] }));
 
 import { useFreeSubscribe } from "../../hooks/useFreeSubscribe";
 import { queryClient as appQueryClient } from "../../lib/queryClient";
@@ -57,6 +60,37 @@ describe("useFreeSubscribe — stale cached event", () => {
 
     expect(keys).toContainEqual([`/api/events/${event.id}`]);
     expect(keys).not.toContainEqual(["/api/auth/me"]);
+  });
+});
+
+describe("useFreeSubscribe — e-mail not verified (#16)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    setLocation.mockClear();
+    window.history.pushState({}, "", "/");
+  });
+
+  it("sends the account to /verify-email and back to the event page", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ message: "E-mail não verificado.", code: "EMAIL_NOT_VERIFIED" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    window.history.pushState({}, "", `/event/${event.id}`);
+    const { result } = renderHook(() => useFreeSubscribe(), { wrapper });
+
+    act(() => result.current.subscribe(event));
+
+    await waitFor(() => {
+      expect(setLocation).toHaveBeenCalledWith(
+        `/verify-email?email=maria%40example.com&next=${encodeURIComponent(`/event/${event.id}`)}`,
+      );
+    });
   });
 });
 
