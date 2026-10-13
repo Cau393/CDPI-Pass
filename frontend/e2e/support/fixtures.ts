@@ -1,18 +1,12 @@
 import { test as base, expect, type Page } from "@playwright/test";
-import { randomInt } from "node:crypto";
 
 /**
- * Every test gets: a unique X-Forwarded-For (the app's auth rate limiter keys on it, and
- * every test would otherwise share 127.0.0.1), and a hard failure on any uncaught
- * page error in any page of the test's context.
+ * Every test gets a hard failure on any uncaught page error in any page of the test's
+ * context. All tests log in from 127.0.0.1, so the harness raises the auth rate limit
+ * (AUTH_RATE_LIMIT_MAX in harness/serve.ts) instead of spoofing X-Forwarded-For, which
+ * the limiter no longer reads (security backlog #15).
  */
 export const test = base.extend<{ pageErrors: string[] }>({
-  context: async ({ context }, use) => {
-    await context.setExtraHTTPHeaders({
-      "x-forwarded-for": `10.${randomInt(1, 255)}.${randomInt(1, 255)}.${randomInt(1, 255)}`,
-    });
-    await use(context);
-  },
   pageErrors: [
     async ({ context }, use) => {
       const errors: string[] = [];

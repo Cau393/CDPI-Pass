@@ -2,6 +2,7 @@ import { MailService } from '@sendgrid/mail';
 import { courtesyEntryUrl } from '../utils/courtesyEntryUrl';
 import jwt from 'jsonwebtoken';
 import { storage } from '../storage';
+import { getJwtSecret } from '../utils/requiredSecret';
 import { EMAIL_CONTACT_FOOTER_HTML, EMAIL_CONTACT_LINE } from '@shared/contact';
 import { buildTicketQrAttachment } from '../utils/ticketQrAttachment';
 import {
@@ -25,6 +26,8 @@ if (process.env.SENDGRID_API_KEY) {
   mailService.setApiKey(process.env.SENDGRID_API_KEY);
 }
 
+// Signs password-reset links; read at load so the worker cannot boot without it (#6).
+const JWT_SECRET = getJwtSecret();
 const FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || "relacionamento.mkt@cdpipharma.com.br";
 
 /** Rough HTML to plain text for multipart/alternative body (no external deps). */
@@ -255,7 +258,7 @@ ${EMAIL_CONTACT_LINE}`;
     // Create a password reset token that expires in 30 minutes
     const resetToken = jwt.sign(
         { userId, type: 'password-reset' },
-        process.env.JWT_SECRET || 'your-secret-key',
+        JWT_SECRET,
         { expiresIn: '30m' }
     );
 

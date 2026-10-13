@@ -4,8 +4,9 @@ import jwt from "jsonwebtoken";
 import { WebSocket, WebSocketServer } from "ws";
 import type { PrintJob } from "@shared/schema";
 import { storage } from "../storage";
+import { getJwtSecret } from "../utils/requiredSecret";
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+const JWT_SECRET = getJwtSecret();
 
 type Client = {
   socketId: string;

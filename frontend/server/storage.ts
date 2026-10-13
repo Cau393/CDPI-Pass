@@ -54,6 +54,8 @@ export type CancelOrderResult =
  */
 export type DuplicatePaidPolicy = "refund_then_discard" | "reject_only";
 
+export type CourtesyRedeemRejection = "limit_reached" | "already_registered" | "event_full";
+
 export type ClaimPaidOrderResult =
   | { outcome: "paid"; order: Order }
   /** `order` is the row as it was before the discard (its QR S3 url is still there). */
@@ -190,18 +192,20 @@ export interface IStorage {
   /** Sets every courtesy link for the event to inactive. */
   disableEventCourtesyLinks(eventId: string): Promise<void>;
   /**
-   * Locks the event row, rejects when the courtesy cap is already hit,
-   * then inserts the attendee and paid courtesy order. Disables links
-   * when this redeem fills the cap.
+   * Locks the event row, rejects when the attendee already holds a paid order,
+   * the event is full or the courtesy cap is already hit, then inserts the
+   * attendee and paid courtesy order. Disables links when this redeem fills the cap.
    */
   claimCourtesyRedeem(params: {
     eventId: string;
     linkId: string;
     userId: string;
+    /** The attendee, never the redeeming account; `email` only for online events. */
+    holder: { cpf: string | null; foreignDocument: string | null; email: string | null };
     registrationAnswers: RegistrationAnswer[];
     attendee: InsertCourtesyAttendee;
   }): Promise<
-    | { ok: false }
+    | { ok: false; reason: CourtesyRedeemRejection }
     | { ok: true; order: Order; attendee: CourtesyAttendee }
   >;
 
@@ -896,22 +900,34 @@ export class DatabaseStorage implements IStorage {
     eventId: string;
     linkId: string;
     userId: string;
+    holder: { cpf: string | null; foreignDocument: string | null; email: string | null };
     registrationAnswers: RegistrationAnswer[];
     attendee: InsertCourtesyAttendee;
   }): Promise<
-    | { ok: false }
+    | { ok: false; reason: CourtesyRedeemRejection }
     | { ok: true; order: Order; attendee: CourtesyAttendee }
   > {
     return db.transaction(async (tx) => {
       const [locked] = await tx
         .select({
           courtesyLimit: events.courtesyLimit,
+          price: events.price,
+          maxAttendees: events.maxAttendees,
           currentAttendees: events.currentAttendees,
         })
         .from(events)
         .where(eq(events.id, params.eventId))
         .for("update");
-      if (!locked) return { ok: false };
+      if (!locked) return { ok: false, reason: "limit_reached" };
+
+      // Both checks run on the locked row: concurrent redeems of one attendee
+      // queue on the lock, and each sees the order the previous one inserted.
+      const alreadyRegistered = await this.isAlreadyRegisteredForEvent(
+        { eventId: params.eventId, userId: null, ...params.holder },
+        tx,
+      );
+      if (alreadyRegistered) return { ok: false, reason: "already_registered" };
+      if (isEventFull(locked)) return { ok: false, reason: "event_full" };
 
       const [row] = await tx
         .select({ value: count() })
@@ -929,7 +945,7 @@ export class DatabaseStorage implements IStorage {
           .update(courtesyLinks)
           .set({ isActive: false, updatedAt: new Date() })
           .where(eq(courtesyLinks.eventId, params.eventId));
-        return { ok: false };
+        return { ok: false, reason: "limit_reached" };
       }
 
       const [attendee] = await tx

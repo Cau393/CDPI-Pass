@@ -2,6 +2,10 @@ import QRCode from 'qrcode';
 import crypto from 'crypto';
 import { s3Service } from './s3Service';
 import { storage } from '../storage';
+import { getQrCodeSecret } from '../utils/requiredSecret';
+
+// Signs the ticket checksum; read at load so production cannot boot without it (#6).
+const QR_CODE_SECRET = getQrCodeSecret();
 
 interface QRCodeData {
   orderId: string;
@@ -132,8 +136,7 @@ class QRCodeService {
   }
 
   private generateChecksum(orderId: string, eventId: string, userId: string): string {
-    const secret = process.env.QR_CODE_SECRET || 'default-secret-key';
-    const data = `${orderId}:${eventId}:${userId}:${secret}`;
+    const data = `${orderId}:${eventId}:${userId}:${QR_CODE_SECRET}`;
     return crypto.createHash('sha256').update(data).digest('hex').substring(0, 16);
   }
 

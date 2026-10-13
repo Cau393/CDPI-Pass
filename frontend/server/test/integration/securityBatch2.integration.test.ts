@@ -134,7 +134,9 @@ async function createUser(opts: { verified: boolean; isAdmin?: boolean }): Promi
       email,
       opts.verified,
       opts.verified ? null : VERIFICATION_CODE,
-      opts.verified ? null : new Date(Date.now() + 3600_000),
+      // UTC wall time, as Drizzle writes it: a Date here would be stored in the local zone
+      // and read back hours off on a machine that is not on UTC.
+      opts.verified ? null : new Date(Date.now() + 3600_000).toISOString(),
       cpf,
       new Date("1990-01-01"),
       opts.isAdmin ?? false,
@@ -147,7 +149,7 @@ async function createUser(opts: { verified: boolean; isAdmin?: boolean }): Promi
 /** The code typed on /verify-email, through the real route. */
 async function verify(user: TestUser): Promise<void> {
   const res = await api("POST", "/api/auth/verify-code", { body: { email: user.email, code: VERIFICATION_CODE } });
-  expect(res.status).toBe(200);
+  expect(res.status, JSON.stringify(res.body)).toBe(200);
 }
 
 async function courtesyCode(eventId: string, createdBy: string, ticketCount = 5): Promise<string> {

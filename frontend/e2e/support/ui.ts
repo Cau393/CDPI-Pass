@@ -21,7 +21,7 @@ export function makeUser(tag: string, over: Partial<NewUser> = {}): NewUser {
 export async function createAccount(u: NewUser, opts: { admin?: boolean } = {}) {
   const res = await fetch(`${cfg.baseUrl}/api/auth/register`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-forwarded-for": `10.9.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}` },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: u.name, email: u.email, phone: u.phone, password: PASSWORD }),
   });
   if (res.status !== 201) throw new Error(`register ${res.status}`);
