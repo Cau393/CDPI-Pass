@@ -196,3 +196,11 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
   - The e2e test now asserts "a paid finalize makes no outbound call", after a later log marker.
   - The owner grandfathered the 35 accounts before the merge, with the same write that `verify-code` makes. Afterwards, 0 of 816 users were unverified.
 - **Prevention:** rules in `testing.md` (race tests in a solo loop, rewrite guard tests when a call is removed) and `deployment.md` (a new gate on existing accounts ships with a decision for the rows it blocks).
+
+## 2026-10-13 — pre-freeze deps: pnpm policies apply to frozen installs, and printing is off by default
+
+- **pnpm policies:** pnpm 11 re-checks every lockfile entry against `minimumReleaseAge` and `trustPolicy` on every install, `--frozen-lockfile` included, so CI and the EC2 deploy run it too ("Lockfile passes supply-chain policies (993 entries)" is in the deploy log). The first attempt (7-day age, no trust cutoff) rejected 8 entries already in the lockfile: 3 playwright releases 6 days old, and 5 legitimate old-major maintenance releases that trip `no-downgrade`. Merged as is, it would have failed Run Tests and blocked every deploy.
+  - **Fix:** 3-day age, plus `trustPolicyIgnoreAfter: 43200` (30 days).
+  - **Prevention:** after any change to `pnpm-workspace.yaml` policies, run `pnpm install --frozen-lockfile` locally and see "Lockfile passes" before pushing.
+- **A range blocks the patched version:** `qs` 6.16.0 is outside express 4.22.2's `~6.15.1`. Bumping express alone still left body-parser 1.20.6 on `qs` 6.15.3, which is the copy that parses request bodies. Check every parent in `pnpm why` after a bump, not just the first one.
+- **Printing is off per event:** without an `event_print_settings` row, a check-in queues no label. Prod had never queued a print job as of 2026-10-13. See [[20-Backend/Print-Coordinator]]. Check the toggle before every in-person event.

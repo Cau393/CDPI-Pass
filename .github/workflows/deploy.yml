@@ -137,15 +137,13 @@ jobs:
       - name: Secrets in git history (gitleaks)
         run: gitleaks git --log-opts="--all" --redact --no-banner .
 
-      # Same rulesets as the batch-3 baseline. frontend/Dockerfile is excluded:
-      # production never builds it (PM2 on EC2, see the deploy job), and it is
-      # in .trivyignore.yaml for the same reason.
+      # Same rulesets as the batch-3 baseline.
       - name: Code (semgrep)
         run: >-
           semgrep scan --metrics=off --error --severity ERROR
           --config p/owasp-top-ten --config p/nodejs --config p/expressjs
           --config p/typescript --config p/javascript --config p/react --config p/jwt
-          --exclude CDPI-Pass-Vault --exclude frontend/dist --exclude frontend/Dockerfile
+          --exclude CDPI-Pass-Vault --exclude frontend/dist
           frontend infra .github
 
       - name: Dependencies and IaC (trivy)

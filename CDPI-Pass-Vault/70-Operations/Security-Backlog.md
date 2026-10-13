@@ -25,13 +25,15 @@ Priority key: **P1** exploitable now or silent data loss · **P2** broken featur
 | 15 | unrated | Login rate limiter keyed on a client-controlled `X-Forwarded-For` | resolved 2026-10-13 (hardening batch 2, PR #17, `ffdb2c4`) |
 | 16 | unrated | Unverified accounts can subscribe, order and redeem courtesies (login stays open, owner decision) | resolved 2026-10-13 (hardening batch 2, PR #17, `ffdb2c4`) |
 | 17 | unrated | No admin-visible signal for refunds Asaas holds at `AWAITING_CRITICAL_ACTION_AUTHORIZATION` | open (owner: backlog, not batch 2) |
-| 18 | P2 | CI: PRs ran no checks; actions on mutable tags received the EC2 SSH key and AWS keys; default token permissions | fix in the batch-3 CI PR (not merged) |
+| 18 | P2 | CI: PRs ran no checks; actions on mutable tags received the EC2 SSH key and AWS keys; default token permissions | resolved 2026-10-13 (PRs #19 + #20, deployed `f9ea167`) |
 | 19 | P3 | `drizzle-orm` 0.39.3 identifier escaping (CVE-2026-39356, HIGH), not reachable | open, accepted in `.trivyignore.yaml` until 2026-12-31 |
 | 20 | P3 | `xlsx` 0.18.5 parse-side CVEs (2 HIGH), not reachable: the app only writes workbooks | open, accepted until 2026-12-31 |
-| 21 | P3 | `frontend/Dockerfile` is dead: runs as root, and its `ecosystem.config.cjs` cwd does not exist in the image | open (owner: delete it?) |
-| 22 | P3 | Unused `next` dependency (3 HIGH via postcss/sharp); build-only tools listed in `dependencies` | `next` removed in the batch-3 deps PR (not merged); `braces` has no fix on npm |
-| 23 | P3 | Moderate runtime CVEs: `multer` 2.3.0, `qs` 6.15.3, `ip-address` 10.7.0, `csv-parse` 6.2.1 | open; not reachable as configured, `csv-parse` admin-only |
+| 21 | P3 | `frontend/Dockerfile` is dead: runs as root, and its `ecosystem.config.cjs` cwd does not exist in the image | resolved in the pre-freeze deps PR (owner: delete it) |
+| 22 | P3 | Unused `next` dependency (3 HIGH via postcss/sharp); build-only tools listed in `dependencies` | resolved: `next` removed (`f9ea167`); build-only tools moved and `sequelize-cli` dropped in the pre-freeze deps PR, so `braces` is no longer a prod dependency |
+| 23 | P3 | Moderate runtime CVEs: `multer` 2.3.0, `qs` 6.15.3, `ip-address` 10.7.0, `csv-parse` 6.2.1 | `multer`, `qs`, `ip-address` fixed in the pre-freeze deps PR; `csv-parse` 7 open (major, after 2026-10-21), admin-only |
 | 24 | P3 | nginx: CSP report-only with no report endpoint; `/assets/` drops the server-level security headers; `Upgrade` forwarded on every request | open; confirm against prod in the batch-3 passive scan |
+| 25 | P3 | Dev/test-only toolchain advisories (full `pnpm audit`, not `--prod`): `vite` 5.4.21 dev server (1 HIGH), `vitest`/`tinypool` (2 CRITICAL), `undici` via jsdom (2 HIGH), `shell-quote` via drizzle-kit → gel (1 CRITICAL) | open; none ships in the prod runtime (`vite build` runs on EC2, not the dev server); upgrade after 2026-10-21 |
+| 26 | P3 | pm2 on EC2 was installed with `npm install -g pm2`, the last npm use (owner wants pnpm only) | open; after 2026-10-21: `pnpm add -g pm2`, then `pm2 update` so the running daemon moves to the new binary, then `npm rm -g pm2` |
 
 ---
 
@@ -418,6 +420,8 @@ Production is PM2 on EC2 (see the deploy job), and the image is never built. It 
 
 **Fix (owner decision)**: delete it, or add `USER node` and the correct `cwd`, and build it in CI.
 
+**Status**: deleted in the pre-freeze deps PR (owner's choice, 2026-10-13), with `.dockerignore`, the DS-0002 entry in `.trivyignore.yaml` and the semgrep `--exclude`. trivy (CI flags) and semgrep (CI rulesets) both exit 0 without the exceptions.
+
 ---
 
 ### 22. Unused and misfiled dependencies
@@ -425,6 +429,8 @@ Production is PM2 on EC2 (see the deploy job), and the image is never built. It 
 `next` was never imported (the client's `next` hits are `?next=` query params), but it pulled postcss 8.4.31 and sharp 0.35.4 with 3 HIGH CVEs. The batch-3 deps PR removes it. Build-only tools (`tsup`, `sequelize-cli`, `tailwindcss-animate`, …) sit in `dependencies`, so `pnpm audit --prod` and trivy count their CVEs as runtime ones. `braces` 3.0.3 (CVE-2026-93687, HIGH, tailwind's chokidar/micromatch) has no fixed release on npm and is accepted until 2026-12-31.
 
 **Fix**: move build-only tools to `devDependencies`. The EC2 build runs `pnpm install` without `--prod`, so this changes nothing on the box. Bump `braces` when a fixed release ships.
+
+**Status**: done in the pre-freeze deps PR. `tsup`, `tailwindcss-animate` and four `@types/*` moved; the duplicate `typescript` and the never-used `sequelize-cli` were dropped. The tsup server bundles are byte-identical before and after, and no lockfile version changed. `pnpm audit --prod` no longer lists `braces`, `esbuild` or `postcss-selector-parser`, and the `braces` entry left `.trivyignore.yaml` (trivy still exits 0). EC2 installs devDependencies: `vite` is one, and the deploy log shows `vite v5.4.21 building for production`.
 
 ---
 
@@ -436,6 +442,8 @@ Production is PM2 on EC2 (see the deploy job), and the image is never built. It 
 - `csv-parse` 6.2.1 → 7.0.2 (GHSA-8cw4-87c7-c6xx): prototype replacement through a `__proto__` header with `columns: true`, which the mass-send worker (`server/workers/emailWorker.ts`) uses on an admin-uploaded CSV. Admin-only input.
 
 **Fix**: one lockfile/minor-bump PR after the event (`csv-parse` 7 is a major bump, so check the `columns` behaviour).
+
+**Status**: `multer` 2.4.0, `qs` 6.16.0 and `ip-address` 10.7.3 landed in the pre-freeze deps PR. `qs` 6.16.0 is outside express 4.22.2's `~6.15.1`, so it came through express 4.22.3 and body-parser 1.20.8 (express 4.22.3 also brings `path-to-regexp` 0.1.13). `ip-address` stopped at 10.7.3 because 10.7.4 was 2 days old, under the new 3-day `minimumReleaseAge`. `csv-parse` stays open until after 2026-10-21.
 
 ---
 

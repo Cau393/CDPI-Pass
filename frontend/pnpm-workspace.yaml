@@ -36,3 +36,23 @@ autoInstallPeers: false
 # defaultForColumn upstream; `pnpm db:diff` reporting 0 statements is the check.
 patchedDependencies:
   drizzle-kit@0.30.6: patches/drizzle-kit@0.30.6.patch
+
+# Supply-chain policies. pnpm 11 re-checks EVERY lockfile entry against these on
+# every install, --frozen-lockfile included (CI and the EC2 deploy too), so a
+# lockfile that breaks a policy fails the build. Run `pnpm install` locally
+# after changing them.
+#
+# New versions wait 3 days (in minutes) before pnpm resolves them: compromised
+# releases are usually caught and unpublished within hours to a day. pnpm 11
+# defaults to 1 day; setting it explicitly also turns on minimumReleaseAgeStrict,
+# so an install fails instead of silently picking an older version. An urgent
+# security fix can skip the wait through `minimumReleaseAgeExclude`.
+minimumReleaseAge: 4320
+
+# Fail when a release's publish trust drops below the package's earlier
+# releases (e.g. published by hand after CI-with-provenance releases): the usual
+# sign of a stolen publish token. Releases older than 30 days skip the check:
+# maintenance releases of old majors (vite 5, semver 6, chokidar 4) trip it
+# legitimately, and a hijacked release does not stay up that long.
+trustPolicy: no-downgrade
+trustPolicyIgnoreAfter: 43200
