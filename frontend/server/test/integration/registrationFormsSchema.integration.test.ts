@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { randomUUID } from "crypto";
 
 const VERIFY_URL = process.env.VERIFY_DATABASE_URL;
@@ -45,8 +45,26 @@ ALTER TABLE orders ADD CONSTRAINT orders_identity_document_chk CHECK (
   (cpf IS NOT NULL AND foreign_document IS NULL) OR (cpf IS NULL AND foreign_document IS NOT NULL)) NOT VALID;`)
   .join("\n");
 
-const IDENTITY_CHECK_DEFS = `SELECT conrelid::regclass::text AS table_name, pg_get_constraintdef(oid) AS def
-  FROM pg_constraint WHERE conname LIKE '%identity_document_chk' ORDER BY 1`;
+const identityCheckDefs = (namespace: string) => `SELECT c.relname AS table_name, pg_get_constraintdef(con.oid) AS def
+  FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid
+  WHERE con.conname LIKE '%identity_document_chk' AND c.relnamespace = ${namespace} ORDER BY 1`;
+const PUBLIC_CHECK_DEFS = identityCheckDefs("'public'::regnamespace");
+const TEMP_CHECK_DEFS = identityCheckDefs("pg_my_temp_schema()");
+
+/**
+ * Applies the strict checks, then the SQL file, to empty temp copies of the
+ * three tables: unqualified names resolve to pg_temp first. ALTER TABLE on the
+ * real tables takes ACCESS EXCLUSIVE locks while the other integration files
+ * run on the same database, and that deadlocked in CI (run 38429128533).
+ * Call inside a transaction; ON COMMIT DROP and the rollback remove the copies.
+ */
+async function loosenChecksOnTempCopies(client: PoolClient) {
+  for (const table of ["users", "courtesy_attendees", "orders"]) {
+    await client.query(`CREATE TEMP TABLE ${table} (LIKE public.${table} INCLUDING CONSTRAINTS) ON COMMIT DROP`);
+  }
+  await client.query(STRICT_CHECKS_SQL);
+  await client.query(LOOSEN_CHECKS_SQL.replace(/^(BEGIN|COMMIT);$/gm, ""));
+}
 
 let pool: Pool;
 const userIds: string[] = [];
@@ -183,18 +201,33 @@ describe.skipIf(!enabled)("ADR-016 Phase 2 schema (real DB)", () => {
 
   describe("sql/registration_forms_loosen_identity_checks.sql", () => {
     // Staging and prod get the loosened checks from this file, not from push
-    // (drizzle-kit 0.30 ignores a changed CHECK expression). Run inside a
-    // rolled-back transaction so the other suites never see the strict checks.
+    // (drizzle-kit 0.30 ignores a changed CHECK expression). Run on temp
+    // copies so the other suites never see the strict checks or wait on them.
     it("turns the old strict checks into exactly the ones schema.ts declares", async () => {
-      const fromSchema = (await pool.query(IDENTITY_CHECK_DEFS)).rows;
+      const fromSchema = (await pool.query(PUBLIC_CHECK_DEFS)).rows;
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query(STRICT_CHECKS_SQL);
-        await client.query(LOOSEN_CHECKS_SQL.replace(/^(BEGIN|COMMIT);$/gm, ""));
-        const fromSqlFile = (await client.query(IDENTITY_CHECK_DEFS)).rows;
+        await loosenChecksOnTempCopies(client);
+        const fromSqlFile = (await client.query(TEMP_CHECK_DEFS)).rows;
 
         expect(fromSqlFile).toEqual(fromSchema);
+      } finally {
+        await client.query("ROLLBACK");
+        client.release();
+      }
+    });
+
+    it("takes no ACCESS EXCLUSIVE lock on the tables the other suites use", async () => {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await loosenChecksOnTempCopies(client);
+        const { rows } = await client.query(`SELECT count(*)::int AS n FROM pg_locks
+          WHERE pid = pg_backend_pid() AND mode = 'AccessExclusiveLock'
+            AND relation IN ('public.users'::regclass, 'public.courtesy_attendees'::regclass, 'public.orders'::regclass)`);
+
+        expect(rows[0].n).toBe(0);
       } finally {
         await client.query("ROLLBACK");
         client.release();
