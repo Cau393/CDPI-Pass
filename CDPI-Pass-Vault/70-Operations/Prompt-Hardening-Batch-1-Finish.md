@@ -1,5 +1,7 @@
 # Prompt: finish hardening batch 1 (sandbox proof, A5 card, deploy), then write batch 2's prompt
 
+> **Executed 2026-10-13: batch 1 deployed.** PR #15 merged as `9e104d9` at 10:34 BRT on the owner's explicit go (10-13 had been a no-deploy day). CI run 38406064415 green, EC2 `f937827..9e104d9`, `prod-smoke.mjs` clean, A7 index live and valid. Next: `Prompt-Hardening-Batch-2.md`.
+
 > Superseded 2026-10-12: steps 1–3 (sandbox run, A5 card, fixes) are done in a626294. Continue with `Prompt-Hardening-Batch-1-Deploy.md`.
 
 How to use it: open a new Claude Code session at `/Users/cauecasonato/Envs/CDPI-Pass` and say: "Read `.claude/worktrees/b1-payments/CDPI-Pass-Vault/70-Operations/Prompt-Hardening-Batch-1-Finish.md` and finish batch 1."
