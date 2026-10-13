@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CreditCard, QrCode, FileText, Copy, CheckCircle, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import { useVerifyEmailRedirect } from "@/hooks/useVerifyEmailRedirect";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Event } from "@shared/schema";
@@ -50,6 +51,7 @@ export default function PaymentModal({
 }: PaymentModalProps) {
   const { toast } = useToast();
   const { user } = useAuth();
+  const redirectToVerifyEmail = useVerifyEmailRedirect();
   const isForeigner = user?.isForeigner === true;
   const [selectedMethod, setSelectedMethod] = useState<"pix" | "credit_card" | "boleto">("pix");
 
@@ -86,6 +88,7 @@ export default function PaymentModal({
         });
       },
       onError: (error: Error) => {
+        if (redirectToVerifyEmail(error)) return;
         const refreshed = refreshAfterStaleRegistration(error, event.id);
         const missing = identityRequiredMissing(error);
         if (missing) {

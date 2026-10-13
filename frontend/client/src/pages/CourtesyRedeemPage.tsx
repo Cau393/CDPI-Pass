@@ -22,6 +22,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Ticket, CheckCircle, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import { useVerifyEmailRedirect } from "@/hooks/useVerifyEmailRedirect";
 import { apiRequest } from "@/lib/queryClient";
 import { COURTESY_CODE_PARAM_REGEX } from "@/lib/authRedirect";
 import { COURTESY_CODE_INVALID_COPY } from "@/lib/eventCta";
@@ -70,6 +71,7 @@ export default function CourtesyRedeemPage() {
   const [isResolvingCode, setIsResolvingCode] = useState(false);
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const { toast } = useToast();
+  const redirectToVerifyEmail = useVerifyEmailRedirect();
   const queryClient = useQueryClient();
 
   // Fetch courtesy link details
@@ -171,6 +173,7 @@ export default function CourtesyRedeemPage() {
       });
     },
     onError: (error: Error) => {
+      if (redirectToVerifyEmail(error)) return;
       // The admin may have edited the form since this page loaded the link.
       if (staleRegistrationError(error)) {
         void queryClient.invalidateQueries({ queryKey: ["/api/courtesy-links", code] });
