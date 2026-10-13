@@ -22,9 +22,10 @@ export async function refundAndNotify(
     console.error(`REFUND_FAILED order=${order.id} payment=none reason=${reason}: no received payment id`);
     return;
   }
+  const user = await storage.getUser(order.userId).catch(() => undefined);
   let requestUrl: string | null;
   try {
-    ({ requestUrl } = await asaasService.refundReceivedPayment(payment));
+    ({ requestUrl } = await asaasService.refundReceivedPayment(payment, user?.phone));
   } catch (error) {
     // A redelivery, or the CONFIRMED→RECEIVED pair, asks again: Asaas refuses, nothing is owed.
     if (await asaasService.isRefunded(payment.id).catch(() => false)) {
@@ -37,7 +38,7 @@ export async function refundAndNotify(
   console.log(`REFUND_REQUESTED order=${order.id} payment=${payment.id} reason=${reason}`);
 
   try {
-    const [user, event] = await Promise.all([storage.getUser(order.userId), storage.getEvent(order.eventId)]);
+    const event = await storage.getEvent(order.eventId);
     if (!user?.email) return;
     const { subject, html, text } = refundEmail({
       userName: user.name,

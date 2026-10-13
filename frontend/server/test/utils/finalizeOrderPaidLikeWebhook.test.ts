@@ -89,6 +89,7 @@ describe("finalizeOrderPaidLikeWebhook", () => {
       id: "user-1",
       name: "U",
       email: "u@test.com",
+      phone: "5511987654321",
     });
   });
 
@@ -138,12 +139,11 @@ describe("finalizeOrderPaidLikeWebhook", () => {
       installment: "inst-9",
     });
     expect(r).toEqual({ ok: false, code: "duplicate_other_paid" });
-    expect(refundReceivedPayment).toHaveBeenCalledWith({
-      id: "pay-installment-1",
-      billingType: "CREDIT_CARD",
-      value: 33.34,
-      installment: "inst-9",
-    });
+    // The buyer's phone goes along: a boleto refund needs it as the Asaas customer's mobile.
+    expect(refundReceivedPayment).toHaveBeenCalledWith(
+      { id: "pay-installment-1", billingType: "CREDIT_CARD", value: 33.34, installment: "inst-9" },
+      "5511987654321",
+    );
     expect(deleteFile).toHaveBeenCalledWith("abc.png");
     expect(refundEmails()).toHaveLength(1);
     expect(emailService.sendTicketEmail).not.toHaveBeenCalled();

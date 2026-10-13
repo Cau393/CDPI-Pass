@@ -38,3 +38,16 @@ export function normalizePhoneE164(
 
   return parsed.number.replace(/^\+/, "");
 }
+
+/**
+ * A Brazilian number without the country code ("5511987654321" → "11987654321"), the only
+ * form Asaas accepts as a customer's `mobilePhone`. Null for a foreign or invalid phone.
+ */
+export function brazilianNationalPhone(input: string | null | undefined): string | null {
+  try {
+    const parsed = parsePhoneNumberFromString(`+${normalizePhoneE164(input ?? "")}`);
+    return parsed?.country === "BR" ? String(parsed.nationalNumber) : null;
+  } catch {
+    return null;
+  }
+}

@@ -1,4 +1,5 @@
 import { AsaasApiError } from "../utils/asaasErrors";
+import { brazilianNationalPhone } from "../utils/normalizePhoneE164";
 
 const DEFAULT_ASAAS_API_URL = "https://api.asaas.com/v3";
 
@@ -322,17 +323,27 @@ export class AsaasService {
    * Refunds a payment we RECEIVED (the webhook's `payment`, never the order's link id).
    * - Card bought in installments: the whole installment plan, so no installment is left charged.
    * - Boleto: Asaas cannot push money back to a boleto payer; it returns `requestUrl`, a form
-   *   where the buyer enters their bank account. The refund completes only after that.
+   *   where the buyer enters their bank account. The refund completes only after that. Asaas
+   *   refuses it ("não possui um celular válido") unless the customer has a mobile phone, and
+   *   our customers are created with `phone` only, so the buyer's phone is set first.
    * - PIX and single card: refunded directly (PIX needs enough balance in the account).
    * Asaas rejects a second refund of the same payment, which makes retries harmless.
    */
-  async refundReceivedPayment(payment: ReceivedAsaasPayment): Promise<{ requestUrl: string | null }> {
+  async refundReceivedPayment(
+    payment: ReceivedAsaasPayment,
+    buyerPhone?: string | null,
+  ): Promise<{ requestUrl: string | null }> {
     const description = "Estorno automático CDPI Pass";
     if (payment.billingType === "CREDIT_CARD" && payment.installment) {
       await this.makeRequest(`/installments/${payment.installment}/refund`, "POST", {});
       return { requestUrl: null };
     }
     if (payment.billingType === "BOLETO") {
+      const mobilePhone = brazilianNationalPhone(buyerPhone);
+      if (mobilePhone) {
+        const { customer } = await this.makeRequest(`/payments/${payment.id}`);
+        await this.makeRequest(`/customers/${customer}`, "POST", { mobilePhone });
+      }
       const res = await this.makeRequest(`/payments/${payment.id}/bankSlip/refund`, "POST", {});
       return { requestUrl: typeof res?.requestUrl === "string" ? res.requestUrl : null };
     }
@@ -340,10 +351,16 @@ export class AsaasService {
     return { requestUrl: null };
   }
 
-  /** True when Asaas already refunded (or is refunding) this payment. */
+  /**
+   * True when Asaas already refunded (or is refunding) this payment. A refund that waits for
+   * authorization (AWAITING_CRITICAL_ACTION_AUTHORIZATION) leaves the status RECEIVED and shows
+   * only in `refunds`.
+   */
   async isRefunded(paymentId: string): Promise<boolean> {
     const payment = await this.makeRequest(`/payments/${paymentId}`);
-    return typeof payment?.status === "string" && payment.status.startsWith("REFUND");
+    if (typeof payment?.status === "string" && payment.status.startsWith("REFUND")) return true;
+    const refunds: { status?: string }[] = Array.isArray(payment?.refunds) ? payment.refunds : [];
+    return refunds.some((refund) => refund.status !== "CANCELLED");
   }
 
   /** Sum of every payment of a card installment plan (one webhook arrives per installment). */
@@ -351,6 +368,11 @@ export class AsaasService {
     const list = await this.makeRequest(`/payments?installment=${encodeURIComponent(installmentId)}&limit=100`);
     const rows: { value?: number }[] = Array.isArray(list?.data) ? list.data : [];
     return rows.reduce((sum, row) => sum + (Number(row.value) || 0), 0);
+  }
+
+  /** Switches a payment link off so it takes no new purchase; the charges it made stay as they are. */
+  async deactivatePaymentLink(linkId: string): Promise<void> {
+    await this.makeRequest(`/paymentLinks/${linkId}`, "PUT", { active: false });
   }
 
   async cancelPayment(paymentId: string): Promise<any> {

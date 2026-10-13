@@ -42,7 +42,8 @@ function receivedPayment(meta: PaymentMetaForFinalize): ReceivedAsaasPayment | n
  * Callers hold a snapshot read earlier (webhook, check-status poll, paymentStatusService), and
  * concurrent deliveries can all see "pending": `storage.claimPaidOrder` decides in one locked
  * transaction (paid, duplicate discarded, or nothing). Only after it commits, best-effort:
- * the ticket e-mail for a paid order, the refund for a discarded duplicate.
+ * the ticket e-mail for a paid order (and its card link switched off), the refund for a
+ * discarded duplicate.
  * Cortesia is expressed only via `orders.paymentMethod` (and optional courtesy fields), never via status.
  */
 export async function finalizeOrderPaidLikeWebhook(
@@ -70,6 +71,7 @@ export async function finalizeOrderPaidLikeWebhook(
       await refundAndNotify(claim.order, receivedPayment(paymentMeta), "duplicate");
       return { ok: false, code: "duplicate_other_paid" };
     case "paid":
+      await deactivatePaidLink(claim.order);
       try {
         await afterPaid(claim.order, paymentMeta);
       } catch (error) {
@@ -77,6 +79,22 @@ export async function finalizeOrderPaidLikeWebhook(
         console.error(`TICKET_EMAIL_FAILED order=${claim.order.id}:`, error);
       }
       return { ok: true };
+  }
+}
+
+/**
+ * Asaas lets the same card payment link be bought again after it was paid (sandbox 2026-10-12),
+ * and it refuses to DELETE a link that has charges. So the paid order switches its link off;
+ * the installments already bought are not touched. A second purchase completed in the seconds
+ * before this runs is a known residual (owner decision 2026-10-12).
+ */
+async function deactivatePaidLink(order: Order): Promise<void> {
+  const linkId = order.asaasPaymentId;
+  if (order.paymentMethod !== "credit_card" || !linkId || linkId.startsWith("pay_")) return;
+  try {
+    await asaasService.deactivatePaymentLink(linkId);
+  } catch (error) {
+    console.error(`PAYMENT_LINK_STILL_ACTIVE order=${order.id} link=${linkId}:`, error);
   }
 }
 

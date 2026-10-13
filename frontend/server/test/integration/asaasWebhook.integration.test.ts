@@ -138,24 +138,34 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     const app = express();
     app.use(express.json());
     server = await registerRoutes(app);
-    // Asaas sandbox behaviour: a payment refunds once; asking again is a 400.
+    // Asaas sandbox behaviour (2026-10-11): a payment refunds once; asking again is a 400. An
+    // accepted refund can wait for authorization: the payment stays RECEIVED, with a `refunds`
+    // entry. A boleto refund needs a customer with a mobile phone (payment pay_x → cus_pay_x).
     const { asaasService } = await import("../../services/asaasService");
     const { AsaasApiError } = await import("../../utils/asaasErrors");
+    const customersWithMobile = new Set<string>();
     vi.spyOn(asaasService as any, "makeRequest").mockImplementation(async (...args: unknown[]) => {
-      const [endpoint, method = "GET"] = args as [string, string?];
+      const [endpoint, method = "GET", data] = args as [string, string?, { mobilePhone?: string }?];
       const call = `${method} ${endpoint}`;
       const again = asaasCalls.includes(call);
       asaasCalls.push(call);
+      const customerUpdate = /^POST \/customers\/([^/?]+)$/.exec(call);
+      // Asaas stores "5511…" but only a national number ("11…") counts as a valid mobile.
+      if (customerUpdate && /^\d{10,11}$/.test(data?.mobilePhone ?? "")) customersWithMobile.add(customerUpdate[1]);
       if (call.endsWith("/refund")) {
-        if (again) throw new AsaasApiError(400, { errors: [{ code: "invalid_action", description: "Cobrança já estornada" }] });
+        if (again) throw new AsaasApiError(400, { errors: [{ code: "invalid_object", description: "O estorno dessa cobrança já está em andamento." }] });
+        if (call.endsWith("/bankSlip/refund") && !customersWithMobile.has(`cus_${endpoint.split("/")[2]}`)) {
+          throw new AsaasApiError(400, { errors: [{ code: "invalid_action", description: "Não é possível efetuar o estorno pois o seu cliente não possui um celular válido." }] });
+        }
         acceptedRefunds.push(call);
         if (call.endsWith("/bankSlip/refund")) return { requestUrl: "https://sandbox.asaas.com/refund-request/abc", status: "PENDING" };
-        return { id: endpoint.split("/")[2], status: "REFUNDED" };
+        return { id: endpoint.split("/")[2], status: "RECEIVED" };
       }
       const paymentRead = /^GET \/payments\/([^/?]+)$/.exec(call);
       if (paymentRead) {
-        const refunded = acceptedRefunds.some((r) => r.startsWith(`POST /payments/${paymentRead[1]}/`));
-        return { id: paymentRead[1], status: refunded ? "REFUNDED" : "RECEIVED" };
+        const id = paymentRead[1];
+        const requested = acceptedRefunds.some((r) => r.startsWith(`POST /payments/${id}/`));
+        return { id, customer: `cus_${id}`, status: "RECEIVED", refunds: requested ? [{ status: "AWAITING_CRITICAL_ACTION_AUTHORIZATION" }] : [] };
       }
       return {};
     });
@@ -186,6 +196,8 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     // Asaas redelivers: still one paid order, the counter does not double.
     expect(await deliver(body)).toBe(200);
     expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+    // A PIX charge has no payment link to switch off.
+    expect(asaasCalls.filter((c) => c.startsWith("PUT /paymentLinks/"))).toEqual([]);
   });
 
   it("card bought through the payment link: a new payment with only `paymentLink` finds the order", async () => {
@@ -203,6 +215,9 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
     // The legit installments of the paying purchase are never refunded.
     expect(asaasCalls.filter((c) => c.includes("/refund") && c.includes(linkId))).toEqual([]);
+    // A5 card: Asaas lets the same link be bought again (sandbox 2026-10-12), so the paid
+    // order switches it off. Asaas refuses to DELETE a link that has charges.
+    expect(asaasCalls.filter((c) => c.includes(`/paymentLinks/${linkId}`))).toEqual([`PUT /paymentLinks/${linkId}`]);
     expect(acceptedRefunds.filter((c) => c.includes(body.payment.id))).toEqual([]);
   });
 
@@ -402,10 +417,14 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     expect(refunds("pay_a4")).toEqual(["POST /payments/pay_a4/refund"]);
     expect(refundEmails(email)).toHaveLength(1);
 
-    // Redelivery: Asaas refuses a second refund, so no second e-mail.
+    // Redelivery: Asaas refuses a second refund, so no second e-mail. The refund still waits
+    // for authorization (status RECEIVED), and that must not read as a failed refund.
+    const errors = vi.spyOn(console, "error");
     expect(await deliver(paidLate)).toBe(200);
     expect(refundEmails(email)).toHaveLength(1);
     expect(ticketEmails.filter((to) => to === email)).toHaveLength(0);
+    expect(errors.mock.calls.filter((c) => String(c[0]).includes("REFUND_FAILED"))).toEqual([]);
+    errors.mockRestore();
   });
 
   it("A4: a boleto paid late goes through bankSlip/refund and the e-mail carries the refund form link", async () => {
@@ -415,6 +434,8 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     expect(await deliver({ event: "PAYMENT_RECEIVED", payment: { id: "pay_a4_boleto", billingType: "BOLETO", value: 637, externalReference: orderId } })).toBe(200);
 
     expect(await state(orderId, eventId)).toEqual({ status: "cancelled", attendees: 0 });
+    // Our Asaas customers carry no mobile phone; the buyer's phone is set first.
+    expect(asaasCalls).toContain("POST /customers/cus_pay_a4_boleto");
     expect(refunds("pay_a4_boleto")).toEqual(["POST /payments/pay_a4_boleto/bankSlip/refund"]);
     expect(refundEmails(email)).toHaveLength(1);
     expect(refundEmails(email)[0].html).toContain("https://sandbox.asaas.com/refund-request/abc");

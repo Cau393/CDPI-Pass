@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizePhoneE164 } from "../../utils/normalizePhoneE164";
+import { brazilianNationalPhone, normalizePhoneE164 } from "../../utils/normalizePhoneE164";
 
 describe("normalizePhoneE164", () => {
   it("BR mobile formatted", () => {
@@ -48,5 +48,19 @@ describe("normalizePhoneE164", () => {
 
   it("throws on invalid / too short", () => {
     expect(() => normalizePhoneE164("123", "BR")).toThrow();
+  });
+});
+
+describe("brazilianNationalPhone (Asaas mobilePhone)", () => {
+  it("drops the country code of a stored BR number", () => {
+    expect(brazilianNationalPhone("5511987654321")).toBe("11987654321");
+    expect(brazilianNationalPhone("+55 (62) 99876-5432")).toBe("62998765432");
+  });
+
+  it("is null for a foreign, empty or invalid phone", () => {
+    expect(brazilianNationalPhone("595981000105")).toBeNull();
+    expect(brazilianNationalPhone("")).toBeNull();
+    expect(brazilianNationalPhone(null)).toBeNull();
+    expect(brazilianNationalPhone("123")).toBeNull();
   });
 });
