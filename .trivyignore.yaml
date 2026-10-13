@@ -1,0 +1,26 @@
+# Accepted HIGH/CRITICAL findings for the CI `security` job (trivy fs).
+# Baseline taken 2026-10-13 (hardening batch 3). Every entry needs a reason
+# and an expiry; an expired entry fails the job again, which forces a
+# re-review. Details: CDPI-Pass-Vault/70-Operations/Security-Backlog.md.
+
+vulnerabilities:
+  # --- Accepted until a fix ships or the upgrade lands (Security-Backlog #19, #20, #22) ---
+  - id: CVE-2026-93687
+    statement: braces 3.0.3, only in tailwind build tooling (chokidar, micromatch), which never runs in the server. No fixed release on npm yet (3.0.3 is the latest).
+    expired_at: 2026-12-31
+  - id: CVE-2026-39356
+    statement: drizzle-orm 0.39.3 identifier escaping. Not reachable, because no request input reaches sql.identifier(), sql.raw() or .as() (all identifiers are static schema). Fix needs 0.39 to 0.45 plus drizzle-kit and drizzle-zod.
+    expired_at: 2026-12-31
+  - id: CVE-2023-30533
+    statement: xlsx 0.18.5 prototype pollution when parsing a workbook. Not reachable, because the app only writes workbooks (aoa_to_sheet, json_to_sheet, writeFile) and never reads one. Fixed builds ship only from cdn.sheetjs.com.
+    expired_at: 2026-12-31
+  - id: CVE-2024-22363
+    statement: xlsx 0.18.5 ReDoS when parsing a workbook. Not reachable, because the app only writes workbooks and never reads one. Fixed builds ship only from cdn.sheetjs.com.
+    expired_at: 2026-12-31
+
+misconfigurations:
+  - id: DS-0002
+    paths:
+      - frontend/Dockerfile
+    statement: The image is never built for production (prod runs PM2 on EC2, see deploy.yml), and its ecosystem.config.cjs cwd does not exist in the container. Deleting the file is Security-Backlog #21.
+    expired_at: 2026-12-31

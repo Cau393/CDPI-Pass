@@ -25,6 +25,13 @@ Priority key: **P1** exploitable now or silent data loss · **P2** broken featur
 | 15 | unrated | Login rate limiter keyed on a client-controlled `X-Forwarded-For` | resolved 2026-10-13 (hardening batch 2, PR #17, `ffdb2c4`) |
 | 16 | unrated | Unverified accounts can subscribe, order and redeem courtesies (login stays open, owner decision) | resolved 2026-10-13 (hardening batch 2, PR #17, `ffdb2c4`) |
 | 17 | unrated | No admin-visible signal for refunds Asaas holds at `AWAITING_CRITICAL_ACTION_AUTHORIZATION` | open (owner: backlog, not batch 2) |
+| 18 | P2 | CI: PRs ran no checks; actions on mutable tags received the EC2 SSH key and AWS keys; default token permissions | fix in the batch-3 CI PR (not merged) |
+| 19 | P3 | `drizzle-orm` 0.39.3 identifier escaping (CVE-2026-39356, HIGH), not reachable | open, accepted in `.trivyignore.yaml` until 2026-12-31 |
+| 20 | P3 | `xlsx` 0.18.5 parse-side CVEs (2 HIGH), not reachable: the app only writes workbooks | open, accepted until 2026-12-31 |
+| 21 | P3 | `frontend/Dockerfile` is dead: runs as root, and its `ecosystem.config.cjs` cwd does not exist in the image | open (owner: delete it?) |
+| 22 | P3 | Unused `next` dependency (3 HIGH via postcss/sharp); build-only tools listed in `dependencies` | `next` removed in the batch-3 deps PR (not merged); `braces` has no fix on npm |
+| 23 | P3 | Moderate runtime CVEs: `multer` 2.3.0, `qs` 6.15.3, `ip-address` 10.7.0, `csv-parse` 6.2.1 | open; not reachable as configured, `csv-parse` admin-only |
+| 24 | P3 | nginx: CSP report-only with no report endpoint; `/assets/` drops the server-level security headers; `Upgrade` forwarded on every request | open; confirm against prod in the batch-3 passive scan |
 
 ---
 
@@ -365,6 +372,81 @@ Related: the three legacy questions (`legacy-*` ids) are not locked in the form 
 Prod Asaas has critical-action authorization on, so every API refund (late PIX/boleto, duplicate payment) waits at `AWAITING_CRITICAL_ACTION_AUTHORIZATION` until someone approves it in the Asaas panel. The buyer's e-mail already says "estornamos", and nothing in the admin shows that a refund is waiting. A refund nobody approves never reaches the buyer.
 
 **Fix (not scheduled; the owner kept it out of batch 2 on 2026-10-13)**: show refunds that are still pending authorization in the admin, from the refund status the webhook path already reads (`refunds[]`), or allowlist the server IP in Asaas so API refunds skip the panel approval.
+
+---
+
+### 18. CI had no PR checks and handed the deploy secrets to tag-pinned actions (found 2026-10-13, batch-3 code scan)
+
+`deploy.yml` ran only on a push to `hotfix-frontend-update`, so a PR got no tests and no scans before the merge that deploys it. Every action was referenced by a tag (`actions/checkout@v4`, `aws-actions/configure-aws-credentials@v4`, `appleboy/ssh-action@v1.0.3`, …). A tag can be re-pointed to new code, and the deploy job hands those actions the EC2 SSH key and the AWS keys. There was no `permissions:` block, so `GITHUB_TOKEN` had the repository default.
+
+```bash
+semgrep scan --metrics=off --config p/owasp-top-ten .github   # github-actions-mutable-action-tag x5
+grep -nE "^on:|pull_request|permissions:" .github/workflows/deploy.yml
+```
+
+**Fix (batch-3 CI PR)**: `pull_request` trigger, deploy only on `push`, `permissions: contents: read`, every action pinned to the SHA its tag points at today, and a `security` job (gitleaks, semgrep, trivy gates; osv-scanner and pnpm audit report). Deploy does **not** `need` the security job, so a CVE published against an existing dependency cannot block a check-in or printing hotfix. Revisit after the 2026-10-20 event.
+
+---
+
+### 19. `drizzle-orm` 0.39.3: SQL identifier escaping (CVE-2026-39356 / GHSA-gpj5-g38j-94v9, HIGH 7.5)
+
+`escapeName()` does not double `"` inside an identifier, so attacker input passed to `sql.identifier()` or `.as()` can break out of the quotes. **Not reachable here:** no request input reaches `sql.identifier()`, `sql.raw()` or `.as()`, and every identifier comes from the static schema.
+
+```bash
+grep -rnE "sql\.identifier|sql\.raw\(|\.as\(" frontend/server frontend/shared --include='*.ts' | grep -v /test/   # no hits
+```
+
+**Fix**: upgrade to `drizzle-orm` ≥0.45.2 with `drizzle-kit` and `drizzle-zod` in one PR, plus a full gate run. That is six minor versions with breaking changes, so not in event week. Until then, any dynamic sort or report column must map through an allowlist.
+
+---
+
+### 20. `xlsx` 0.18.5: prototype pollution and ReDoS when parsing (CVE-2023-30533, CVE-2024-22363, HIGH)
+
+Both CVEs sit in the workbook **reader**. The app only writes workbooks in the admin's browser (`aoa_to_sheet`, `json_to_sheet`, `writeFile` in `client/src/lib/export*.ts` and `shared/npsExcel.ts`), so neither is reachable. The npm package is abandoned at 0.18.5, and fixed builds ship only from `cdn.sheetjs.com`.
+
+```bash
+grep -rnE "XLSX\.(read|readFile)" frontend/client frontend/shared frontend/server   # no hits
+```
+
+**Fix**: switch to the SheetJS CDN tarball (`https://cdn.sheetjs.com/xlsx-0.20.x/xlsx-0.20.x.tgz`), or to a maintained writer. Do it before anything starts *reading* uploaded spreadsheets.
+
+---
+
+### 21. `frontend/Dockerfile` is dead code
+
+Production is PM2 on EC2 (see the deploy job), and the image is never built. It runs as root (trivy DS-0002, semgrep `missing-user`), and it copies the root `ecosystem.config.cjs`, whose `cwd` is `/home/ubuntu/CDPI-Pass/frontend`, a path that does not exist in the image. It is excluded from the semgrep gate and accepted in `.trivyignore.yaml`.
+
+**Fix (owner decision)**: delete it, or add `USER node` and the correct `cwd`, and build it in CI.
+
+---
+
+### 22. Unused and misfiled dependencies
+
+`next` was never imported (the client's `next` hits are `?next=` query params), but it pulled postcss 8.4.31 and sharp 0.35.4 with 3 HIGH CVEs. The batch-3 deps PR removes it. Build-only tools (`tsup`, `sequelize-cli`, `tailwindcss-animate`, …) sit in `dependencies`, so `pnpm audit --prod` and trivy count their CVEs as runtime ones. `braces` 3.0.3 (CVE-2026-93687, HIGH, tailwind's chokidar/micromatch) has no fixed release on npm and is accepted until 2026-12-31.
+
+**Fix**: move build-only tools to `devDependencies`. The EC2 build runs `pnpm install` without `--prod`, so this changes nothing on the box. Bump `braces` when a fixed release ships.
+
+---
+
+### 23. Moderate CVEs in runtime dependencies
+
+- `multer` 2.3.0 → 2.4.0 (GHSA-3pph-fpjx-jg34): orphaned files on aborted uploads with `diskStorage`. Both uploaders use `memoryStorage`, so not reachable.
+- `qs` 6.15.3 → 6.16.0 (GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g): needs `comma: true`, which Express's parser does not set.
+- `ip-address` 10.7.0 → 10.7.1 (GHSA-j6r3-76f7-8jcv, GHSA-h3mg-xc3c-68pw), via `express-rate-limit`: a cross-family subnet compare. The limiter's only `isInSubnet` call compares an `Address6` with `Address6("::/96")`, which is the same family, so the bug does not apply.
+- `csv-parse` 6.2.1 → 7.0.2 (GHSA-8cw4-87c7-c6xx): prototype replacement through a `__proto__` header with `columns: true`, which the mass-send worker (`server/workers/emailWorker.ts`) uses on an admin-uploaded CSV. Admin-only input.
+
+**Fix**: one lockfile/minor-bump PR after the event (`csv-parse` 7 is a major bump, so check the `columns` behaviour).
+
+---
+
+### 24. nginx config (repo copy `infra/nginx/cdpipass.com.br.conf`)
+
+- `Content-Security-Policy-Report-Only` with no `report-uri`/`report-to`: the policy neither blocks nor reports anything.
+- `location /assets/` has its own `add_header` lines. nginx then drops the server-level headers there (HSTS, `X-Frame-Options`, the CSP, …). This is low impact for hashed JS/CSS, but it is not the intended behaviour.
+- `Upgrade $http_upgrade` / `Connection 'upgrade'` go upstream on every request (semgrep `possible-nginx-h2c-smuggling`). The prod Express server has no `upgrade` handler, so the risk is low. Forward the headers only for WebSocket paths, or drop them.
+- semgrep `request-host-used` (3×) is a false positive: the 444 `default_server` blocks pin `$host` to the named servers.
+
+**Fix**: confirm each point against live prod headers in the batch-3 passive scan (after the owner's go), then fix the config on the box and in the repo copy together.
 
 ---
 

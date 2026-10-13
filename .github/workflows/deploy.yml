@@ -4,6 +4,19 @@ on:
   push:
     branches:
       - hotfix-frontend-update
+  # PRs into the deploy branch run the tests and the security scans; only a
+  # push (the merge) deploys, see the `if` on the deploy job.
+  pull_request:
+    branches:
+      - hotfix-frontend-update
+
+# No job writes to the repo through GITHUB_TOKEN; the deploy uses its own secrets.
+permissions:
+  contents: read
+
+# Actions are pinned to a commit SHA (the tag is in the trailing comment): a tag
+# can be re-pointed, and the deploy job hands its actions the EC2 SSH key and
+# the AWS keys.
 
 jobs:
   test:
@@ -33,19 +46,19 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Installs the pnpm version pinned by "packageManager" in
       # frontend/package.json, so CI cannot drift from local/prod.
       # package_json_file is required because this repo's package.json lives
       # in frontend/, not at the root, and the action defaults to the root.
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           package_json_file: frontend/package.json
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -79,9 +92,104 @@ jobs:
           VERIFY_DATABASE_URL: ${{ env.VERIFY_DATABASE_URL }}
         run: pnpm run test:integration
 
+  # Fails on a new secret in git history, a semgrep ERROR, or a HIGH/CRITICAL
+  # dependency or IaC finding. Accepted findings live in .trivyignore.yaml, each
+  # with a reason and an expiry; osv-scanner and pnpm audit only report.
+  # Scanner binaries are pinned by version and sha256 (from the release's
+  # checksums file).
+  security:
+    name: Security Scans
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+      OSV_SCANNER_VERSION: 2.7.0
+      OSV_SCANNER_SHA256: 160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
+      TRIVY_VERSION: 0.75.0
+      TRIVY_SHA256: c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f
+      SEMGREP_VERSION: 1.180.0
+
+    steps:
+      # Full history: gitleaks scans every commit, because the repo is public.
+      - name: Checkout Code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Install scanners
+        run: |
+          set -euo pipefail
+          BIN="$RUNNER_TEMP/bin"; mkdir -p "$BIN"; cd "$RUNNER_TEMP"
+          curl -sSfL -o gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
+          tar -xzf gitleaks.tgz -C "$BIN" gitleaks
+          curl -sSfL -o "$BIN/osv-scanner" "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  $BIN/osv-scanner" | sha256sum -c -
+          chmod +x "$BIN/osv-scanner"
+          curl -sSfL -o trivy.tgz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  trivy.tgz" | sha256sum -c -
+          tar -xzf trivy.tgz -C "$BIN" trivy
+          pipx install "semgrep==${SEMGREP_VERSION}"
+          echo "$BIN" >> "$GITHUB_PATH"
+
+      # --redact keeps any match out of the public CI log.
+      - name: Secrets in git history (gitleaks)
+        run: gitleaks git --log-opts="--all" --redact --no-banner .
+
+      # Same rulesets as the batch-3 baseline. frontend/Dockerfile is excluded:
+      # production never builds it (PM2 on EC2, see the deploy job), and it is
+      # in .trivyignore.yaml for the same reason.
+      - name: Code (semgrep)
+        run: >-
+          semgrep scan --metrics=off --error --severity ERROR
+          --config p/owasp-top-ten --config p/nodejs --config p/expressjs
+          --config p/typescript --config p/javascript --config p/react --config p/jwt
+          --exclude CDPI-Pass-Vault --exclude frontend/dist --exclude frontend/Dockerfile
+          frontend infra .github
+
+      - name: Dependencies and IaC (trivy)
+        run: >-
+          trivy fs --scanners vuln,misconfig --severity HIGH,CRITICAL --exit-code 1
+          --ignorefile .trivyignore.yaml
+          --skip-dirs CDPI-Pass-Vault --skip-dirs frontend/dist
+          .
+
+      # Report-only cross-checks against other advisory databases; trivy is
+      # the gate. Exit 1 means "vulnerabilities found", anything else is a
+      # scanner or registry error and fails the step.
+      - name: Dependencies cross-check (osv-scanner)
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          osv-scanner scan source --lockfile frontend/pnpm-lock.yaml --format markdown > osv.md
+          code=$?
+          { echo "## osv-scanner"; cat osv.md; } >> "$GITHUB_STEP_SUMMARY"
+          [ "$code" -le 1 ]
+
+      - name: Setup pnpm
+        if: ${{ !cancelled() }}
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          package_json_file: frontend/package.json
+
+      - name: Dependencies cross-check (pnpm audit)
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        run: |
+          set +e
+          pnpm audit --prod > audit.txt
+          code=$?
+          { echo "## pnpm audit --prod"; echo '```'; cat audit.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          [ "$code" -le 1 ]
+
   deploy:
     name: Deploy to EC2
+    # Deliberately not gated on `security`: a CVE published against an
+    # existing dependency must not block a check-in or printing hotfix. The
+    # security job gates the PR instead (the owner merges only on green).
     needs: test
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Get GitHub Runner IP
@@ -89,7 +197,7 @@ jobs:
         run: echo "ipv4=$(curl -s https://checkip.amazonaws.com)" >> $GITHUB_OUTPUT
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -114,7 +222,7 @@ jobs:
       # Result: CI was green for months while production stayed on the build
       # from 2026-04-30, 19 commits behind, including two security fixes.
       - name: Execute Remote SSH Commands
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
