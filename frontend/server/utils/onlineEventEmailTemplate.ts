@@ -58,7 +58,7 @@ function meetingPasswordText(password: string | null | undefined): string {
   return `\n      Senha para a Reunião: ${trimmed}\n`;
 }
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

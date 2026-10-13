@@ -48,6 +48,21 @@ export type CancelOrderResult =
   | { ok: false; code: "already_cancelled"; order: Order }
   | { ok: false; code: "invalid_status"; status: string };
 
+/**
+ * refund_then_discard: the payment of a duplicate is refunded and its pending order cancelled.
+ * reject_only: report the duplicate and change nothing (admin "mark paid externally").
+ */
+export type DuplicatePaidPolicy = "refund_then_discard" | "reject_only";
+
+export type ClaimPaidOrderResult =
+  | { outcome: "paid"; order: Order }
+  /** `order` is the row as it was before the discard (its QR S3 url is still there). */
+  | { outcome: "duplicate_discarded"; order: Order }
+  | { outcome: "duplicate_rejected" }
+  | { outcome: "already_paid" }
+  /** `status` is the order's status when known (null: missing, or changed while claiming). */
+  | { outcome: "not_pending"; status: string | null };
+
 export interface IStorage {
   // User operations
   getUser(id: string): Promise<User | undefined>;
@@ -91,7 +106,14 @@ export interface IStorage {
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
   /** pending -> paid in one statement; false when the order was no longer pending. */
-  markPendingOrderPaid(id: string): Promise<boolean>;
+  /**
+   * Turns a pending order into a paid one in one transaction (event row locked):
+   * duplicate check, conditional pending→paid or pending→cancelled, seat and courtesy
+   * usage. A throw rolls everything back, so the webhook can answer 500 and be retried.
+   */
+  claimPaidOrder(orderId: string, duplicatePolicy: DuplicatePaidPolicy): Promise<ClaimPaidOrderResult>;
+  /** Expired charge: pending→cancelled only, so a paid order is never cancelled from a stale read. */
+  cancelPendingOrder(orderId: string): Promise<boolean>;
   getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined>;
   /**
    * True when the event already has a paid order for this holder: the
@@ -116,7 +138,7 @@ export interface IStorage {
     order: InsertOrder;
   }): Promise<{ ok: true; order: Order } | { ok: false; reason: "already_registered" | "event_full" }>;
   /** Atomic `current_attendees + 1`; not an edit, so `updated_at` stays. */
-  incrementEventAttendees(eventId: string): Promise<void>;
+  incrementEventAttendees(eventId: string, executor?: Pick<typeof db, "update">): Promise<void>;
   /**
    * ADR-016 write-once document (+ editable address). A different document
    * than the one on file is `document_already_set`; a document owned by
@@ -162,7 +184,7 @@ export interface IStorage {
   updateCourtesyLink(id: string, updates: Partial<CourtesyLink>): Promise<CourtesyLink | undefined>;
   /** Validates ticketCount vs usedCount and updates; throws if link missing or invalid. */
   updateCourtesyLinkTicketCount(id: string, ticketCount: number): Promise<CourtesyLink>;
-  incrementCourtesyLinkUsage(id: string): Promise<void>;
+  incrementCourtesyLinkUsage(id: string, executor?: Pick<typeof db, "update">): Promise<void>;
   /** Paid courtesy orders for the event. One row per successful redeem. */
   countPaidCourtesyRedeems(eventId: string): Promise<number>;
   /** Sets every courtesy link for the event to inactive. */
@@ -472,13 +494,60 @@ export class DatabaseStorage implements IStorage {
     return order;
   }
 
-  async markPendingOrderPaid(id: string): Promise<boolean> {
-    const claimed = await db
+  async claimPaidOrder(orderId: string, duplicatePolicy: DuplicatePaidPolicy): Promise<ClaimPaidOrderResult> {
+    return db.transaction(async (tx) => {
+      const [current] = await tx.select().from(orders).where(eq(orders.id, orderId));
+      if (!current) return { outcome: "not_pending", status: null };
+      // Same lock as createFreeSubscription/claimCourtesyRedeem: every paid claim of the
+      // event is serialized, so two orders of one holder cannot both pass the check below.
+      await tx.select({ id: events.id }).from(events).where(eq(events.id, current.eventId)).for("update");
+      const [order] = await tx.select().from(orders).where(eq(orders.id, orderId));
+      if (order.status === "paid") return { outcome: "already_paid" };
+      if (order.status !== "pending") return { outcome: "not_pending", status: order.status };
+
+      if (await this.existsOtherPaidOrderForHolder(order, tx)) {
+        if (duplicatePolicy === "reject_only") return { outcome: "duplicate_rejected" };
+        const [discarded] = await tx
+          .update(orders)
+          .set({ status: "cancelled", qrCodeData: null, qr_code_s3_url: null, updatedAt: new Date() })
+          .where(and(eq(orders.id, orderId), eq(orders.status, "pending")))
+          .returning({ id: orders.id });
+        return discarded ? { outcome: "duplicate_discarded", order } : { outcome: "not_pending", status: null };
+      }
+
+      const [paid] = await tx
+        .update(orders)
+        .set({ status: "paid", updatedAt: new Date() })
+        .where(and(eq(orders.id, orderId), eq(orders.status, "pending")))
+        .returning();
+      if (!paid) return { outcome: "not_pending", status: null };
+      if (paid.courtesyLinkId) await this.incrementCourtesyLinkUsage(paid.courtesyLinkId, tx);
+      await this.incrementEventAttendees(paid.eventId, tx);
+      return { outcome: "paid", order: paid };
+    });
+  }
+
+  async cancelPendingOrder(orderId: string): Promise<boolean> {
+    const rows = await db
       .update(orders)
-      .set({ status: "paid", updatedAt: new Date() })
-      .where(and(eq(orders.id, id), eq(orders.status, "pending")))
+      .set({ status: "cancelled", updatedAt: new Date() })
+      .where(and(eq(orders.id, orderId), eq(orders.status, "pending")))
       .returning({ id: orders.id });
-    return claimed.length > 0;
+    return rows.length > 0;
+  }
+
+  /** Another paid order of the same holder: CPF, else passport, else the account. */
+  private async existsOtherPaidOrderForHolder(order: Order, executor: Pick<typeof db, "select">): Promise<boolean> {
+    if (order.cpf) {
+      return this.existsOtherPaidOrderForCpfAndEvent(order.id, order.cpf, order.eventId, executor);
+    }
+    if (
+      order.foreignDocument &&
+      (await this.existsOtherPaidOrderForForeignDocumentAndEvent(order.id, order.foreignDocument, order.eventId, executor))
+    ) {
+      return true;
+    }
+    return this.existsOtherPaidOrderForUserAndEvent(order.id, order.userId, order.eventId, executor);
   }
 
   async getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined> {
@@ -527,8 +596,8 @@ export class DatabaseStorage implements IStorage {
     return existing.length > 0;
   }
 
-  async incrementEventAttendees(eventId: string): Promise<void> {
-    await db
+  async incrementEventAttendees(eventId: string, executor: Pick<typeof db, "update"> = db): Promise<void> {
+    await executor
       .update(events)
       .set({ currentAttendees: sql`COALESCE(${events.currentAttendees}, 0) + 1` })
       .where(eq(events.id, eventId));
@@ -608,8 +677,9 @@ export class DatabaseStorage implements IStorage {
     excludeOrderId: string,
     cpf: string,
     eventId: string,
+    executor: Pick<typeof db, "select"> = db,
   ): Promise<boolean> {
-    const existingOrder = await db
+    const existingOrder = await executor
       .select({ id: orders.id })
       .from(orders)
       .where(
@@ -629,8 +699,9 @@ export class DatabaseStorage implements IStorage {
     excludeOrderId: string,
     foreignDocument: string,
     eventId: string,
+    executor: Pick<typeof db, "select"> = db,
   ): Promise<boolean> {
-    const existingOrder = await db
+    const existingOrder = await executor
       .select({ id: orders.id })
       .from(orders)
       .where(
@@ -649,8 +720,9 @@ export class DatabaseStorage implements IStorage {
     excludeOrderId: string,
     userId: string,
     eventId: string,
+    executor: Pick<typeof db, "select"> = db,
   ): Promise<boolean> {
-    const existingOrder = await db
+    const existingOrder = await executor
       .select({ id: orders.id })
       .from(orders)
       .where(
@@ -784,8 +856,8 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async incrementCourtesyLinkUsage(id: string): Promise<void> {
-    await db
+  async incrementCourtesyLinkUsage(id: string, executor: Pick<typeof db, "update"> = db): Promise<void> {
+    await executor
       .update(courtesyLinks)
       .set({ 
         usedCount: sql`used_count + 1`,

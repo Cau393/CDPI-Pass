@@ -15,7 +15,8 @@ jobs:
     # app and writes/deletes rows, so it must never touch Neon.
     services:
       postgres:
-        image: postgres:16-alpine
+        # Public ECR mirror of the official image: Docker Hub rate-limits anonymous CI pulls.
+        image: public.ecr.aws/docker/library/postgres:16-alpine
         env:
           POSTGRES_PASSWORD: verify
           POSTGRES_DB: cdpi
