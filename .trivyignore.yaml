@@ -17,10 +17,3 @@ vulnerabilities:
   - id: CVE-2024-22363
     statement: xlsx 0.18.5 ReDoS when parsing a workbook. Not reachable, because the app only writes workbooks and never reads one. Fixed builds ship only from cdn.sheetjs.com.
     expired_at: 2026-12-31
-
-misconfigurations:
-  - id: DS-0002
-    paths:
-      - frontend/Dockerfile
-    statement: The image is never built for production (prod runs PM2 on EC2, see deploy.yml), and its ecosystem.config.cjs cwd does not exist in the container. Deleting the file is Security-Backlog #21.
-    expired_at: 2026-12-31
