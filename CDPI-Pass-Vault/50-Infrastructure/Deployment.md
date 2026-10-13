@@ -3,9 +3,7 @@
 Prod: **https://cdpipass.com.br** on an AWS EC2 instance.
 
 ## Build & runtime
-- `Dockerfile` (repo root `CDPI-Pass/`): multi-stage.
-  - Stage 1: `node:22-alpine`, `npm ci`, `npm run build` with `NODE_OPTIONS=--max-old-space-size=3072` (build is memory-hungry).
-  - Stage 2: `node:22-alpine` + global `pm2`, copies `dist/` + `node_modules`, `EXPOSE 5003`, `CMD pm2-runtime ecosystem.config.cjs`.
+- No Docker image. The old `frontend/Dockerfile` was never built for production and was deleted on 2026-10-13 (Security-Backlog #21). Production is a git checkout on EC2: `pnpm install --frozen-lockfile`, `pnpm run build`, PM2 (see `.github/workflows/deploy.yml`).
 - `npm run build` = `tsup` (server → `dist/index.js`, worker → `dist/run-email-worker.js`) + `vite build` (SPA → `dist/`).
 - Express serves the built SPA in production (single origin, no separate static host).
 
@@ -15,7 +13,7 @@ Prod: **https://cdpipass.com.br** on an AWS EC2 instance.
 | `cdpi-pass-server` | `./dist/index.js` | API + SPA + WebSocket, 1 instance, `max_memory_restart: 1G` |
 | `cdpi-pass-email-worker` | `./dist/run-email-worker.js` | Queue consumer, 1 instance |
 
-Both run `NODE_ENV=production`. Note: `ecosystem.config.js` (non-cjs) is a stale duplicate; the `.cjs` one is used by the Dockerfile.
+Both run `NODE_ENV=production`. Note: `ecosystem.config.js` (non-cjs) is a stale duplicate; the `.cjs` one is the PM2 config.
 
 ## Port
 App listens on **5003** (env `PORT`). Fronted by whatever proxy/ALB terminates TLS for cdpipass.com.br (`app.set('trust proxy', true)`).

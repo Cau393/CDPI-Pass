@@ -31,3 +31,8 @@ sequenceDiagram
 
 ## Related tables
 `print_jobs`, `event_print_settings` — see [[40-Database/Schema-Overview]].
+
+## Printing is off per event until someone turns it on
+`storage.getEventPrintSetting` returns `isEnabled: false` when the event has no `event_print_settings` row, so a check-in queues **no** label unless the admin switched on **"Impressão no credenciamento"** on the event's edit page (`PATCH /api/admin/events/:eventId/print-settings`). Check it before every in-person event.
+
+As of 2026-10-13 (prod aggregate read), the 2026-10-20 event had no row and `print_jobs` held 0 rows for any event, ever: printing had never queued a label in production. The owner's dry run (scan one test ticket, print one label) is what proves the scanner → `print_jobs` → terminal → Zebra path; see `70-Operations/Prompt-Dry-Run-Then-Fixes.md`.

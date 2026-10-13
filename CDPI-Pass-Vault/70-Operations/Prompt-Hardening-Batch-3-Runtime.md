@@ -15,7 +15,7 @@ Written 2026-10-13 ~15:00 BRT, at the end of batch-3 session 1 (code stage + CI 
   - `chore/security-batch-3` → PR #CI_PR (draft): CI `security` job, PR trigger, deploy only on push, SHA-pinned actions, `permissions: contents: read`, `.trivyignore.yaml`, vault backlog #18–#24, this prompt.
   - `fix/deps-batch-3`, stacked on it → PR #DEPS_PR (draft): drops the unused `next`, bumps proxy-addr 2.0.8, brace-expansion 2.1.7 and source-map-js 1.2.2, and prunes the baseline.
 - Gates on the deps head: tsc 0 / fe 389 (4 skip) / be 419 / integration 129 (4 skip) / local e2e 95 (9 skip). Sonnet reviewer pass done (see the PR bodies).
-- Code-stage result: no reachable HIGH/CRITICAL. Accepted until 2026-12-31: braces, drizzle-orm, xlsx x2, Dockerfile DS-0002.
+- Code-stage result: no reachable HIGH/CRITICAL. Accepted until 2026-12-31: drizzle-orm, xlsx x2 (braces and Dockerfile DS-0002 were closed by the pre-freeze deps PR).
 - Nothing deployed, no prod writes, no scans of prod or staging.
 
 ## Owner decisions already made (do not re-ask)
@@ -41,4 +41,4 @@ Same as [[70-Operations/Prompt-Hardening-Batch-3]]. PRs go into `hotfix-frontend
 - A go and a time for the prod passive scans.
 - Run Prowler read-only (never with the local root AWS key).
 - Tell the agent when Asaas enables foreign payers (`FOREIGN_PAID_CHECKOUT_ENABLED`).
-- Decide on backlog #21: delete `frontend/Dockerfile`?
+- Backlog #21 is done: `frontend/Dockerfile` was deleted in the pre-freeze deps PR.
