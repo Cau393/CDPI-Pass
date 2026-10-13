@@ -4,6 +4,10 @@ How to use it: open a new Claude Code session at `/Users/cauecasonato/Envs/CDPI-
 
 Written 2026-10-12 ~19:30 BRT, when the sandbox-run session reached its context budget. It replaces `Prompt-Hardening-Batch-1-Finish.md` (steps 1–3 of that file are done).
 
+**Attempt 1 (2026-10-12 23:01 → 2026-10-13 10:12 BRT): window missed, nothing deployed.** The session started at 23:01 and the local e2e rerun passed. Then the pre-flight `run_sql` sat at its permission prompt until 10:12 on 2026-10-13, which is a day with no deploys, so the session stopped before `gh pr ready` and the merge. Prod was not written. PR #15 is still a draft at `85956c6`.
+- **Lesson:** run `TZ=America/Sao_Paulo date` right before the merge and before A7, not only at session start. A permission prompt can hold a step for hours. Ask the owner to be at the keyboard for the whole window.
+- **Next window:** 2026-10-14 01:00–05:00 BRT, then 22h on any later day, or the owner's explicit go.
+
 ## Read first
 - Memory `project-cdpi-pass-hardening.md` (owner decisions, don't re-ask) and `feedback-sandbox-card-via-playwright.md`.
 - PR #15: https://github.com/Cau393/CDPI-Pass/pull/15. Its body has the sandbox table, the fixes and the known residuals.
@@ -32,15 +36,19 @@ Written 2026-10-12 ~19:30 BRT, when the sandbox-run session reached its context 
   - frontend: 382
   - backend: 406
   - integration: 122 (local Postgres + A7 index)
-  - Local e2e was **not** rerun after `a626294`. Rerun it (last: 95 passed / 9 skipped at `ae19b59`).
+  - Local e2e at `85956c6` (2026-10-12 23:04): 95 passed, 9 skipped (`FOREIGN_PAID_CHECKOUT_ENABLED=false`), 0 failed. Run with the throwaway Homebrew `postgresql@17` on :55434 (memory `project-cdpi-pass-local-integration-tests.md`), then `pnpm run test:e2e` in `frontend/`. Takes about 2 min.
+- Pre-flight on prod at 2026-10-13 10:12 BRT (aggregate only, **stale: rerun it**): 0 orders in 15 min, 0 pending in 60 min, 2 older pending orders, 3 events with all 3 legacy ids. The query is in the "Not done" list below.
 - Sandbox torn down: the webhook was deleted, local services stopped. The owner should stop ngrok.
 - Docs: Lessons-Learned "the Asaas stub agreed with our code, the real sandbox did not"; the backend rule line in the main checkout's `frontend/.claude/rules/backend.md` (gitignored) is extended.
 
 ## Not done
-1. Local e2e rerun (see the Batch-1 prompt for the command and the `FOREIGN_PAID_CHECKOUT_ENABLED=false` skips).
-2. Mark PR #15 ready (`gh pr ready 15`).
+1. ~~Local e2e rerun~~: done, see above. Rerun it only if `origin/hotfix-frontend-update` moved past `a4543f8`.
+2. Mark PR #15 ready (`gh pr ready 15`). Do this only inside the deploy window, so the PR can't be merged on a day with no deploys.
+   - Pre-flight query (Neon `br-lucky-rice-acakvihn`, db `neondb`, aggregate only; DB time is UTC):
+     `SELECT now(), count(*) FILTER (WHERE created_at > now() - interval '15 minutes') AS orders_15m, count(*) FILTER (WHERE status='pending' AND created_at > now() - interval '60 minutes') AS pending_60m, (SELECT count(*) FROM events e WHERE e.registration_form @> '[{"id":"legacy-occupation"}]' AND e.registration_form @> '[{"id":"legacy-partner-company"}]' AND e.registration_form @> '[{"id":"legacy-area-of-activity"}]') AS events_3_legacy FROM orders`
+   - Check the BRT clock again after it returns.
 3. **Deploy**, which is the merge into `hotfix-frontend-update`.
-   - Windows: **never on 2026-10-13** (the whole day). So either 2026-10-12 22:00–23:59 BRT, 2026-10-14 01–05h, 22h on any later day, or the owner's explicit go.
+   - Windows: **never on 2026-10-13** (the whole day). The 2026-10-12 22:00–23:59 window was missed (see Attempt 1). Left: 2026-10-14 01–05h BRT, 22h on any later day, or the owner's explicit go. CI takes about 3.5 min. Merge at least 10 min before a window closes.
    - Pre-flight, aggregate reads only: fewer than 3 prod orders in 15 min, 0 pending in 60 min, the 3 legacy ids present.
    - Then `gh run watch`. CI pulls Postgres from public.ecr.aws, which is the first real test of E3.
    - Then `prod-smoke.mjs`.
