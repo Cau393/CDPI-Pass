@@ -111,7 +111,8 @@ import { qrCodeService } from "./services/qrCodeService";
 import { s3Service } from "./services/s3Service";
 import { invokeGenerateCertificatePdf } from "./services/certificateLambdaService";
 import { requireEmailVerification } from "./middleware/auth"; 
-import { authRateLimitMax } from "./utils/authRateLimitMax";
+import { authRateLimitMax, lookupEmailRateLimitMax } from "./utils/authRateLimitMax";
+import { maskEmail } from "./utils/maskEmail";
 import { getJwtSecret } from "./utils/requiredSecret";
 import multer from 'multer';
 import csv from 'csv-parser';
@@ -215,6 +216,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.use('/api/auth', authLimiter);
+
+  // Document -> masked e-mail is an enumeration surface: stricter limit than /api/auth, same
+  // per-real-IP key. Registered before the route so it runs after authLimiter and before the handler.
+  const lookupEmailLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: lookupEmailRateLimitMax(),
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: 'Muitas tentativas. Tente novamente em 15 minutos.' },
+  });
   
   // Auth routes
   app.post("/api/auth/register", async (req, res) => {
@@ -401,6 +412,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
         console.error("Forgot password error:", error);
         res.status(500).json({ message: "Erro interno do servidor" });
+    }
+  });
+
+  // "Esqueci meu e-mail": the only thing that leaves here is a masked e-mail. Never name, id,
+  // phone or the full address. No e-mail is sent.
+  app.post("/api/auth/lookup-email", lookupEmailLimiter, async (req, res) => {
+    try {
+      const body = req.body ?? {};
+      const isForeigner = body.isForeigner;
+      if (isForeigner !== undefined && typeof isForeigner !== "boolean") {
+        return res.status(400).json({ message: "Documento inválido" });
+      }
+      const foreign = isForeigner === true;
+      // Each side takes only its own document, as on the signup/inscription forms.
+      if (foreign ? body.cpf : body.foreignDocument) {
+        return res.status(400).json({ message: "Documento inválido" });
+      }
+      const raw = foreign ? body.foreignDocument : body.cpf;
+      if (typeof raw !== "string" || raw.length > 64) {
+        return res.status(400).json({ message: "Documento inválido" });
+      }
+      const identity = resolveRegisterIdentity(
+        foreign ? { isForeigner: true, foreignDocument: raw } : { isForeigner: false, cpf: raw },
+      );
+      if (!identity.ok) {
+        return res.status(400).json({ message: identity.message });
+      }
+      const user = identity.isForeigner
+        ? await storage.getUserByForeignDocument(identity.foreignDocument!)
+        : await storage.getUserByCpf(identity.cpf!);
+      if (!user) return res.status(200).json({ found: false });
+      res.status(200).json({ found: true, maskedEmail: maskEmail(user.email) });
+    } catch (error) {
+      console.error("Lookup email error:", error);
+      res.status(500).json({ message: "Erro interno do servidor" });
     }
   });
 

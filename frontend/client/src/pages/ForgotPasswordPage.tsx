@@ -48,6 +48,12 @@ export default function ForgotPasswordPage() {
               {mutation.isPending ? "Enviando..." : "Enviar Link de Redefinição"}
             </Button>
           </form>
+          <p className="mt-4 text-sm text-gray-600">
+            Não lembra o e-mail?{" "}
+            <a href="/forgot-email" className="text-primary hover:text-secondary">
+              Esqueci meu e-mail
+            </a>
+          </p>
         </CardContent>
       </Card>
     </div>

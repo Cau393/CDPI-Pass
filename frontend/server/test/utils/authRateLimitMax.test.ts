@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { authRateLimitMax } from "../../utils/authRateLimitMax";
+import { authRateLimitMax, lookupEmailRateLimitMax } from "../../utils/authRateLimitMax";
 
 describe("authRateLimitMax (#15)", () => {
   it("is 100 by default", () => {
@@ -17,5 +17,20 @@ describe("authRateLimitMax (#15)", () => {
   it("ignores a value that is not a positive integer", () => {
     expect(authRateLimitMax({ NODE_ENV: "development", AUTH_RATE_LIMIT_MAX: "lots" })).toBe(100);
     expect(authRateLimitMax({ NODE_ENV: "development", AUTH_RATE_LIMIT_MAX: "0" })).toBe(100);
+  });
+});
+
+describe("lookupEmailRateLimitMax", () => {
+  it("is 10 by default", () => {
+    expect(lookupEmailRateLimitMax({ NODE_ENV: "development" })).toBe(10);
+  });
+
+  it("takes the test override outside production", () => {
+    expect(lookupEmailRateLimitMax({ NODE_ENV: "test", LOOKUP_EMAIL_RATE_LIMIT_MAX: "500" })).toBe(500);
+  });
+
+  it("ignores the override in production and invalid values", () => {
+    expect(lookupEmailRateLimitMax({ NODE_ENV: "production", LOOKUP_EMAIL_RATE_LIMIT_MAX: "500" })).toBe(10);
+    expect(lookupEmailRateLimitMax({ NODE_ENV: "test", LOOKUP_EMAIL_RATE_LIMIT_MAX: "0" })).toBe(10);
   });
 });
