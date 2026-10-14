@@ -4,6 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { apiRequest } from "@/lib/queryClient";
+import { parseApiErrorMessage } from "@/lib/eventForm";
 import { useToast } from "@/hooks/use-toast";
 import { DocumentFields } from "@/components/DocumentFields";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,7 +45,11 @@ export default function ForgotEmailPage() {
       setResult(data);
     },
     onError: (error: Error) => {
-      toast({ title: "Erro", description: error.message, variant: "destructive" });
+      // authLimiter answers 429 in plain English text; the route's own limiter in JSON.
+      const description = error.message.startsWith("429:")
+        ? "Muitas tentativas. Tente novamente em 15 minutos."
+        : parseApiErrorMessage(error);
+      toast({ title: "Erro", description, variant: "destructive" });
     },
   });
 

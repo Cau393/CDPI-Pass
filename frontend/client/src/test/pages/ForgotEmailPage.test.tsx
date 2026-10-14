@@ -8,8 +8,9 @@ vi.mock("@/lib/queryClient", () => ({
   apiRequest: (...args: unknown[]) => apiRequest(...args),
 }));
 
+const toast = vi.fn();
 vi.mock("../../hooks/use-toast", () => ({
-  useToast: () => ({ toast: vi.fn() }),
+  useToast: () => ({ toast }),
 }));
 
 import ForgotEmailPage from "../../pages/ForgotEmailPage";
@@ -30,7 +31,10 @@ function respond(body: unknown) {
 }
 
 describe("ForgotEmailPage", () => {
-  beforeEach(() => apiRequest.mockReset());
+  beforeEach(() => {
+    apiRequest.mockReset();
+    toast.mockReset();
+  });
 
   it("masks the CPF input and looks the account up", async () => {
     respond({ found: true, maskedEmail: "re•••••@ep•••.com.br" });
@@ -93,6 +97,34 @@ describe("ForgotEmailPage", () => {
 });
 
 describe("links to Esqueci meu e-mail", () => {
+  it("shows the server's message, not the raw response, on a 400", async () => {
+    apiRequest.mockRejectedValue(new Error('400: {"message":"CPF inválido"}'));
+    const user = userEvent.setup();
+    renderWith(<ForgotEmailPage />);
+
+    await user.type(screen.getByLabelText("CPF"), "52998224725");
+    await user.click(screen.getByRole("button", { name: "Buscar e-mail" }));
+
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(expect.objectContaining({ description: "CPF inválido" })),
+    );
+  });
+
+  it("explains the rate limit in Portuguese on a 429", async () => {
+    apiRequest.mockRejectedValue(new Error("429: Too many requests from this IP, please try again after 15 minutes"));
+    const user = userEvent.setup();
+    renderWith(<ForgotEmailPage />);
+
+    await user.type(screen.getByLabelText("CPF"), "52998224725");
+    await user.click(screen.getByRole("button", { name: "Buscar e-mail" }));
+
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({ description: "Muitas tentativas. Tente novamente em 15 minutos." }),
+      ),
+    );
+  });
+
   it("is on the login page", () => {
     renderWith(<LoginPage />);
     expect(screen.getByRole("link", { name: "Esqueci meu e-mail" })).toHaveAttribute("href", "/forgot-email");
