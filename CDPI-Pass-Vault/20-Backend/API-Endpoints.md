@@ -12,6 +12,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 | GET | `/api/auth/me` | 🔑 | Current user profile. Every user response (this, `PUT /api/profile`, `PUT /api/profile/identity`) goes through `toPublicUser` (`server/utils/publicUser.ts`): no `password`, `emailVerificationCode` or `emailVerificationCodeExpiresAt` |
 | GET | `/api/auth/verify-email` | 🔓 | Legacy link-based email verification |
 | POST | `/api/auth/forgot-password` | 🔓 | Send reset email |
+| POST | `/api/auth/lookup-email` | 🔓 | "Esqueci meu e-mail". Body `{ isForeigner?: boolean, cpf?: string }` or `{ isForeigner: true, foreignDocument: string }`, parsed by `resolveRegisterIdentity` (CPF checksum, passport normalized). Always `200 { found: true, maskedEmail }` or `200 { found: false }`; `400` for a malformed/mixed document. `maskedEmail` comes from `maskEmail` (`re•••••@ep•••.com.br`: 2 chars of the local part, fixed-length mask, 2 chars of the first domain label). Nothing else is returned (no name, id, phone, full e-mail) and no e-mail is sent. Brazilian accounts with a null CPF (ADR-016) match nothing. Own limit of 10 requests / 15 min per real IP (`lookupEmailRateLimitMax`, test-only override `LOOKUP_EMAIL_RATE_LIMIT_MAX`) on top of the `/api/auth` limiter, because it is an enumeration surface |
 | POST | `/api/auth/reset-password` | 🔓 | Reset with token |
 | POST | `/api/auth/resend-verification` | 🔑 | Resend verification for logged user |
 | POST | `/api/admin/generate-reset-link` | 👑 | Admin generates password reset link for a user |
