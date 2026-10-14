@@ -126,9 +126,14 @@ export default function LoginPage() {
                   Lembrar de mim
                 </Label>
               </div>
-              <a href="/forgot-password" className="text-sm text-primary hover:text-secondary">
-                Esqueceu a senha?
-              </a>
+              <div className="flex flex-col items-end gap-1">
+                <a href="/forgot-password" className="text-sm text-primary hover:text-secondary">
+                  Esqueceu a senha?
+                </a>
+                <a href="/forgot-email" className="text-sm text-primary hover:text-secondary">
+                  Esqueci meu e-mail
+                </a>
+              </div>
             </div>
 
             <Button
