@@ -20,10 +20,10 @@ const NAME_TO_COMPANY_GAP = 12;
 const FIT_WIDTH_DOTS = 600;
 /**
  * Conservative ^A0 advance per character as a fraction of the font width. Measured ~0.46
- * for mixed-case names; upper-case (company) runs wider. Over-estimating keeps each field
+ * for mixed-case and ~0.53 for upper-case text (names are often typed in caps). Over-estimating keeps each field
  * on one line: a ^FB that wraps prints its second line on top of the company line.
  */
-const NAME_CHAR_WIDTH_RATIO = 0.52;
+const NAME_CHAR_WIDTH_RATIO = 0.58;
 const COMPANY_CHAR_WIDTH_RATIO = 0.62;
 /** Smallest font a long field shrinks to; text beyond what fits at this size is cut. */
 const MIN_FONT_DOTS = 30;
@@ -70,7 +70,9 @@ function fitField(
   const share = lines === 1 ? 1 : TWO_LINE_SHARE;
   const maxChars = Math.floor(FIT_WIDTH_DOTS / (MIN_FONT_DOTS * charWidthRatio) / share);
   const text = raw.slice(0, maxChars);
-  const lineChars = Math.max(1, Math.ceil(text.length * share));
+  // A word never breaks across lines, so the longest word bounds a two-line fit too.
+  const longestWord = Math.max(0, ...text.split(/\s+/).map((w) => w.length));
+  const lineChars = Math.max(1, Math.ceil(text.length * share), lines === 1 ? 0 : longestWord);
   const fit = Math.floor(FIT_WIDTH_DOTS / (lineChars * charWidthRatio));
   return {
     safe: escapeZplFieldData(text),

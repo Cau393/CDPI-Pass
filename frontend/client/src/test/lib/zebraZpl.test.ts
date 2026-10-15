@@ -70,5 +70,13 @@ describe("buildNameLabelZpl", () => {
     expect(compY).toBeGreaterThanOrEqual(nameY + nameH);
     expect(compY + 2 * compH + gap).toBeLessThanOrEqual(360);
   });
+
+  it("sizes a two-line company by its longest word so it cannot spill to a third line", () => {
+    const word = "A".repeat(28);
+    const t = new TextDecoder().decode(buildNameLabelZpl("Ana Lima", `A ${word}`));
+    const comp = t.match(/\^FB640,2,\d+,C,0\^A0N,(\d+),\d+\^FDA A+\^FS/);
+    expect(comp).not.toBeNull();
+    expect(28 * Number(comp![1]) * 0.62).toBeLessThanOrEqual(600);
+  });
 });
 

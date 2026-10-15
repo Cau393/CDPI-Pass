@@ -70,6 +70,8 @@ const wsInstances: {
   url: string;
 }[] = [];
 
+const mockSockets: MockWebSocket[] = [];
+
 class MockWebSocket {
   static OPEN = 1;
   static CONNECTING = 0;
@@ -83,6 +85,7 @@ class MockWebSocket {
   onerror: (() => void) | null = null;
   constructor(url: string) {
     this.url = url;
+    mockSockets.push(this);
     const self = this;
     wsInstances.push({
       url,
@@ -128,6 +131,7 @@ describe("AdminPrintTerminalPage", () => {
     vi.clearAllMocks();
     localStorage.setItem("token", "t");
     wsInstances.length = 0;
+    mockSockets.length = 0;
     (globalThis as { WebSocket?: unknown }).WebSocket = MockWebSocket as unknown as typeof WebSocket;
     (navigator as { usb?: USB }).usb = {
       requestDevice,
@@ -222,6 +226,32 @@ describe("AdminPrintTerminalPage", () => {
     wsInstances[0].close(4001);
     await new Promise((r) => setTimeout(r, 1500));
     expect(wsInstances.length).toBe(1);
+  });
+
+  it("re-acks a requeued job it already printed instead of printing it twice", async () => {
+    const sendSpy = vi.spyOn(MockWebSocket.prototype, "send");
+    renderPage();
+    fireEvent.click(screen.getByTestId("select-event"));
+    await waitFor(() => expect(mockSockets.length).toBe(1));
+    fireEvent.click(screen.getByRole("button", { name: /conectar impressora/i }));
+    await waitFor(() => expect(webUsbZebra.connectZebraZD220Like).toHaveBeenCalled());
+    const job = JSON.stringify({
+      type: "print_job",
+      job_id: "job-1",
+      ticket_id: "o1",
+      display_name: "Ana Lima",
+    });
+    const successAcks = () =>
+      sendSpy.mock.calls.filter((c) => {
+        const m = JSON.parse(String(c[0])) as { type?: string; job_id?: string; status?: string };
+        return m.type === "print_ack" && m.job_id === "job-1" && m.status === "SUCCESS";
+      }).length;
+    mockSockets[0].onmessage?.({ data: job } as MessageEvent);
+    await waitFor(() => expect(successAcks()).toBe(1));
+    // Ack lost on a dropped socket: the server requeues and sends the same job again.
+    mockSockets[0].onmessage?.({ data: job } as MessageEvent);
+    await waitFor(() => expect(successAcks()).toBe(2));
+    expect(transferOut).toHaveBeenCalledTimes(1);
   });
 
   it("sends printer_ready on WebSocket only after USB session exists", async () => {

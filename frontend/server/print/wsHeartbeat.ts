@@ -28,7 +28,11 @@ export function startWsHeartbeat(
         continue;
       }
       alive.delete(ws);
-      ws.ping();
+      try {
+        ws.ping();
+      } catch {
+        ws.terminate();
+      }
     }
   }, intervalMs);
   timer.unref();

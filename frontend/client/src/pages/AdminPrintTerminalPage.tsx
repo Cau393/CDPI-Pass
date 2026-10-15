@@ -60,6 +60,8 @@ type PrintTab = "fila" | "manual";
 /** Reconnect backoff for the print WebSocket: 1s doubling up to 10s, forever. */
 const WS_RETRY_MIN_MS = 1000;
 const WS_RETRY_MAX_MS = 10_000;
+/** A socket open at least this long counts as healthy and resets the backoff. */
+const WS_STABLE_MS = 5000;
 /** Server close codes for a missing/invalid token or a non-admin user: retrying cannot help. */
 const WS_AUTH_CLOSE_CODES = new Set([4000, 4001, 4002]);
 
@@ -78,6 +80,8 @@ export default function AdminPrintTerminalPage() {
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const eventIdRef = useRef<string | null>(null);
+  /** Jobs already printed here: a requeued job whose ack was lost is re-acked, not reprinted. */
+  const printedJobIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     usbSessionRef.current = usbSession;
@@ -155,35 +159,40 @@ export default function AdminPrintTerminalPage() {
       )}&eventId=${encodeURIComponent(eventId)}`;
       const ws = new WebSocket(url);
       wsRef.current = ws;
+      let openedAt = 0;
       ws.onopen = () => {
-        retryDelay = WS_RETRY_MIN_MS;
+        openedAt = Date.now();
         setWsConnected(true);
         if (usbSessionRef.current) {
           sendPrinterReady();
         }
       };
       ws.onclose = (ev) => {
-        setWsConnected(false);
-        if (wsRef.current === ws) {
-          wsRef.current = null;
-        }
-        if (disposed) {
+        // A socket closed by cleanup (event change, unmount) must not touch the new one's state.
+        if (disposed || wsRef.current !== ws) {
           return;
         }
+        wsRef.current = null;
+        setWsConnected(false);
         if (WS_AUTH_CLOSE_CODES.has(ev?.code)) {
           toastRef.current({
-            title: "Sessão expirada",
+            title: "Sessão expirada ou sem acesso",
             description:
-              "Faça login novamente para reconectar o terminal de impressão.",
+              "Faça login novamente como administrador para reconectar o terminal de impressão.",
             variant: "destructive",
           });
           return;
+        }
+        if (openedAt && Date.now() - openedAt >= WS_STABLE_MS) {
+          retryDelay = WS_RETRY_MIN_MS;
         }
         retryTimer = setTimeout(connect, retryDelay);
         retryDelay = Math.min(retryDelay * 2, WS_RETRY_MAX_MS);
       };
       ws.onerror = () => {
-        setWsConnected(false);
+        if (wsRef.current === ws) {
+          setWsConnected(false);
+        }
       };
       ws.onmessage = (ev) => {
         void (async () => {
@@ -236,6 +245,16 @@ export default function AdminPrintTerminalPage() {
             if (!wsCur || wsCur.readyState !== WebSocket.OPEN) {
               return;
             }
+            if (printedJobIdsRef.current.has(job.job_id)) {
+              wsCur.send(
+                JSON.stringify({
+                  type: "print_ack",
+                  job_id: job.job_id,
+                  status: "SUCCESS",
+                }),
+              );
+              return;
+            }
             const session = usbSessionRef.current;
             if (!session) {
               wsCur.send(
@@ -255,6 +274,7 @@ export default function AdminPrintTerminalPage() {
                 name: job.display_name,
                 company: job.company_line,
               });
+              printedJobIdsRef.current.add(job.job_id);
               wsCur.send(
                 JSON.stringify({
                   type: "print_ack",
