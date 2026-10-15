@@ -5,6 +5,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import type { PrintJob } from "@shared/schema";
 import { storage } from "../storage";
 import { getJwtSecret } from "../utils/requiredSecret";
+import { startWsHeartbeat } from "./wsHeartbeat";
 
 const JWT_SECRET = getJwtSecret();
 
@@ -206,6 +207,7 @@ async function handleMessage(c: Client, raw: string) {
 
 export function initPrintWebSocket(httpServer: Server) {
   const wss = new WebSocketServer({ noServer: true });
+  startWsHeartbeat(wss);
 
   httpServer.on("upgrade", (request, socket, head) => {
     const host = request.headers.host ?? "localhost";

@@ -32,4 +32,43 @@ describe("buildNameLabelZpl", () => {
     expect(t).toMatch(/\^FO0,99\^/);
     expect(t).toMatch(/\^FO0,215\^/);
   });
+
+  it("shrinks a long name so it stays on one line above the company", () => {
+    // "Mariana Albuquerque" wrapped to two lines at 100 dots and overprinted the company.
+    const t = new TextDecoder().decode(
+      buildNameLabelZpl("Mariana Albuquerque", "FARMACIA MODELO LTDA"),
+    );
+    const name = t.match(/\^FO0,(\d+)\^FB640,(\d+),\d+,C,0\^A0N,(\d+),(\d+)\^FDMariana Albuquerque/);
+    const company = t.match(/\^FO0,(\d+)\^FB640,(\d+),\d+,C,0\^A0N,(\d+),\d+\^FDFARMACIA MODELO LTDA/);
+    expect(name).not.toBeNull();
+    expect(company).not.toBeNull();
+    const [, nameY, nameLines, nameH] = name!.map(Number);
+    const [, companyY, companyLines, companyH] = company!.map(Number);
+    expect(nameLines).toBe(1);
+    expect(companyLines).toBe(1);
+    expect(nameH).toBeLessThan(100);
+    expect(companyY).toBeGreaterThanOrEqual(nameY + nameH);
+    expect(companyY + companyH).toBeLessThanOrEqual(360);
+  });
+
+  it("shrinks a long name-only label to one line", () => {
+    const t = new TextDecoder().decode(buildNameLabelZpl("Maximiliano Albuquerque"));
+    expect(t).toMatch(/\^FB640,1,\d+,C,0\^A0N,(\d+),\1\^FDMaximiliano Albuquerque/);
+    expect(t).not.toMatch(/\^A0N,110,110/);
+  });
+
+  it("wraps a long company to two lines instead of cutting it, below the name", () => {
+    const company = "LABORATÓRIO BIOLÓGICO E SINTÉTICO DE MANIPULAÇÃO SA";
+    const t = new TextDecoder().decode(buildNameLabelZpl("Maria Bittencourt", company));
+    const name = t.match(/\^FO0,(\d+)\^FB640,1,\d+,C,0\^A0N,(\d+),\d+\^FDMaria/);
+    const comp = t.match(/\^FO0,(\d+)\^FB640,2,(\d+),C,0\^A0N,(\d+),\d+\^FD([^\^]+)\^FS/);
+    expect(name).not.toBeNull();
+    expect(comp).not.toBeNull();
+    const [nameY, nameH] = [Number(name![1]), Number(name![2])];
+    const [compY, gap, compH] = [Number(comp![1]), Number(comp![2]), Number(comp![3])];
+    expect(comp![4]).toBe(company);
+    expect(compY).toBeGreaterThanOrEqual(nameY + nameH);
+    expect(compY + 2 * compH + gap).toBeLessThanOrEqual(360);
+  });
 });
+

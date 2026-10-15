@@ -64,7 +64,11 @@ vi.mock("@/lib/queryClient", async (importOriginal) => {
   };
 });
 
-const wsInstances: { send: (s: string) => void; close: () => void; url: string }[] = [];
+const wsInstances: {
+  send: (s: string) => void;
+  close: (code?: number) => void;
+  url: string;
+}[] = [];
 
 class MockWebSocket {
   static OPEN = 1;
@@ -75,7 +79,7 @@ class MockWebSocket {
   readyState = MockWebSocket.OPEN;
   onopen: (() => void) | null = null;
   onmessage: ((ev: MessageEvent) => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((ev: CloseEvent) => void) | null = null;
   onerror: (() => void) | null = null;
   constructor(url: string) {
     this.url = url;
@@ -86,9 +90,10 @@ class MockWebSocket {
         // no-op: tests can inspect via spy if needed
         void s;
       },
-      close() {
+      // Simulates the server (or a proxy) closing the socket.
+      close(code = 1006) {
         self.readyState = MockWebSocket.CLOSED;
-        self.onclose?.();
+        self.onclose?.({ code } as CloseEvent);
       },
     });
     queueMicrotask(() => {
@@ -100,7 +105,7 @@ class MockWebSocket {
   }
   close() {
     this.readyState = MockWebSocket.CLOSED;
-    this.onclose?.();
+    this.onclose?.({ code: 1000 } as CloseEvent);
   }
 }
 
@@ -199,6 +204,24 @@ describe("AdminPrintTerminalPage", () => {
     await waitFor(() => {
       expect(requestDevice).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("reconnects the WebSocket after the server or a proxy drops it", async () => {
+    renderPage();
+    fireEvent.click(screen.getByTestId("select-event"));
+    await waitFor(() => expect(wsInstances.length).toBe(1));
+    wsInstances[0].close(1006);
+    await waitFor(() => expect(wsInstances.length).toBe(2), { timeout: 3000 });
+    expect(wsInstances[1].url).toContain("/api/ws/print");
+  });
+
+  it("does not reconnect when the server rejects the login (4001)", async () => {
+    renderPage();
+    fireEvent.click(screen.getByTestId("select-event"));
+    await waitFor(() => expect(wsInstances.length).toBe(1));
+    wsInstances[0].close(4001);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(wsInstances.length).toBe(1);
   });
 
   it("sends printer_ready on WebSocket only after USB session exists", async () => {

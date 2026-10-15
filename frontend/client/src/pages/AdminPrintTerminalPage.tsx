@@ -57,6 +57,12 @@ type WsServerMsg =
 
 type PrintTab = "fila" | "manual";
 
+/** Reconnect backoff for the print WebSocket: 1s doubling up to 10s, forever. */
+const WS_RETRY_MIN_MS = 1000;
+const WS_RETRY_MAX_MS = 10_000;
+/** Server close codes for a missing/invalid token or a non-admin user: retrying cannot help. */
+const WS_AUTH_CLOSE_CODES = new Set([4000, 4001, 4002]);
+
 
 export default function AdminPrintTerminalPage() {
   const { toast } = useToast();
@@ -132,137 +138,163 @@ export default function AdminPrintTerminalPage() {
       return;
     }
     const eventId = selectedEvent.id;
-    const token = localStorage.getItem("token");
-    if (!token) {
-      return;
-    }
-    const proto = globalThis.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${proto}//${globalThis.location.host}/api/ws/print?token=${encodeURIComponent(
-      token,
-    )}&eventId=${encodeURIComponent(eventId)}`;
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
-    ws.onopen = () => {
-      setWsConnected(true);
-      if (usbSessionRef.current) {
-        sendPrinterReady();
+    let disposed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let retryDelay = WS_RETRY_MIN_MS;
+
+    // Reconnects forever on any drop (deploy restart, proxy/NAT idle cutoff, network blip);
+    // the server re-dispatches a requeued job once printer_ready arrives on the new socket.
+    const connect = () => {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        return;
       }
-    };
-    ws.onclose = () => {
-      setWsConnected(false);
-      if (wsRef.current === ws) {
-        wsRef.current = null;
-      }
-    };
-    ws.onerror = () => {
-      setWsConnected(false);
-    };
-    ws.onmessage = (ev) => {
-      void (async () => {
-        let data: WsServerMsg | Record<string, unknown>;
-        try {
-          data = JSON.parse(ev.data as string) as WsServerMsg;
-        } catch {
+      const proto = globalThis.location.protocol === "https:" ? "wss:" : "ws:";
+      const url = `${proto}//${globalThis.location.host}/api/ws/print?token=${encodeURIComponent(
+        token,
+      )}&eventId=${encodeURIComponent(eventId)}`;
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
+      ws.onopen = () => {
+        retryDelay = WS_RETRY_MIN_MS;
+        setWsConnected(true);
+        if (usbSessionRef.current) {
+          sendPrinterReady();
+        }
+      };
+      ws.onclose = (ev) => {
+        setWsConnected(false);
+        if (wsRef.current === ws) {
+          wsRef.current = null;
+        }
+        if (disposed) {
           return;
         }
-        if (
-          typeof data === "object" &&
-          data &&
-          "type" in data &&
-          data.type === "print_queue_notify"
-        ) {
-          await refetchHistoryRef.current();
-          return;
-        }
-        if (
-          typeof data === "object" &&
-          data &&
-          "type" in data &&
-          data.type === "print_dead_letter" &&
-          "message" in data
-        ) {
+        if (WS_AUTH_CLOSE_CODES.has(ev?.code)) {
           toastRef.current({
-            title: "Falha na impressão",
-            description: String(
-              (data as { message?: string }).message ?? "",
-            ),
+            title: "Sessão expirada",
+            description:
+              "Faça login novamente para reconectar o terminal de impressão.",
             variant: "destructive",
           });
-          await refetchHistoryRef.current();
           return;
         }
-        if (
-          typeof data === "object" &&
-          data &&
-          "type" in data &&
-          data.type === "print_job" &&
-          "job_id" in data &&
-          "display_name" in data
-        ) {
-          const job = data as {
-            job_id: string;
-            display_name: string;
-            company_line?: string;
-          };
-          const wsCur = wsRef.current;
-          if (!wsCur || wsCur.readyState !== WebSocket.OPEN) {
-            return;
-          }
-          const session = usbSessionRef.current;
-          if (!session) {
-            wsCur.send(
-              JSON.stringify({
-                type: "print_ack",
-                job_id: job.job_id,
-                status: "FAILED",
-                error_code: "USB_DISCONNECTED",
-                message:
-                  "A impressora Zebra foi desconectada. Verifique o cabo USB.",
-              }),
-            );
-            return;
-          }
+        retryTimer = setTimeout(connect, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, WS_RETRY_MAX_MS);
+      };
+      ws.onerror = () => {
+        setWsConnected(false);
+      };
+      ws.onmessage = (ev) => {
+        void (async () => {
+          let data: WsServerMsg | Record<string, unknown>;
           try {
-            await printBadgeLabel(session, {
-              name: job.display_name,
-              company: job.company_line,
-            });
-            wsCur.send(
-              JSON.stringify({
-                type: "print_ack",
-                job_id: job.job_id,
-                status: "SUCCESS",
-              }),
-            );
-          } catch (e) {
-            wsCur.send(
-              JSON.stringify({
-                type: "print_ack",
-                job_id: job.job_id,
-                status: "FAILED",
-                error_code: "TRANSFER_ERROR",
-                message: e instanceof Error ? e.message : "Erro no envio USB",
-              }),
-            );
+            data = JSON.parse(ev.data as string) as WsServerMsg;
+          } catch {
+            return;
           }
-          await refetchHistoryRef.current();
-          const eid = eventIdRef.current;
-          if (eid) {
-            await queryClientRef.current.invalidateQueries({
-              queryKey: ["/api/admin/events", eid, "print-history"],
-            });
+          if (
+            typeof data === "object" &&
+            data &&
+            "type" in data &&
+            data.type === "print_queue_notify"
+          ) {
+            await refetchHistoryRef.current();
+            return;
           }
-        }
-      })();
+          if (
+            typeof data === "object" &&
+            data &&
+            "type" in data &&
+            data.type === "print_dead_letter" &&
+            "message" in data
+          ) {
+            toastRef.current({
+              title: "Falha na impressão",
+              description: String(
+                (data as { message?: string }).message ?? "",
+              ),
+              variant: "destructive",
+            });
+            await refetchHistoryRef.current();
+            return;
+          }
+          if (
+            typeof data === "object" &&
+            data &&
+            "type" in data &&
+            data.type === "print_job" &&
+            "job_id" in data &&
+            "display_name" in data
+          ) {
+            const job = data as {
+              job_id: string;
+              display_name: string;
+              company_line?: string;
+            };
+            const wsCur = wsRef.current;
+            if (!wsCur || wsCur.readyState !== WebSocket.OPEN) {
+              return;
+            }
+            const session = usbSessionRef.current;
+            if (!session) {
+              wsCur.send(
+                JSON.stringify({
+                  type: "print_ack",
+                  job_id: job.job_id,
+                  status: "FAILED",
+                  error_code: "USB_DISCONNECTED",
+                  message:
+                    "A impressora Zebra foi desconectada. Verifique o cabo USB.",
+                }),
+              );
+              return;
+            }
+            try {
+              await printBadgeLabel(session, {
+                name: job.display_name,
+                company: job.company_line,
+              });
+              wsCur.send(
+                JSON.stringify({
+                  type: "print_ack",
+                  job_id: job.job_id,
+                  status: "SUCCESS",
+                }),
+              );
+            } catch (e) {
+              wsCur.send(
+                JSON.stringify({
+                  type: "print_ack",
+                  job_id: job.job_id,
+                  status: "FAILED",
+                  error_code: "TRANSFER_ERROR",
+                  message: e instanceof Error ? e.message : "Erro no envio USB",
+                }),
+              );
+            }
+            await refetchHistoryRef.current();
+            const eid = eventIdRef.current;
+            if (eid) {
+              await queryClientRef.current.invalidateQueries({
+                queryKey: ["/api/admin/events", eid, "print-history"],
+              });
+            }
+          }
+        })();
+      };
     };
+    connect();
+
     return () => {
+      disposed = true;
+      clearTimeout(retryTimer);
+      const ws = wsRef.current;
+      wsRef.current = null;
       try {
-        ws.close();
+        ws?.close();
       } catch {
         // ignore
-      }
-      if (wsRef.current === ws) {
-        wsRef.current = null;
       }
       setWsConnected(false);
     };

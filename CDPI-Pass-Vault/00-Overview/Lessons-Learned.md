@@ -204,3 +204,11 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
   - **Prevention:** after any change to `pnpm-workspace.yaml` policies, run `pnpm install --frozen-lockfile` locally and see "Lockfile passes" before pushing.
 - **A range blocks the patched version:** `qs` 6.16.0 is outside express 4.22.2's `~6.15.1`. Bumping express alone still left body-parser 1.20.6 on `qs` 6.15.3, which is the copy that parses request bodies. Check every parent in `pnpm why` after a bump, not just the first one.
 - **Printing is off per event:** without an `event_print_settings` row, a check-in queues no label. Prod had never queued a print job as of 2026-10-13. See [[20-Backend/Print-Coordinator]]. Check the toggle before every in-person event.
+
+## 2026-10-15 — print dry run: Windows driver, wrapped names, idle WebSocket
+
+- **Windows:** "Não foi possível conectar" after picking the Zebra = WebUSB `open()` denied by the Windows printer driver. Fixed on the PC with Zadig → WinUSB, no code change. See [[20-Backend/Print-Coordinator]].
+- **Name over company:** both flows used the same template; a long "First Last" wrapped to a second line that the company layout did not reserve. The manual test only looked right because its name was short. Fix: one-line fitted fonts, company placed under the real name height, company upper-cased.
+- **WebSocket dropped after ~30–60 s idle** and never came back: no heartbeat, no reconnect. Fix: server ping every 20 s + client reconnect with backoff.
+- **Prevention:** test label layout with the longest realistic names (render the ZPL), not one short sample; every long-lived WebSocket needs a heartbeat under the proxy idle timeout and a client reconnect loop.
+

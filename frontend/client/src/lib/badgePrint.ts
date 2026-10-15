@@ -15,6 +15,12 @@ export function formatBadgeDisplayName(name: string): string {
   return `${first} ${last}`;
 }
 
+/** Badge line 2: company in upper case (pt-BR, keeps accents); null when blank. */
+export function formatBadgeCompanyLine(company?: string | null): string | null {
+  const t = company?.trim();
+  return t ? t.toLocaleUpperCase("pt-BR") : null;
+}
+
 /**
  * ZPL to USB: same path for fila/QR, reprint, and manual form.
  */
@@ -24,7 +30,7 @@ export async function printBadgeLabel(
 ): Promise<void> {
   const zpl = buildNameLabelZpl(
     formatBadgeDisplayName(params.name),
-    params.company,
+    formatBadgeCompanyLine(params.company),
   );
   await session.printZpl(zpl);
 }
