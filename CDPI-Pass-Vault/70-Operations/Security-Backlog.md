@@ -34,7 +34,7 @@ Priority key: **P1** exploitable now or silent data loss · **P2** broken featur
 | 24 | P3 | nginx: CSP report-only with no report endpoint; `/assets/` drops the server-level security headers; `Upgrade` forwarded on every request | open; confirm against prod in the batch-3 passive scan |
 | 25 | P3 | Dev/test-only toolchain advisories (full `pnpm audit`, not `--prod`): `vite` 5.4.21 dev server (1 HIGH), `vitest`/`tinypool` (2 CRITICAL), `undici` via jsdom (2 HIGH), `shell-quote` via drizzle-kit → gel (1 CRITICAL) | open; none ships in the prod runtime (`vite build` runs on EC2, not the dev server); upgrade after 2026-10-21 |
 | 26 | P3 | pm2 on EC2 was installed with `npm install -g pm2`, the last npm use (owner wants pnpm only) | open; after 2026-10-21: `pnpm add -g pm2`, then `pm2 update` so the running daemon moves to the new binary, then `npm rm -g pm2` |
-| 27 | P3 | `follow-redirects` 1.16.0 (CVE-2026-111755, CVE-2026-111756, HIGH) on the SendGrid e-mail path; Security Scans red from 2026-10-21 | fixed in the PR on `fix/follow-redirects-cves` (1.16.1, lockfile only); not reachable before the fix |
+| 27 | P3 | `follow-redirects` 1.16.0 (CVE-2026-111755, CVE-2026-111756, HIGH) on the SendGrid e-mail path; Security Scans red from 2026-10-21 | resolved 2026-10-21 (PR #24, deployed `e73304b`); not reachable before the fix |
 
 ---
 
@@ -540,3 +540,7 @@ Merged 2026-10-13 13:16 BRT on the owner's explicit go (launch day). CI run `384
 #21 Dockerfile deleted, #22 build-only tools moved to `devDependencies`, #23 `multer`/`qs`/`ip-address` bumped, pnpm supply-chain policies on. CI `38485568073` green. The EC2 log shows "Lockfile passes supply-chain policies (941 entries in 28.7s)", "Smoke test OK" and "Deploy OK. Live /api/events -> 200".
 
 Feature deploys since, none of them a backlog item: PR #22 "Esqueci meu e-mail" `139dc3e` (2026-10-14), print label + WebSocket fix `47be616` (2026-10-15), PR #23 print "Nome com Dr./Dra." `49b4239` (2026-10-21; its run went red only in Security Scans, see #27).
+
+### 2026-10-21 — #27 `follow-redirects` 1.16.1 + unused `axios` removed (PR #24, deployed `e73304b`)
+
+Merged 2026-10-21 18:52 BRT by the owner. PR CI `39680617889`: tests and security green, deploy skipped. Push run `39682230644`: Run Tests, Security Scans and Deploy all green. EC2 fast-forwarded `49b4239..e73304b`. The log shows "Lockfile passes supply-chain policies (941 entries in 30.9s)", "Smoke test OK" and "Deploy OK. Live /api/events -> 200". `cdpi-pass` and `cdpi-pass-email-worker` restarted `online` with new pids. The owner sent "Esqueci minha senha" to their own account after the deploy, and the e-mail arrived: the SendGrid path (axios → follow-redirects 1.16.1) works. Details and proof are in [[#27. `follow-redirects` 1.16.0: credential headers on cross-origin redirects (CVE-2026-111755, CVE-2026-111756, HIGH)|#27]].
