@@ -10,3 +10,5 @@ Documentation/
 frontend/e2e/.state/
 frontend/e2e/.output/
 frontend/playwright-report/
+# Build output: built on EC2 by deploy.yml, never committed.
+frontend/dist/
