@@ -11,7 +11,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND = path.resolve(HERE, "../..");
 
 test.describe("network guard", () => {
-  test("the harness rejects fetch / axios / http(s) to non-local hosts and still reaches localhost", () => {
+  test("the harness rejects fetch / SendGrid (axios) / http(s) to non-local hosts and still reaches localhost", () => {
     const out = execFileSync(
       process.execPath,
       ["--import", path.join(FRONTEND, "e2e/harness/register.mjs"), path.join(FRONTEND, "e2e/harness/netcheck.mjs"), cfg.asaasUrl],
@@ -20,12 +20,11 @@ test.describe("network guard", () => {
     const results = Object.fromEntries(
       out.split("\n").filter((l) => l.startsWith("{")).map((l) => JSON.parse(l)).map((r) => [r.name, r]),
     );
-    for (const name of ["fetchRemote", "axiosRemote", "axiosMake", "httpsRemote", "httpRemote"]) {
+    for (const name of ["fetchRemote", "sendgridRemote", "httpsRemote", "httpRemote"]) {
       expect(results[name], name).toMatchObject({ ok: false });
       expect(results[name].error, name).toMatch(/e2e guard/);
     }
     expect(results.fetchLocal).toMatchObject({ ok: true, status: 200 });
-    expect(results.axiosLocal).toMatchObject({ ok: true, status: 200 });
   });
 
   // Security backlog #14: the paid finalize used to post the buyer to a Make.com hook

@@ -62,9 +62,6 @@ vi.mock("../../services/s3Service", () => ({
   },
 }));
 
-// Make.com forward: never leave the test process.
-vi.mock("axios", () => ({ default: { post: vi.fn(async () => ({ status: 200 })) } }));
-
 /** Every request the app would send to Asaas, as "METHOD /path". Nothing leaves the process. */
 const asaasCalls: string[] = [];
 /** The refunds Asaas accepted. */

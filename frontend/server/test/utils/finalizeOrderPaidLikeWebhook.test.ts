@@ -1,3 +1,5 @@
+import http from "node:http";
+import https from "node:https";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Order } from "@shared/schema";
 
@@ -43,13 +45,8 @@ vi.mock("../../services/s3Service", () => ({
   },
 }));
 
-vi.mock("axios", () => ({
-  default: { post: vi.fn().mockResolvedValue({}) },
-}));
-
 import { finalizeOrderPaidLikeWebhook } from "../../utils/finalizeOrderPaidLikeWebhook";
 import { emailService } from "../../services/emailService";
-import axios from "axios";
 
 function baseOrder(overrides: Partial<Order> = {}): Order {
   return {
@@ -111,16 +108,20 @@ describe("finalizeOrderPaidLikeWebhook", () => {
   });
 
   it("C1: forwards a paid order to no third party (the Make.com hook is gone)", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    // fetch plus Node's http/https: every HTTP client (axios included) ends in one of them.
+    // get() calls Node's internal request(), not the export, so it needs its own spy.
+    const spies = [
+      vi.spyOn(globalThis, "fetch"),
+      ...[http, https].flatMap((mod) => [vi.spyOn(mod, "request"), vi.spyOn(mod, "get")]),
+    ];
     try {
       const r = await finalizeOrderPaidLikeWebhook(baseOrder(), pixMeta);
       // The old post was fire-and-forget: let it run before asserting.
       await new Promise((resolve) => setImmediate(resolve));
       expect(r).toEqual({ ok: true });
-      expect(axios.post).not.toHaveBeenCalled();
-      expect(fetchSpy).not.toHaveBeenCalled();
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
     } finally {
-      fetchSpy.mockRestore();
+      for (const spy of spies) spy.mockRestore();
     }
   });
 
