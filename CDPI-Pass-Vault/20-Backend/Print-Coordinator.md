@@ -32,7 +32,13 @@ sequenceDiagram
 - Reconnect: `AdminPrintTerminalPage` reconnects forever with a 1 s → 10 s backoff and re-sends `printer_ready` on open. It stops only on unmount, an event change, or close codes 4000/4001/4002 (bad token / not admin), which show a "Sessão expirada" toast.
 
 ## Label layout (`client/src/lib/zebraZpl.ts`)
-Every flow (queue, reprint, manual) goes through `printBadgeLabel`: first + last name, company upper-cased (pt-BR). Each field is one `^FB` line whose square `^A0` font shrinks to fit 600 dots (name ≤ 100/110 dots, company ≤ 70); a company that would drop under 40 dots wraps to 2 lines instead. The company `^FO` sits below the fitted name height. Before 2026-10-15 the name block allowed 2 lines and the company assumed 1, so "Mariana Albuquerque" overprinted the company. Check layout changes by rendering the ZPL at labelary.com (8 dpmm, 3.15 × 1.77 in) with fake names.
+Every flow goes through `printBadgeLabel` (`client/src/lib/badgePrint.ts`, the only place badge text rules live), and its `style` picks line 1:
+- **Queue (QR check-in) and "Imprimir novamente":** `first-last` (default): first + last name, company upper-cased (pt-BR), name on one line.
+- **Manual "Imprimir etiqueta":** `as-typed`: name and company exactly as typed (trimmed, space runs collapsed, no upper-casing).
+- **Manual "Nome com Dr." / "Nome com Dra.":** title + first + second name, skipping the connectors de/da/do/dos/das/e ("Ana de Souza Lima" → "Dra. Ana Souza"); a typed leading Dr/Dra is dropped so it never doubles; company as typed.
+- Manual styles pass `wrapName`: a name whose one-line font would drop under 50 dots wraps to 2 lines, shrunk until its real word breaks fit 2 lines (a third would overprint); one unbreakable word stays 1 line; cut at ~57 chars at 30 dots. Queue/reprint never wrap the name. The company's 2-line fit has no word-break check yet (follow-up).
+
+Otherwise each field is one `^FB` line whose square `^A0` font shrinks to fit 600 dots (name ≤ 100/110 dots, company ≤ 70); a company that would drop under 40 dots wraps to 2 lines instead. The company `^FO` sits below the fitted name height (`fieldHeight`, so a 2-line manual name pushes it down). Before 2026-10-15 the name block allowed 2 lines and the company assumed 1, so "Mariana Albuquerque" overprinted the company. Check layout changes by rendering the ZPL at labelary.com (8 dpmm, 3.15 × 1.77 in) with fake names.
 
 ## Windows terminals need WinUSB
 On Windows, Chrome's WebUSB fails `open()` ("Failed to execute 'open' on 'USBDevice': Access denied") while the Zebra uses its Windows printer driver. Swap it to WinUSB with Zadig (Options → List All Devices → USB ID `0A5F` → WinUSB → Replace Driver), then replug. That PC then prints to the Zebra only through the browser; undo by uninstalling the device with its driver in Device Manager. macOS needs no change.

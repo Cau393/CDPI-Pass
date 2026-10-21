@@ -160,8 +160,7 @@ describe("AdminPrintTerminalPage", () => {
       return {
         device,
         printZpl: async (bytes: Uint8Array) => {
-          void bytes;
-          await transferOut();
+          await transferOut(bytes);
         },
         close: async () => {
           await (device as { close: () => Promise<void> }).close();
@@ -199,6 +198,29 @@ describe("AdminPrintTerminalPage", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
+
+  /** ZPL text of the most recent USB transfer. */
+  const lastZpl = () => {
+    const call = transferOut.mock.calls.at(-1);
+    return new TextDecoder().decode(call?.[0] as Uint8Array);
+  };
+
+  async function openManualTabConnected() {
+    const user = userEvent.setup();
+    renderPage();
+    fireEvent.click(screen.getByTestId("select-event"));
+    await user.click(screen.getByRole("tab", { name: "Impressão manual" }));
+    const nameInput = await screen.findByPlaceholderText("Nome completo do participante");
+    const companyInput = screen.getByPlaceholderText("Empresa ou cargo");
+    return { user, nameInput, companyInput };
+  }
+
+  async function connectUsb() {
+    fireEvent.click(screen.getByRole("button", { name: /conectar impressora/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/USB:\s*conectada/)).toBeInTheDocument();
+    });
+  }
 
   it("Conectar Impressora only triggers USB pairing on click", async () => {
     renderPage();
@@ -364,5 +386,123 @@ describe("AdminPrintTerminalPage", () => {
       expect(transferOut).toHaveBeenCalled();
     });
     expect(postSpy).not.toHaveBeenCalled();
+  });
+  it("manual Imprimir etiqueta prints the name exactly as typed", async () => {
+    const { nameInput } = await openManualTabConnected();
+    await connectUsb();
+    fireEvent.change(nameInput, { target: { value: "Ana Clara Costa" } });
+    fireEvent.click(screen.getByRole("button", { name: /imprimir etiqueta/i }));
+    await waitFor(() => expect(transferOut).toHaveBeenCalled());
+    expect(lastZpl()).toContain("^FDAna Clara Costa^FS");
+  });
+
+  it("manual Imprimir etiqueta prints the company as typed, not upper-cased", async () => {
+    const { nameInput, companyInput } = await openManualTabConnected();
+    await connectUsb();
+    fireEvent.change(nameInput, { target: { value: "Ana Clara Costa" } });
+    fireEvent.change(companyInput, { target: { value: "Acme Ltda" } });
+    fireEvent.click(screen.getByRole("button", { name: /imprimir etiqueta/i }));
+    await waitFor(() => expect(transferOut).toHaveBeenCalled());
+    expect(lastZpl()).toContain("^FDAcme Ltda^FS");
+  });
+
+  it("Nome com Dr. prints title + first + second name", async () => {
+    const { nameInput } = await openManualTabConnected();
+    await connectUsb();
+    fireEvent.change(nameInput, { target: { value: "José Roberto Silva" } });
+    fireEvent.click(screen.getByRole("button", { name: "Nome com Dr." }));
+    await waitFor(() => expect(transferOut).toHaveBeenCalled());
+    expect(lastZpl()).toContain("^FDDr. José Roberto^FS");
+  });
+
+  it("Nome com Dra. skips connector words (de) in the name", async () => {
+    const { nameInput } = await openManualTabConnected();
+    await connectUsb();
+    fireEvent.change(nameInput, { target: { value: "Ana de Souza Lima" } });
+    fireEvent.click(screen.getByRole("button", { name: "Nome com Dra." }));
+    await waitFor(() => expect(transferOut).toHaveBeenCalled());
+    expect(lastZpl()).toContain("^FDDra. Ana Souza^FS");
+  });
+
+  it("clears the name input after a successful Nome com Dr. print", async () => {
+    const { nameInput } = await openManualTabConnected();
+    await connectUsb();
+    fireEvent.change(nameInput, { target: { value: "José Roberto Silva" } });
+    fireEvent.click(screen.getByRole("button", { name: "Nome com Dr." }));
+    await waitFor(() => expect(transferOut).toHaveBeenCalled());
+    await waitFor(() => expect(nameInput).toHaveValue(""));
+  });
+
+  it("title buttons are disabled when USB is not connected", async () => {
+    const { nameInput } = await openManualTabConnected();
+    fireEvent.change(nameInput, { target: { value: "José Roberto Silva" } });
+    expect(screen.getByRole("button", { name: "Nome com Dr." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Nome com Dra." })).toBeDisabled();
+  });
+
+  it("title buttons are disabled when the name is blank even with USB connected", async () => {
+    await openManualTabConnected();
+    await connectUsb();
+    expect(screen.getByRole("button", { name: "Nome com Dr." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Nome com Dra." })).toBeDisabled();
+  });
+
+  it("title buttons are enabled once USB is connected and a name is typed", async () => {
+    const { nameInput } = await openManualTabConnected();
+    await connectUsb();
+    fireEvent.change(nameInput, { target: { value: "José Roberto Silva" } });
+    expect(screen.getByRole("button", { name: "Nome com Dr." })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Nome com Dra." })).toBeEnabled();
+  });
+
+  it("automatic print_job still prints first + last name", async () => {
+    renderPage();
+    fireEvent.click(screen.getByTestId("select-event"));
+    await waitFor(() => expect(mockSockets.length).toBe(1));
+    await connectUsb();
+    mockSockets[0].onmessage?.({
+      data: JSON.stringify({
+        type: "print_job",
+        job_id: "job-dr",
+        ticket_id: "o1",
+        display_name: "Maria Silva Santos",
+      }),
+    } as MessageEvent);
+    await waitFor(() => expect(transferOut).toHaveBeenCalled());
+    expect(lastZpl()).toContain("^FDMaria Santos^FS");
+  });
+
+  it("Imprimir novamente still prints first + last name of the history row", async () => {
+    apiRequest.mockImplementation((method: string, url: string) => {
+      if (method === "GET" && url.includes("print-history")) {
+        return Promise.resolve({
+          json: () =>
+            Promise.resolve({
+              data: [
+                {
+                  id: "j2",
+                  orderId: "o2",
+                  displayName: "Maria Silva Santos",
+                  companyLine: null,
+                  status: "completed",
+                  attempts: 1,
+                  lastErrorCode: null,
+                  lastErrorMessage: null,
+                  createdAt: new Date().toISOString(),
+                  completedAt: new Date().toISOString(),
+                },
+              ],
+            }),
+        } as Response);
+      }
+      return Promise.reject(new Error("unexpected " + method + " " + url));
+    });
+    renderPage();
+    fireEvent.click(screen.getByTestId("select-event"));
+    await screen.findByText("Maria Silva Santos");
+    await connectUsb();
+    fireEvent.click(screen.getByRole("button", { name: /imprimir novamente/i }));
+    await waitFor(() => expect(transferOut).toHaveBeenCalled());
+    expect(lastZpl()).toContain("^FDMaria Santos^FS");
   });
 });
