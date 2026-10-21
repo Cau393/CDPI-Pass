@@ -217,3 +217,9 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Request:** the owner wanted manual labels printed exactly as typed, and Dr./Dra. + first + second name from the manual form. Automatic queue and reprint stay first + last.
 - **Layout rule:** once a field can wrap, every Y position must use its real height (`fieldHeight`), never `dots`. Otherwise a 2-line name overprints the company, which was the 2026-10-15 bug. The manual name now wraps only when one line would print under 50 dots. Checked with labelary renders of 40–66 char fake names.
 - **"Second name" in pt-BR** skips connectors (de, da, do, dos, das, e): "Ana de Souza" prints as "Ana Souza", not "Ana de".
+
+## 2026-10-21 — Security Scans red on a merge that changed no dependency
+
+- **Symptom:** the PR #23 merge run (`39652913452`) had green tests and a green deploy, but Security Scans failed at "Dependencies and IaC (trivy)". #23 only touched print code.
+- **Root cause:** the scanner database refreshes daily. Two new follow-redirects advisories (CVE-2026-111755/111756, published 2026-10-20) matched the unchanged lockfile, so every push and PR stays red until the dependency is fixed, whatever it contains. See [[70-Operations/Security-Backlog#27. `follow-redirects` 1.16.0: credential headers on cross-origin redirects (CVE-2026-111755, CVE-2026-111756, HIGH)|backlog #27]].
+- **Prevention:** before blaming the PR, read trivy's table (package, CVE, fixed version) and check whether the lockfile changed. Reproduce locally with the pinned scanner versions from `deploy.yml`, verified by SHA256; the osv-scanner and `pnpm audit` cross-checks only reach the step summary. To prove "no outbound call" in a test, spy on `fetch` plus `node:http`/`node:https` `request` and `get`, not on one HTTP library's mock.

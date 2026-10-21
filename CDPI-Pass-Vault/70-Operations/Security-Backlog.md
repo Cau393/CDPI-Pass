@@ -28,12 +28,13 @@ Priority key: **P1** exploitable now or silent data loss · **P2** broken featur
 | 18 | P2 | CI: PRs ran no checks; actions on mutable tags received the EC2 SSH key and AWS keys; default token permissions | resolved 2026-10-13 (PRs #19 + #20, deployed `f9ea167`) |
 | 19 | P3 | `drizzle-orm` 0.39.3 identifier escaping (CVE-2026-39356, HIGH), not reachable | open, accepted in `.trivyignore.yaml` until 2026-12-31 |
 | 20 | P3 | `xlsx` 0.18.5 parse-side CVEs (2 HIGH), not reachable: the app only writes workbooks | open, accepted until 2026-12-31 |
-| 21 | P3 | `frontend/Dockerfile` is dead: runs as root, and its `ecosystem.config.cjs` cwd does not exist in the image | resolved in the pre-freeze deps PR (owner: delete it) |
-| 22 | P3 | Unused `next` dependency (3 HIGH via postcss/sharp); build-only tools listed in `dependencies` | resolved: `next` removed (`f9ea167`); build-only tools moved and `sequelize-cli` dropped in the pre-freeze deps PR, so `braces` is no longer a prod dependency |
-| 23 | P3 | Moderate runtime CVEs: `multer` 2.3.0, `qs` 6.15.3, `ip-address` 10.7.0, `csv-parse` 6.2.1 | `multer`, `qs`, `ip-address` fixed in the pre-freeze deps PR; `csv-parse` 7 open (major, after 2026-10-21), admin-only |
+| 21 | P3 | `frontend/Dockerfile` is dead: runs as root, and its `ecosystem.config.cjs` cwd does not exist in the image | resolved in the pre-freeze deps PR (#21, deployed `2db9291`; owner: delete it) |
+| 22 | P3 | Unused `next` dependency (3 HIGH via postcss/sharp); build-only tools listed in `dependencies` | resolved: `next` removed (`f9ea167`); build-only tools moved and `sequelize-cli` dropped in the pre-freeze deps PR (#21, `2db9291`), so `braces` is no longer a prod dependency; the unused direct `axios` removed with #27 |
+| 23 | P3 | Moderate runtime CVEs: `multer` 2.3.0, `qs` 6.15.3, `ip-address` 10.7.0, `csv-parse` 6.2.1; since 2026-10-21 also `sanitize-html` 2.17.7 (2 moderate, 1 low) | `multer`, `qs`, `ip-address` fixed in the pre-freeze deps PR (#21, `2db9291`); `csv-parse` 7 open (major, after 2026-10-21), admin-only; `sanitize-html` 2.18.0 open (own PR, owner 2026-10-21) |
 | 24 | P3 | nginx: CSP report-only with no report endpoint; `/assets/` drops the server-level security headers; `Upgrade` forwarded on every request | open; confirm against prod in the batch-3 passive scan |
 | 25 | P3 | Dev/test-only toolchain advisories (full `pnpm audit`, not `--prod`): `vite` 5.4.21 dev server (1 HIGH), `vitest`/`tinypool` (2 CRITICAL), `undici` via jsdom (2 HIGH), `shell-quote` via drizzle-kit → gel (1 CRITICAL) | open; none ships in the prod runtime (`vite build` runs on EC2, not the dev server); upgrade after 2026-10-21 |
 | 26 | P3 | pm2 on EC2 was installed with `npm install -g pm2`, the last npm use (owner wants pnpm only) | open; after 2026-10-21: `pnpm add -g pm2`, then `pm2 update` so the running daemon moves to the new binary, then `npm rm -g pm2` |
+| 27 | P3 | `follow-redirects` 1.16.0 (CVE-2026-111755, CVE-2026-111756, HIGH) on the SendGrid e-mail path; Security Scans red from 2026-10-21 | fixed in the PR on `fix/follow-redirects-cves` (1.16.1, lockfile only); not reachable before the fix |
 
 ---
 
@@ -458,6 +459,31 @@ Production is PM2 on EC2 (see the deploy job), and the image is never built. It 
 
 ---
 
+### 27. `follow-redirects` 1.16.0: credential headers on cross-origin redirects (CVE-2026-111755, CVE-2026-111756, HIGH)
+
+Published 2026-10-20 (GHSA-8r9p-f939-6h3c, GHSA-q3jh-wrc6-jgq8), fixed in 1.16.1. The lockfile did not change: the scanner database gained the advisories, so CI run `39652913452` (the #23 merge) went red in "Dependencies and IaC (trivy)" while tests and the deploy passed.
+
+- **111755:** `escapeRegex` left `^` and `|` unescaped, so a caller-declared `sensitiveHeaders` name containing them is never stripped on a cross-origin redirect.
+- **111756:** headers passed as Node's alternating array (`["Authorization", "Bearer …"]`) are never stripped, because the strip loop runs `for…in` over the array indices.
+
+**Dependency path (on `49b4239`):** `@sendgrid/mail` 8.1.6 → `@sendgrid/client` 8.1.6 → `axios` 1.20.0 → `follow-redirects` 1.16.0. `server/services/emailService.ts` sends every e-mail this way, with `Authorization: Bearer SG.…` (the SendGrid API key). The direct `axios` dependency resolved to the same copy, but no runtime code imported it (see below).
+
+**Reachability: not reachable.** Read from the exact tarballs (integrity matches the lockfile):
+- `@sendgrid/client` sets no `maxRedirects`, so axios uses follow-redirects with its default limit (21): redirects are followed. The app only calls `MailService.setApiKey` (no `setDataResidency`, custom client or extra headers), so every request goes to the fixed host `https://api.sendgrid.com/`.
+- axios 1.20.0 (`lib/adapters/http.js`) always passes headers as an object (`toByteStringHeaderObject(headers)` → `headers.toJSON()`), never an array: 111756 cannot trigger.
+- axios sets `options.sensitiveHeaders = []` and adds names only from the caller's `sensitiveHeaders` config, which SendGrid never sets. The built-in list (`Authorization`, `Proxy-Authorization`, `Cookie`) has no metacharacters: 111755 cannot trigger.
+- Either bug also needs a cross-origin redirect from `api.sendgrid.com`, i.e. SendGrid itself or a TLS compromise.
+
+**Fix (2026-10-21):** `follow-redirects` 1.16.1 through `pnpm update follow-redirects`, a lockfile-only change of 4 lines. The 1.16.1 diff to `index.js` is exactly the two fixes: array headers become an object, and `escapeRegex` escapes `^` and `|`. Published 2026-10-01 by the same maintainer as 1.16.0 (neither has provenance, so no trust downgrade). A cold-cache `pnpm install --frozen-lockfile` prints "Lockfile passes supply-chain policies (941 entries)". No `.trivyignore.yaml` entry.
+
+**Direct `axios` removed in the same PR (owner, 2026-10-21):** the tracked `frontend/dist` is a stale 2026-05-20 build (EC2 discards and rebuilds it). A fresh `tsup` build of `49b4239` has 0 `axios` matches, and the server and e-mail worker bundles are byte-identical after the removal. Only tests and the e2e harness used it: the Make.com mocks were dropped, the C1 unit test now spies on `fetch` and `node:http`/`node:https` `request` + `get` (a mutation that adds an `https.request` or `https.get` to the finalize fails it), and `e2e/harness/netcheck.mjs` probes the guard through `@sendgrid/mail` (blocked at `api.sendgrid.com`).
+
+**Proof:** trivy 0.75.0 with the CI flags: before = exit 1, `follow-redirects` 2 HIGH; after = exit 0. osv-scanner 2.7.0: 39 → 37 rows, no `follow-redirects`. `pnpm audit --prod`: 5 → 3 HIGH (the accepted #19/#20). gitleaks 8.30.1: no leaks; semgrep 1.180.0: 0 findings. Gates equal before and after: tsc 0, frontend 442 passed / 4 skipped, backend 431 / 142, integration 138 / 4.
+
+**Residual seen (pre-existing, CI config, not changed):** the deploy runs `git checkout -- frontend/dist` before the build, so a failed build leaves the stale tracked build on disk, and a later pm2 restart would boot it. That was already wrong code; without the direct `axios` it now also fails on its `axios` import. Untracking `frontend/dist` would close this.
+
+---
+
 ## Out of scope but seen
 
 - Three other IAM users with long-lived keys belong to other projects in the same account (`rachae-backend`, `cdpi-lesson-editor-backend`, `cdpi-pass-deployer`). A blast-radius review of the whole account is worth doing once items 2 and 3 are closed.
@@ -508,3 +534,9 @@ Merged 2026-10-13 13:16 BRT on the owner's explicit go (launch day). CI run `384
 - **C5, concurrent courtesy redeems:** the already-registered and event-full checks moved into `storage.claimCourtesyRedeem`'s transaction, after the event row `FOR UPDATE`. Proof: "creates exactly one order for 8 concurrent redeems of the same attendee". Run alone, it failed 10/10 before the change and passed 10/10 after.
 - **deploy.yml** now restarts `cdpi-pass-email-worker --update-env` after the live check. Before, the worker kept the code from its last manual restart.
 - **Residual (C3):** `/verify-email` opens without sending a new code, so an account with an expired code presses "Reenviar" (30 s wait). Grandfathering removed this for existing accounts.
+
+### 2026-10-13 — pre-freeze deps (PR #21, deployed `2db9291`)
+
+#21 Dockerfile deleted, #22 build-only tools moved to `devDependencies`, #23 `multer`/`qs`/`ip-address` bumped, pnpm supply-chain policies on. CI `38485568073` green. The EC2 log shows "Lockfile passes supply-chain policies (941 entries in 28.7s)", "Smoke test OK" and "Deploy OK. Live /api/events -> 200".
+
+Feature deploys since, none of them a backlog item: PR #22 "Esqueci meu e-mail" `139dc3e` (2026-10-14), print label + WebSocket fix `47be616` (2026-10-15), PR #23 print "Nome com Dr./Dra." `49b4239` (2026-10-21; its run went red only in Security Scans, see #27).
