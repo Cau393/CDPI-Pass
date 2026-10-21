@@ -2,7 +2,11 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Printer, Usb, AlertTriangle } from "lucide-react";
 import EventSelector from "@/components/admin/EventSelector";
-import { printBadgeLabel } from "@/lib/badgePrint";
+import {
+  formatBadgeTitledName,
+  printBadgeLabel,
+  type BadgeNameStyle,
+} from "@/lib/badgePrint";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -399,8 +403,8 @@ export default function AdminPrintTerminalPage() {
     }
   };
 
-  const handleManualPrint = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+  /** Manual tab: "as-typed" from the form submit, "Dr."/"Dra." from the title buttons. */
+  const printManual = async (style: Exclude<BadgeNameStyle, "first-last">) => {
     const session = usbSessionRef.current;
     if (!session) {
       toast({
@@ -415,14 +419,17 @@ export default function AdminPrintTerminalPage() {
     try {
       await printBadgeLabel(session, {
         name: manualName,
-        company: manualCompany.trim() ? manualCompany : null,
+        company: manualCompany,
+        style,
       });
+      const n =
+        style === "as-typed"
+          ? manualName.trim() || "Participante"
+          : formatBadgeTitledName(manualName, style);
       const c = manualCompany.trim();
       toast({
         title: "Etiqueta enviada",
-        description: c
-          ? `${manualName.trim()} — ${c}`
-          : manualName.trim() || "Participante",
+        description: c ? `${n} — ${c}` : n,
       });
       setManualName("");
       setManualCompany("");
@@ -613,7 +620,10 @@ export default function AdminPrintTerminalPage() {
               </CardHeader>
               <CardContent>
                 <form
-                  onSubmit={(ev) => void handleManualPrint(ev)}
+                  onSubmit={(ev: FormEvent<HTMLFormElement>) => {
+                    ev.preventDefault();
+                    void printManual("as-typed");
+                  }}
                   className="max-w-md space-y-4"
                 >
                   <div className="space-y-2">
@@ -639,17 +649,33 @@ export default function AdminPrintTerminalPage() {
                       autoComplete="organization"
                     />
                     <p className="text-sm text-muted-foreground">
-                      A etiqueta mostra o primeiro e o último nome na primeira
-                      linha. A empresa aparece na segunda linha, se
-                      preenchida.
+                      A etiqueta imprime o nome e a empresa exatamente como
+                      digitados (nomes longos quebram em duas linhas). “Nome com
+                      Dr.” e “Nome com Dra.” imprimem o título com o primeiro e
+                      o segundo nome.
                     </p>
                   </div>
-                  <Button
-                    type="submit"
-                    disabled={manualPrinting || !usbSession}
-                  >
-                    {manualPrinting ? "Enviando…" : "Imprimir etiqueta"}
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="submit"
+                      disabled={manualPrinting || !usbSession}
+                    >
+                      {manualPrinting ? "Enviando…" : "Imprimir etiqueta"}
+                    </Button>
+                    {(["Dr.", "Dra."] as const).map((title) => (
+                      <Button
+                        key={title}
+                        type="button"
+                        variant="outline"
+                        disabled={
+                          manualPrinting || !usbSession || !manualName.trim()
+                        }
+                        onClick={() => void printManual(title)}
+                      >
+                        Nome com {title}
+                      </Button>
+                    ))}
+                  </div>
                   {!usbSession && (
                     <p className="text-sm text-amber-700 dark:text-amber-500">
                       Conecte a impressora USB no cartão “Evento e impressora”

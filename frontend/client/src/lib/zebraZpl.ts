@@ -29,6 +29,8 @@ const COMPANY_CHAR_WIDTH_RATIO = 0.62;
 const MIN_FONT_DOTS = 30;
 /** A company that would print smaller than this on one line wraps to two lines instead. */
 const COMPANY_MIN_ONE_LINE_DOTS = 40;
+/** With `wrapName` (manual print), a name that would print smaller than this wraps to two lines. */
+const NAME_MIN_ONE_LINE_DOTS = 50;
 const COMPANY_LINE_GAP = 6;
 /** Word wrapping splits unevenly: size two-line text for its longer line (~60% of it). */
 const TWO_LINE_SHARE = 0.6;
@@ -89,6 +91,38 @@ function fitCompany(raw: string): FittedField {
     : fitField(raw, COMPANY_FONT_DOTS, COMPANY_CHAR_WIDTH_RATIO, 2);
 }
 
+/** Lines a word-by-word wrap needs at `dots`, with the same conservative width estimate. */
+function wrappedLineCount(text: string, dots: number, charWidthRatio: number): number {
+  const lineChars = Math.floor(FIT_WIDTH_DOTS / (dots * charWidthRatio));
+  let lines = 1;
+  let used = 0;
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (used > 0 && used + 1 + word.length > lineChars) {
+      lines += 1;
+      used = word.length;
+    } else {
+      used += (used > 0 ? 1 : 0) + word.length;
+    }
+  }
+  return lines;
+}
+
+/**
+ * Name: one line, or (manual print only) two lines when one would print below the threshold.
+ * The two-line size is a character-share estimate, so it is checked against the real word
+ * breaks: a third line would overprint the second, and an unbreakable word stays one line.
+ */
+function fitName(raw: string, maxDots: number, wrap: boolean): FittedField {
+  const one = fitField(raw, maxDots, NAME_CHAR_WIDTH_RATIO);
+  if (!wrap || one.dots >= NAME_MIN_ONE_LINE_DOTS) return one;
+  const two = fitField(raw, maxDots, NAME_CHAR_WIDTH_RATIO, 2);
+  let dots = two.dots;
+  while (dots > MIN_FONT_DOTS && wrappedLineCount(two.safe, dots, NAME_CHAR_WIDTH_RATIO) > 2) {
+    dots -= 1;
+  }
+  return wrappedLineCount(two.safe, dots, NAME_CHAR_WIDTH_RATIO) === 1 ? one : { ...two, dots };
+}
+
 /** Printed height of a field in dots. */
 function fieldHeight(f: FittedField): number {
   return f.lines * f.dots + (f.lines - 1) * COMPANY_LINE_GAP;
@@ -105,7 +139,7 @@ function fieldZpl(y: number, f: FittedField): string {
 function buildNameOnlyLabelZpl(name: FittedField): string {
   const y = Math.max(
     0,
-    Math.floor((LABEL_LENGTH_DOTS - name.dots) / 2) - NAME_ONLY_NUDGE_UP_DOTS,
+    Math.floor((LABEL_LENGTH_DOTS - fieldHeight(name)) / 2) - NAME_ONLY_NUDGE_UP_DOTS,
   );
   return `${ZPL_PREAMBLE}${fieldZpl(y, name)}${ZPL_POST}`;
 }
@@ -118,7 +152,7 @@ function buildNameAndCompanyLabelZpl(
   name: FittedField,
   company: FittedField,
 ): string {
-  const nameBlock = name.dots + 4;
+  const nameBlock = fieldHeight(name) + 4;
   const stack = nameBlock + NAME_TO_COMPANY_GAP + fieldHeight(company) + 4;
   const yName = Math.max(
     0,
@@ -130,18 +164,21 @@ function buildNameAndCompanyLabelZpl(
 
 /**
  * @param companyLine - When set (courtesy), prints a second line below the name. Paid flow: omit.
+ * @param opts.wrapName - Manual print: a long name may take two lines instead of shrinking.
  */
 export function buildNameLabelZpl(
   displayName: string,
   companyLine?: string | null,
+  opts?: { wrapName?: boolean },
 ): Uint8Array {
   const nameRaw = (displayName.trim() || "Participante").slice(0, 120);
+  const wrapName = opts?.wrapName ?? false;
   const compTrim = companyLine?.trim();
   if (!compTrim) {
-    const name = fitField(nameRaw, NAME_FONT_DOTS, NAME_CHAR_WIDTH_RATIO);
+    const name = fitName(nameRaw, NAME_FONT_DOTS, wrapName);
     return new TextEncoder().encode(buildNameOnlyLabelZpl(name));
   }
-  const name = fitField(nameRaw, NAME_WITH_COMPANY_FONT_DOTS, NAME_CHAR_WIDTH_RATIO);
+  const name = fitName(nameRaw, NAME_WITH_COMPANY_FONT_DOTS, wrapName);
   const company = fitCompany(compTrim.slice(0, 120));
   return new TextEncoder().encode(buildNameAndCompanyLabelZpl(name, company));
 }

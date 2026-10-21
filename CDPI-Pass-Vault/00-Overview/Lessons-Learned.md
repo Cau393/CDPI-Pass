@@ -212,3 +212,8 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **WebSocket dropped after ~30–60 s idle** and never came back: no heartbeat, no reconnect. Fix: server ping every 20 s + client reconnect with backoff.
 - **Prevention:** test label layout with the longest realistic names (render the ZPL), not one short sample; every long-lived WebSocket needs a heartbeat under the proxy idle timeout and a client reconnect loop.
 
+## 2026-10-21 — manual print as typed, "Nome com Dr./Dra."
+
+- **Request:** the owner wanted manual labels printed exactly as typed, and Dr./Dra. + first + second name from the manual form. Automatic queue and reprint stay first + last.
+- **Layout rule:** once a field can wrap, every Y position must use its real height (`fieldHeight`), never `dots`. Otherwise a 2-line name overprints the company, which was the 2026-10-15 bug. The manual name now wraps only when one line would print under 50 dots. Checked with labelary renders of 40–66 char fake names.
+- **"Second name" in pt-BR** skips connectors (de, da, do, dos, das, e): "Ana de Souza" prints as "Ana Souza", not "Ana de".
