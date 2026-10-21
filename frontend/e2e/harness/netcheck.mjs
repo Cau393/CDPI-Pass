@@ -1,18 +1,20 @@
 // Run with `node --import ./e2e/harness/register.mjs e2e/harness/netcheck.mjs <localUrl>`:
 // proves the harness network guard. Prints one JSON line per probe.
-import axios from "axios";
+import { MailService } from "@sendgrid/mail";
 import http from "node:http";
 import https from "node:https";
 
 const local = process.argv[2];
+// The app's only outbound HTTP library path: @sendgrid/mail -> axios -> follow-redirects.
+const sendgrid = new MailService();
+sendgrid.setApiKey("SG.e2e-netcheck");
 const probes = {
   fetchRemote: () => fetch("https://example.com/"),
-  axiosRemote: () => axios.get("https://example.com/", { timeout: 3000 }),
-  axiosMake: () => axios.post("https://hook.us2.make.com/x", {}, { timeout: 3000 }),
+  sendgridRemote: () =>
+    sendgrid.send({ to: "netcheck@example.com", from: "netcheck@example.com", subject: "netcheck", text: "netcheck" }),
   httpsRemote: () => new Promise((resolve) => https.get("https://example.com/", resolve)),
   httpRemote: () => new Promise((resolve) => http.get("http://example.com/", resolve)),
   fetchLocal: () => fetch(`${local}/health`),
-  axiosLocal: () => axios.get(`${local}/health`, { timeout: 3000 }),
 };
 for (const [name, run] of Object.entries(probes)) {
   try {
