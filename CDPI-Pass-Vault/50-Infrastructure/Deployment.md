@@ -25,7 +25,7 @@ App listens on **5003** (env `PORT`). Fronted by whatever proxy/ALB terminates T
 - **`hotfix-frontend-update` is the only branch that triggers CI/CD.** This is codified in `.claude/rules/deployment.md` (always-applied rule). To deploy: commit and `git push origin hotfix-frontend-update` (or `git push origin HEAD` if on that branch). Never push `main` or feature branches to trigger a deploy.
 - Never push directly to `hotfix-frontend-update`; branch off it and merge through a PR whose base is `hotfix-frontend-update`.
 - Merging the PR *is* the deploy. Apply pending `sql/` files first ([[40-Database/Migration-Workflow]]).
-- `frontend/dist/` is tracked but rebuilt by CI; never stage local `dist/` changes.
+- `frontend/dist/` is not tracked (ignored via `frontend/dist/` in the root `.gitignore`): the box builds it in place on every deploy. The deploy snapshots the live `dist` to `~/dist-rollback-$TS`, pulls, then copies the snapshot back so the app keeps serving the live build until the new one replaces it. It still runs `git checkout -- frontend/dist` (tolerant, a no-op now) for the first deploy after untracking. See [[70-Operations/Security-Backlog#27. `follow-redirects` 1.16.0: credential headers on cross-origin redirects (CVE-2026-111755, CVE-2026-111756, HIGH)|backlog #27]].
 - After pushing, verify with `gh run list --branch hotfix-frontend-update --limit 1`.
 
 Verify after deploy: `/api/events` responds, PM2 logs of `cdpi-pass-server` and `cdpi-pass-email-worker` are clean, and the page/e-mail touched by the change behaves on a phone.

@@ -30,11 +30,11 @@ Priority key: **P1** exploitable now or silent data loss · **P2** broken featur
 | 20 | P3 | `xlsx` 0.18.5 parse-side CVEs (2 HIGH), not reachable: the app only writes workbooks | open, accepted until 2026-12-31 |
 | 21 | P3 | `frontend/Dockerfile` is dead: runs as root, and its `ecosystem.config.cjs` cwd does not exist in the image | resolved in the pre-freeze deps PR (#21, deployed `2db9291`; owner: delete it) |
 | 22 | P3 | Unused `next` dependency (3 HIGH via postcss/sharp); build-only tools listed in `dependencies` | resolved: `next` removed (`f9ea167`); build-only tools moved and `sequelize-cli` dropped in the pre-freeze deps PR (#21, `2db9291`), so `braces` is no longer a prod dependency; the unused direct `axios` removed with #27 |
-| 23 | P3 | Moderate runtime CVEs: `multer` 2.3.0, `qs` 6.15.3, `ip-address` 10.7.0, `csv-parse` 6.2.1; since 2026-10-21 also `sanitize-html` 2.17.7 (2 moderate, 1 low) | `multer`, `qs`, `ip-address` fixed in the pre-freeze deps PR (#21, `2db9291`); `csv-parse` 7 open (major, after 2026-10-21), admin-only; `sanitize-html` 2.18.0 open (own PR, owner 2026-10-21) |
+| 23 | P3 | Moderate runtime CVEs: `multer` 2.3.0, `qs` 6.15.3, `ip-address` 10.7.0, `csv-parse` 6.2.1; since 2026-10-21 also `sanitize-html` 2.17.7 (2 moderate, 1 low) | `multer`, `qs`, `ip-address` fixed in the pre-freeze deps PR (#21, `2db9291`); `csv-parse` 7 open (major, after 2026-10-21), admin-only; `sanitize-html` 2.18.1 fixed in the sanitize-html/dist PR (2026-10-21) |
 | 24 | P3 | nginx: CSP report-only with no report endpoint; `/assets/` drops the server-level security headers; `Upgrade` forwarded on every request | open; confirm against prod in the batch-3 passive scan |
 | 25 | P3 | Dev/test-only toolchain advisories (full `pnpm audit`, not `--prod`): `vite` 5.4.21 dev server (1 HIGH), `vitest`/`tinypool` (2 CRITICAL), `undici` via jsdom (2 HIGH), `shell-quote` via drizzle-kit → gel (1 CRITICAL) | open; none ships in the prod runtime (`vite build` runs on EC2, not the dev server); upgrade after 2026-10-21 |
 | 26 | P3 | pm2 on EC2 was installed with `npm install -g pm2`, the last npm use (owner wants pnpm only) | open; after 2026-10-21: `pnpm add -g pm2`, then `pm2 update` so the running daemon moves to the new binary, then `npm rm -g pm2` |
-| 27 | P3 | `follow-redirects` 1.16.0 (CVE-2026-111755, CVE-2026-111756, HIGH) on the SendGrid e-mail path; Security Scans red from 2026-10-21 | fixed in the PR on `fix/follow-redirects-cves` (1.16.1, lockfile only); not reachable before the fix |
+| 27 | P3 | `follow-redirects` 1.16.0 (CVE-2026-111755, CVE-2026-111756, HIGH) on the SendGrid e-mail path; Security Scans red from 2026-10-21 | resolved 2026-10-21 (PR #24, deployed `e73304b`); not reachable before the fix |
 
 ---
 
@@ -446,6 +446,13 @@ Production is PM2 on EC2 (see the deploy job), and the image is never built. It 
 
 **Status**: `multer` 2.4.0, `qs` 6.16.0 and `ip-address` 10.7.3 landed in the pre-freeze deps PR. `qs` 6.16.0 is outside express 4.22.2's `~6.15.1`, so it came through express 4.22.3 and body-parser 1.20.8 (express 4.22.3 also brings `path-to-regexp` 0.1.13). `ip-address` stopped at 10.7.3 because 10.7.4 was 2 days old, under the new 3-day `minimumReleaseAge`. `csv-parse` stays open until after 2026-10-21.
 
+**sanitize-html 2.17.7 → 2.18.1 (2026-10-21):** a direct dependency (`^2.17.2`, now `^2.18.1`), used by `server/utils/courtesyTemplateSanitize.ts` and `client/src/lib/eventDescriptionHtml.ts`. Three advisories fixed in 2.18.0 (2 moderate, 1 low). Target 2.18.1, not 2.18.0: 2.18.0 added GHSA-c9rx-x947-fp3h (unbounded recursion on nested discarded `<iframe>`), fixed in 2.18.1. 2.18.1 was published 2026-10-14, so it passes the 3-day `minimumReleaseAge`.
+- **GHSA-x3q4-9hxx-gx8m (`nonTextTags` discard ends early, `<noscript>` content renders):** not reachable. It needs `noscript` in `nonTextTags`. Neither call site sets `nonTextTags` (default `script`, `style`, `textarea`, `option`, `xmp`).
+- **GHSA-cv27-6wvh-8x7j (`meta http-equiv=refresh` `content` keeps `javascript:`):** not reachable. It needs `meta` in `allowedTags`; both allow-lists are explicit and have no `meta`.
+- **GHSA-374f-7chj-9948 (SMIL animation namespace-prefix bypass):** not reachable. `svg`, `animate`, `set` and prefixed forms are not in either allow-list, so the tags are dropped before the check.
+- **Behaviour change:** none for our options. Same 24 inputs (both option sets: `<noscript>`, `<meta refresh>`, `svg:animate`, `<iframe>`, `javascript:` links, styles, classes, empty `<p>`) give identical output on 2.17.7 and 2.18.1 from the registry tarballs (sha512 matches the lockfile). 2.18.1 also drops `deepmerge` (inlined class/style merges, which we do not use) and moves `launder` 1.7.1 → 1.7.2, `postcss` 8.5.26 → 8.5.31 (adds `nanoid` 3.3.20 for that copy).
+- **Proof:** `eventDescriptionHtml.test.ts` 16 passed, `confirmationEmailHtml.test.ts` 3 passed. `pnpm audit --prod` no longer lists `sanitize-html` (4 left: `xlsx` ×2, `drizzle-orm`, `csv-parse`). osv-scanner 37 → 35 rows, no `sanitize-html`. trivy 0.75.0 with the CI flags: exit 0. Cold-cache `pnpm install --frozen-lockfile` prints "Lockfile passes supply-chain policies (943 entries)". Gates: tsc 0, frontend 442 / 4, backend 431 / 142, integration 138 / 4 (local Postgres).
+
 ---
 
 ### 24. nginx config (repo copy `infra/nginx/cdpipass.com.br.conf`)
@@ -480,7 +487,9 @@ Published 2026-10-20 (GHSA-8r9p-f939-6h3c, GHSA-q3jh-wrc6-jgq8), fixed in 1.16.1
 
 **Proof:** trivy 0.75.0 with the CI flags: before = exit 1, `follow-redirects` 2 HIGH; after = exit 0. osv-scanner 2.7.0: 39 → 37 rows, no `follow-redirects`. `pnpm audit --prod`: 5 → 3 HIGH (the accepted #19/#20). gitleaks 8.30.1: no leaks; semgrep 1.180.0: 0 findings. Gates equal before and after: tsc 0, frontend 442 passed / 4 skipped, backend 431 / 142, integration 138 / 4.
 
-**Residual seen (pre-existing, CI config, not changed):** the deploy runs `git checkout -- frontend/dist` before the build, so a failed build leaves the stale tracked build on disk, and a later pm2 restart would boot it. That was already wrong code; without the direct `axios` it now also fails on its `axios` import. Untracking `frontend/dist` would close this.
+**Residual resolved (2026-10-21, sanitize-html/dist PR):** `frontend/dist` is untracked (`git rm --cached`, 23 files, the tracked root `.gitignore` has `frontend/dist/`; not a new `frontend/.gitignore`, which the root file ignores and which would overwrite the local ignored one on pull). The deploy no longer puts a stale build back: it restores `frontend/dist` and `ecosystem.config.cjs` in separate tolerant commands, pulls, then copies the rollback snapshot (the live build) into `frontend/dist/` so the app keeps serving it until the new build replaces it.
+- **Transition deploy:** `dist` is still tracked on the box and modified by the last build, so `git checkout -- frontend/dist` is needed once or the pull refuses; the pull then deletes the formerly tracked files and the `cp -R` restores the live ones. Later deploys: the checkout is a no-op.
+- **Proof:** a local simulation (bare origin plus an EC2 clone at `e73304b` with a modified `index.js`/`index.html` and an untracked asset) running the lines extracted from `deploy.yml`: new script exit 0, `index.html`/`index.js` keep the live content, the untracked asset survives, `git status --porcelain frontend/dist` and `git ls-files frontend/dist` are empty; a second run also succeeds. The old lines on the same state leave the stale tracked `index.html` in place until the build. 11 of 11 assertions passed. `pnpm run build` still writes `dist/index.js`, `dist/run-email-worker.js` and `dist/public/index.html`, and git sees nothing under `frontend/dist`.
 
 ---
 
@@ -540,3 +549,7 @@ Merged 2026-10-13 13:16 BRT on the owner's explicit go (launch day). CI run `384
 #21 Dockerfile deleted, #22 build-only tools moved to `devDependencies`, #23 `multer`/`qs`/`ip-address` bumped, pnpm supply-chain policies on. CI `38485568073` green. The EC2 log shows "Lockfile passes supply-chain policies (941 entries in 28.7s)", "Smoke test OK" and "Deploy OK. Live /api/events -> 200".
 
 Feature deploys since, none of them a backlog item: PR #22 "Esqueci meu e-mail" `139dc3e` (2026-10-14), print label + WebSocket fix `47be616` (2026-10-15), PR #23 print "Nome com Dr./Dra." `49b4239` (2026-10-21; its run went red only in Security Scans, see #27).
+
+### 2026-10-21 — #27 `follow-redirects` 1.16.1 + unused `axios` removed (PR #24, deployed `e73304b`)
+
+Merged 2026-10-21 18:52 BRT by the owner. PR CI `39680617889`: tests and security green, deploy skipped. Push run `39682230644`: Run Tests, Security Scans and Deploy all green. EC2 fast-forwarded `49b4239..e73304b`. The log shows "Lockfile passes supply-chain policies (941 entries in 30.9s)", "Smoke test OK" and "Deploy OK. Live /api/events -> 200". `cdpi-pass` and `cdpi-pass-email-worker` restarted `online` with new pids. The owner sent "Esqueci minha senha" to their own account after the deploy, and the e-mail arrived: the SendGrid path (axios → follow-redirects 1.16.1) works. Details and proof are in [[#27. `follow-redirects` 1.16.0: credential headers on cross-origin redirects (CVE-2026-111755, CVE-2026-111756, HIGH)|#27]].
