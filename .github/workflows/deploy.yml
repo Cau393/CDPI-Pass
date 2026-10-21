@@ -239,10 +239,19 @@ jobs:
             ls -dt ~/dist-rollback-* 2>/dev/null | tail -n +6 | xargs -r rm -rf
             ls -t ~/rollback-commit-*.txt 2>/dev/null | tail -n +6 | xargs -r rm -f
 
-            # dist/ is committed to the repo, so a build would otherwise
-            # conflict with the pull.
-            git checkout -- frontend/dist ecosystem.config.cjs 2>/dev/null || true
+            # frontend/dist is no longer tracked (built here, ignored by git).
+            # The first deploy after untracking still sees it as tracked and
+            # modified by the previous build, which would make the pull refuse,
+            # so restore it first; afterwards this is a no-op.
+            git checkout -- frontend/dist 2>/dev/null || true
+            git checkout -- ecosystem.config.cjs 2>/dev/null || true
             git pull --ff-only origin hotfix-frontend-update
+
+            # On that transition deploy the pull deletes the formerly tracked
+            # files. Put the live build back so the running app keeps serving
+            # it until the new build replaces it (instead of the stale
+            # committed index.html).
+            cp -R ~/dist-rollback-$TS/. frontend/dist/ 2>/dev/null || true
 
             cd frontend
             export PATH="$HOME/.local/share/pnpm:$PATH"
