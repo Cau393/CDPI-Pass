@@ -1,4 +1,5 @@
 import { EMAIL_CONTACT_FOOTER_HTML, EMAIL_CONTACT_LINE } from "@shared/contact";
+import { escapeHtml } from "./escapeHtml";
 import {
   TICKET_CONFIRMATION_LINE,
   myTicketsButtonHtml,
@@ -60,14 +61,6 @@ function meetingPasswordText(password: string | null | undefined): string {
   const trimmed = password?.trim() ?? "";
   if (!trimmed) return "";
   return `\n      Senha para a Reunião: ${trimmed}\n`;
-}
-
-export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 export function buildOnlineEventEmailHtml(data: OnlineEventEmailData): string {
@@ -193,3 +186,6 @@ ${instructions}
       ${EMAIL_CONTACT_LINE}
     `;
 }
+
+// Kept for importers of the old location.
+export { escapeHtml };

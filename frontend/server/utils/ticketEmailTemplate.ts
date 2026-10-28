@@ -1,5 +1,5 @@
 import { EMAIL_CONTACT_FOOTER_HTML, EMAIL_CONTACT_LINE } from "@shared/contact";
-import { escapeHtml } from "./onlineEventEmailTemplate";
+import { escapeHtml } from "./escapeHtml";
 import {
   confirmationEmailCustomBlockHtml,
   confirmationEmailCustomBlockText,

@@ -8,6 +8,7 @@ import { hasPassword } from "../middleware/auth";
 import { storage, type IStorage } from "../storage";
 import { parseGuestBuyer, type GuestBuyer } from "./guestBuyerSchema";
 import { identityRequiredBody, missingIdentityFields } from "./inscriptionIdentity";
+import { isUniqueViolation } from "./usersEmailUnique";
 
 export type CheckoutIdentity = {
   isForeigner: boolean;
@@ -34,21 +35,22 @@ export type CheckoutBuyerStorage = Pick<
 type CheckoutEvent = { modality: string | null; isFree: boolean | null };
 type Document = NonNullable<GuestBuyer["document"]>;
 
-/** Generic on purpose: it never says whether the e-mail or the document matched. */
-const IDENTITY_CONFLICT: CheckoutBuyerFailure = {
+/** Fresh objects: a route that mutates a body must not poison later requests. */
+const identityConflict = (): CheckoutBuyerFailure => ({
   ok: false,
   status: 409,
   body: {
     code: "identity_conflict",
+    // Generic on purpose: it never says whether the e-mail or the document matched.
     message: "Estes dados não conferem com um cadastro existente. Entre na sua conta ou use “Esqueci meu e-mail”.",
   },
-};
+});
 
-const foreignPaidFailure: CheckoutBuyerFailure = {
+const foreignPaidFailure = (): CheckoutBuyerFailure => ({
   ok: false,
   status: 403,
   body: { code: FOREIGN_PAID_UNAVAILABLE_CODE, message: FOREIGN_PAID_UNAVAILABLE_MESSAGE },
-};
+});
 
 const digits = (value: string | null | undefined) => (value ?? "").replace(/\D/g, "");
 
@@ -77,7 +79,7 @@ export async function resolveCheckoutBuyer(
   const { sessionUser, event, paid } = input;
 
   if (sessionUser) {
-    if (paid && foreignPaidCheckoutBlocked(sessionUser)) return foreignPaidFailure;
+    if (paid && foreignPaidCheckoutBlocked(sessionUser)) return foreignPaidFailure();
     const missing = missingIdentityFields(event, sessionUser);
     if (missing.length > 0) return { ok: false, status: 400, body: identityRequiredBody(missing) };
     return {
@@ -96,59 +98,53 @@ export async function resolveCheckoutBuyer(
   const parsed = parseGuestBuyer(input.buyer);
   if (!parsed.ok) return { ok: false, status: 400, body: { code: "invalid_buyer", message: parsed.message } };
   const { buyer } = parsed;
-  if (paid && buyer.document && foreignPaidCheckoutBlocked({ isForeigner: buyer.document.isForeigner })) {
-    return foreignPaidFailure;
+  const typed = buyer.document;
+  if (paid && typed && foreignPaidCheckoutBlocked({ isForeigner: typed.isForeigner })) {
+    return foreignPaidFailure();
   }
+
+  // The guest's identity is only what they typed (the row is never a source of it), and it
+  // is checked before the row is read so the answer never depends on whether the e-mail exists.
+  const identity: CheckoutIdentity = {
+    isForeigner: typed?.isForeigner ?? false,
+    cpf: typed?.cpf ?? null,
+    foreignDocument: typed?.foreignDocument ?? null,
+    address: buyer.address,
+  };
+  const missing = missingIdentityFields(event, identity);
+  if (missing.length > 0) return { ok: false, status: 400, body: identityRequiredBody(missing) };
 
   let existing = await deps.getUserByEmail(buyer.email);
   // A second pass only happens when another request created the row between our read and write.
   for (let attempt = 0; attempt < 2; attempt++) {
     const rowDocument = existing ? documentOf(existing) : null;
-    const typed = buyer.document;
 
-    let document: Document | null = rowDocument;
     if (rowDocument && typed) {
-      if (!sameDocument(rowDocument, typed)) return IDENTITY_CONFLICT;
+      if (!sameDocument(rowDocument, typed)) return identityConflict();
     } else if (!rowDocument && typed) {
       const owner = typed.isForeigner
         ? await deps.getUserByForeignDocument(typed.foreignDocument ?? "")
         : await deps.getUserByCpf(typed.cpf ?? "");
-      if (owner && owner.id !== existing?.id) return IDENTITY_CONFLICT;
-      document = typed;
+      if (owner && owner.id !== existing?.id) return identityConflict();
     }
-    if (paid && document && foreignPaidCheckoutBlocked({ isForeigner: document.isForeigner })) {
-      return foreignPaidFailure;
-    }
-
-    const rowAddress = existing?.address?.trim() ? existing.address : null;
-    const address = rowAddress ?? buyer.address;
-    const identity: CheckoutIdentity = {
-      isForeigner: document?.isForeigner ?? false,
-      cpf: document?.cpf ?? null,
-      foreignDocument: document?.foreignDocument ?? null,
-      address,
-    };
-
-    const missing = missingIdentityFields(event, identity);
-    if (missing.length > 0) return { ok: false, status: 400, body: identityRequiredBody(missing) };
 
     if (!existing) {
       try {
-        const created = await deps.createGuestUser({
+        const result = await deps.createGuestUser({
           email: buyer.email,
           name: buyer.name,
           phone: buyer.phone,
-          document,
-          address,
+          document: typed,
+          address: buyer.address,
         });
-        return { ok: true, user: created, identity, placedAsGuest: true };
-      } catch (error) {
-        const code = (error as { code?: string; cause?: { code?: string } })?.code
-          ?? (error as { cause?: { code?: string } })?.cause?.code;
-        if (code !== "23505") throw error;
-        existing = await deps.getUserByEmail(buyer.email);
-        if (!existing || attempt > 0) return IDENTITY_CONFLICT;
+        if (result.created) return { ok: true, user: result.user, identity, placedAsGuest: true };
+        // Lost the e-mail race: the winner is checked like any existing row.
+        existing = result.user;
         continue;
+      } catch (error) {
+        // A document unique violation: someone else owns it.
+        if (isUniqueViolation(error)) return identityConflict();
+        throw error;
       }
     }
 
@@ -156,17 +152,21 @@ export async function resolveCheckoutBuyer(
     // document lives only in the order snapshot (identity).
     if (!hasPassword(existing)) {
       const documentToWrite = !rowDocument && typed ? typed : undefined;
-      const addressToWrite = !rowAddress && buyer.address ? buyer.address : undefined;
+      const addressToWrite = !existing.address?.trim() && buyer.address ? buyer.address : undefined;
       if (documentToWrite || addressToWrite !== undefined) {
-        const result = await deps.setUserIdentity(existing.id, {
-          ...(documentToWrite ? { document: documentToWrite } : {}),
-          ...(addressToWrite !== undefined ? { address: addressToWrite } : {}),
-        });
-        if (!result.ok) return IDENTITY_CONFLICT;
+        const result = await deps.setUserIdentity(
+          existing.id,
+          {
+            ...(documentToWrite ? { document: documentToWrite } : {}),
+            ...(addressToWrite !== undefined ? { address: addressToWrite } : {}),
+          },
+          { guestOnly: true },
+        );
+        if (!result.ok) return identityConflict();
         return { ok: true, user: result.user, identity, placedAsGuest: true };
       }
     }
     return { ok: true, user: existing, identity, placedAsGuest: true };
   }
-  return IDENTITY_CONFLICT;
+  return identityConflict();
 }

@@ -14,7 +14,7 @@ import {
   type OnlineEventEmailData,
 } from '../utils/onlineEventEmailTemplate';
 import { buildCalendarInviteAttachment } from '../utils/calendarInvite';
-import { escapeHtml } from '../utils/onlineEventEmailTemplate';
+import { escapeHtml } from '../utils/escapeHtml';
 import { APP_BASE_URL } from '../utils/myTicketsUrl';
 import { signPasswordResetToken } from '../middleware/auth';
 import type { User } from '@shared/schema';

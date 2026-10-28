@@ -73,14 +73,14 @@ export interface IStorage {
   getUserByCpf(cpf: string): Promise<User | undefined>;
   getUserByForeignDocument(foreignDocument: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
-  /** ADR-017 guest buyer: a row with a NULL password; on an e-mail race returns the row that won. */
+  /** ADR-017 guest buyer: a row with a NULL password; on an e-mail race returns the winner with created=false (the caller must re-check it). */
   createGuestUser(data: {
     email: string;
     name: string;
     phone: string;
     document: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null } | null;
     address: string | null;
-  }): Promise<User>;
+  }): Promise<{ user: User; created: boolean }>;
   updateUser(id: string, updates: Partial<User>): Promise<User | undefined>;
   verifyUserEmail(id: string): Promise<boolean>;
   deleteUser(id: string): Promise<boolean>;
@@ -119,8 +119,8 @@ export interface IStorage {
     limit: number,
     options?: { includeGuestOrders?: boolean },
   ): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }>;
-  /** Pending orders a user opened for an event since `since` (guest checkout cap, ADR-017). */
-  countPendingOrdersSince(params: { userId: string; eventId: string; since: Date }): Promise<number>;
+  /** Pending orders a user opened for an event since `since` (guest checkout cap, ADR-017; guest and session orders are counted apart). */
+  countPendingOrdersSince(params: { userId: string; eventId: string; since: Date; placedAsGuest: boolean }): Promise<number>;
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
   /** pending -> paid in one statement; false when the order was no longer pending. */
@@ -168,9 +168,10 @@ export interface IStorage {
       document?: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null };
       address?: string;
     },
+    options?: { guestOnly?: boolean },
   ): Promise<
     | { ok: true; user: User }
-    | { ok: false; reason: "document_already_set" | "document_taken" | "not_found" }
+    | { ok: false; reason: "document_already_set" | "document_taken" | "not_found" | "not_a_guest" }
   >;
   /** True when another order (not excludeOrderId) is already paid for cpf+event. */
   existsOtherPaidOrderForCpfAndEvent(
@@ -318,7 +319,7 @@ export class DatabaseStorage implements IStorage {
     phone: string;
     document: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null } | null;
     address: string | null;
-  }): Promise<User> {
+  }): Promise<{ user: User; created: boolean }> {
     try {
       const [user] = await db
         .insert(users)
@@ -336,11 +337,11 @@ export class DatabaseStorage implements IStorage {
           updatedAt: new Date(),
         })
         .returning();
-      return user;
+      return { user, created: true };
     } catch (error) {
       if (isUsersEmailUniqueViolation(error)) {
-        const existing = await this.getUserByEmail(data.email);
-        if (existing) return existing;
+        const winner = await this.getUserByEmail(data.email);
+        if (winner) return { user: winner, created: false };
       }
       throw error;
     }
@@ -535,7 +536,7 @@ export class DatabaseStorage implements IStorage {
   }
   
 
-  async countPendingOrdersSince(params: { userId: string; eventId: string; since: Date }): Promise<number> {
+  async countPendingOrdersSince(params: { userId: string; eventId: string; since: Date; placedAsGuest: boolean }): Promise<number> {
     const [row] = await db
       .select({ value: count() })
       .from(orders)
@@ -544,6 +545,7 @@ export class DatabaseStorage implements IStorage {
           eq(orders.userId, params.userId),
           eq(orders.eventId, params.eventId),
           eq(orders.status, "pending"),
+          eq(orders.placedAsGuest, params.placedAsGuest),
           gte(orders.createdAt, params.since),
         ),
       );
@@ -726,27 +728,42 @@ export class DatabaseStorage implements IStorage {
       document?: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null };
       address?: string;
     },
+    options: { guestOnly?: boolean } = {},
   ): Promise<
     | { ok: true; user: User }
-    | { ok: false; reason: "document_already_set" | "document_taken" | "not_found" }
+    | { ok: false; reason: "document_already_set" | "document_taken" | "not_found" | "not_a_guest" }
   > {
+    // guestOnly (ADR-017): an unauthenticated checkout may only write to a row that still
+    // has no password when the UPDATE runs, so a concurrent claim/reset never receives it.
+    const guestGuard = options.guestOnly ? [isNull(users.password)] : [];
     const addressPatch = identity.address !== undefined ? { address: identity.address } : {};
     try {
       if (identity.document) {
         const [claimed] = await db
           .update(users)
           .set({ ...identity.document, ...addressPatch, updatedAt: new Date() })
-          .where(and(eq(users.id, userId), isNull(users.cpf), isNull(users.foreignDocument)))
+          .where(and(eq(users.id, userId), isNull(users.cpf), isNull(users.foreignDocument), ...guestGuard))
           .returning();
         if (claimed) return { ok: true, user: claimed };
 
         const current = await this.getUser(userId);
         if (!current) return { ok: false, reason: "not_found" };
+        if (options.guestOnly && current.password) return { ok: false, reason: "not_a_guest" };
         const { isForeigner, cpf, foreignDocument } = identity.document;
         const sameDocument = isForeigner
           ? current.isForeigner === true && current.foreignDocument === foreignDocument
           : current.isForeigner !== true && current.cpf?.replace(/\D/g, "") === cpf?.replace(/\D/g, "");
         if (!sameDocument) return { ok: false, reason: "document_already_set" };
+      }
+      if (options.guestOnly) {
+        const [updated] = await db
+          .update(users)
+          .set({ ...addressPatch, updatedAt: new Date() })
+          .where(and(eq(users.id, userId), ...guestGuard))
+          .returning();
+        if (updated) return { ok: true, user: updated };
+        const current = await this.getUser(userId);
+        return { ok: false, reason: current ? "not_a_guest" : "not_found" };
       }
       const user = await this.updateUser(userId, addressPatch);
       return user ? { ok: true, user } : { ok: false, reason: "not_found" };

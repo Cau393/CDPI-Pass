@@ -57,9 +57,9 @@ function fakeStorage() {
       address: data.address ?? null,
     });
     rows.push(row);
-    return row;
+    return { user: row, created: true };
   });
-  const setUserIdentity = vi.fn(async (userId: string, identity: any) => {
+  const setUserIdentity = vi.fn(async (userId: string, identity: any, _options?: { guestOnly?: boolean }) => {
     const row = rows.find((r) => r.id === userId);
     if (!row) return { ok: false as const, reason: "not_found" as const };
     if (identity.document) {
@@ -259,7 +259,7 @@ describe("resolveCheckoutBuyer: existing guest row (no password)", () => {
     expect(store.setUserIdentity).toHaveBeenCalledWith(row.id, {
       document: { isForeigner: false, cpf: CPF_A, foreignDocument: null },
       address: "Rua de teste, 123, Brasília",
-    });
+    }, { guestOnly: true });
     expect(result).toMatchObject({ ok: true, user: { id: row.id, name: "Nome Original", phone: "5511900000000" }, placedAsGuest: true });
   });
 
@@ -273,7 +273,7 @@ describe("resolveCheckoutBuyer: existing guest row (no password)", () => {
     );
 
     expect(writes(store)).toBe(0);
-    expect(result).toMatchObject({ ok: true, identity: { cpf: CPF_A, address: "Rua antiga, 1, Brasília" } });
+    expect(result).toMatchObject({ ok: true, identity: { cpf: CPF_A, address: "Rua de teste, 123, Brasília" } });
   });
 
   it("answers 409 when the row has document A and B is typed, with no write", async () => {
@@ -343,6 +343,43 @@ describe("resolveCheckoutBuyer: existing guest row (no password)", () => {
   });
 });
 
+describe("resolveCheckoutBuyer: the identity is only what was typed (R6)", () => {
+  it("asks for the document even when the existing row has one, and reads no row", async () => {
+    rows.push(makeUser({ email: "maria@example.test", password: null, cpf: CPF_A, address: "Rua antiga, 1, Brasília" }));
+    const store = fakeStorage();
+
+    const result = await resolveCheckoutBuyer(
+      { sessionUser: undefined, buyer: buyerBase, event: presencialPaid, paid: true },
+      store,
+    );
+
+    expect(result).toMatchObject({ ok: false, status: 400, body: { code: "identity_required", missing: ["document", "address"] } });
+    expect(store.getUserByEmail).not.toHaveBeenCalled();
+  });
+
+  it("returns the typed address, not the row's", async () => {
+    rows.push(makeUser({ email: "maria@example.test", cpf: CPF_A, address: "Rua antiga, 1, Brasília" }));
+
+    const result = await resolveCheckoutBuyer(
+      { sessionUser: undefined, buyer: brBuyer, event: presencialPaid, paid: true },
+      fakeStorage(),
+    );
+
+    expect(result).toMatchObject({ ok: true, identity: { address: "Rua de teste, 123, Brasília" } });
+  });
+
+  it("answers 409 when a CPF is typed against a passport row", async () => {
+    rows.push(makeUser({ email: "maria@example.test", password: null, isForeigner: true, foreignDocument: "PY123456" }));
+
+    const result = await resolveCheckoutBuyer(
+      { sessionUser: undefined, buyer: brBuyer, event: presencialPaid, paid: true },
+      fakeStorage(),
+    );
+
+    expect(result).toEqual({ ok: false, status: 409, body: IDENTITY_CONFLICT });
+  });
+});
+
 describe("resolveCheckoutBuyer: existing password account", () => {
   it("makes no write at all and carries the typed CPF only in the identity", async () => {
     const account = makeUser({ email: "maria@example.test" });
@@ -402,7 +439,7 @@ describe("resolveCheckoutBuyer: concurrent creation", () => {
     const winner = makeUser({ email: "maria@example.test", password: null, name: "Vencedor" });
     store.createGuestUser.mockImplementationOnce(async () => {
       rows.push(winner);
-      throw uniqueViolation();
+      return { user: winner, created: false };
     });
 
     const result = await resolveCheckoutBuyer(
@@ -411,6 +448,41 @@ describe("resolveCheckoutBuyer: concurrent creation", () => {
     );
 
     expect(result).toMatchObject({ ok: true, user: { id: winner.id, name: "Vencedor" }, placedAsGuest: true });
+  });
+
+  it("answers 409 when the race winner holds a different document, and writes nothing more", async () => {
+    const store = fakeStorage();
+    const winner = makeUser({ email: "maria@example.test", password: null, cpf: CPF_B });
+    store.createGuestUser.mockImplementationOnce(async () => {
+      rows.push(winner);
+      return { user: winner, created: false };
+    });
+
+    const result = await resolveCheckoutBuyer(
+      { sessionUser: undefined, buyer: brBuyer, event: presencialPaid, paid: true },
+      store,
+    );
+
+    expect(result).toEqual({ ok: false, status: 409, body: IDENTITY_CONFLICT });
+    expect(store.setUserIdentity).not.toHaveBeenCalled();
+  });
+
+  it("makes no write when the race winner is a password account", async () => {
+    const store = fakeStorage();
+    const winner = makeUser({ email: "maria@example.test" });
+    store.createGuestUser.mockImplementationOnce(async () => {
+      rows.push(winner);
+      return { user: winner, created: false };
+    });
+
+    const result = await resolveCheckoutBuyer(
+      { sessionUser: undefined, buyer: brBuyer, event: presencialPaid, paid: true },
+      store,
+    );
+
+    expect(result).toMatchObject({ ok: true, user: { id: winner.id }, placedAsGuest: true, identity: { cpf: CPF_A } });
+    expect(store.setUserIdentity).not.toHaveBeenCalled();
+    expect(winner.cpf).toBeNull();
   });
 
   it("lets a non-unique createGuestUser error propagate", async () => {
