@@ -155,25 +155,3 @@ export function authEntryHref(
   const next = getValidatedNextPath(source);
   return next === "/" ? base : `${base}?next=${encodeURIComponent(next)}`;
 }
-
-/**
- * The code page for an account that has not verified its e-mail yet. `next`
- * is carried as is: the code page validates it before following it.
- */
-export function verifyEmailHref(email: string, next?: string | null): string {
-  const emailQ = `email=${encodeURIComponent(email)}`;
-  const nextQ = next != null && next !== "" ? `&next=${encodeURIComponent(next)}` : "";
-  return `/verify-email?${emailQ}${nextQ}`;
-}
-
-/** The server's 403 for inscriptions from an unverified account (`requireEmailVerification`). */
-export function isEmailNotVerified(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const match = /^403:\s*([\s\S]*)$/.exec(err.message);
-  if (!match) return false;
-  try {
-    return (JSON.parse(match[1]) as { code?: unknown }).code === "EMAIL_NOT_VERIFIED";
-  } catch {
-    return false;
-  }
-}

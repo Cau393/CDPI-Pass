@@ -41,8 +41,11 @@ CSV uploads from Brazilian Excel are often Windows-1252, not UTF-8. The mass-sen
 ## Middleware (`server/middleware/`)
 
 ### auth.ts
-- `authenticateToken`: reads `Authorization: Bearer <jwt>`, verifies with `JWT_SECRET`, loads user from DB, attaches `req.user`. 401 on missing/invalid.
-- `requireEmailVerification`: 403 unless `req.user.emailVerified`.
+The only session check (ADR-017 Stage 1). `routes.ts` imports it; the print WebSocket uses `sessionUserFromToken`.
+- `signSessionToken(user)`: `{ userId, pv }`, 7 days. `pv = passwordVersion(user.password)` = first 12 hex chars of `sha256(password hash)`.
+- `sessionUserFromToken(token)`: the user, or null when the signature or expiry is bad, the token has a `type` claim (link tokens: `password-reset`, `email-verification`, later `order-access`), the user is gone, or `pv` no longer matches (password reset or changed). A token without `pv` (issued before deploy A) is accepted.
+- `authenticateToken`: reads `Authorization: Bearer <jwt>`, attaches `req.user`. **401** on missing or invalid (it was 403 for a bad or expired token), so the client clears the stored token.
+- `requireEmailVerification` was deleted by ADR-017 Stage 1 (it was a 403 `EMAIL_NOT_VERIFIED` gate, backlog #16).
 - Admin checks are done **inside handlers** via `req.user.isAdmin` (no admin middleware).
 
 ### errorHandler.ts

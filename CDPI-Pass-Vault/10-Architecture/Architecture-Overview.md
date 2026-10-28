@@ -37,7 +37,7 @@ flowchart LR
 - `server/routes.ts` — **all 61 HTTP routes in a single ~3.4k-line file**. See [[20-Backend/API-Endpoints]].
 - `server/storage.ts` — data-access layer wrapping Drizzle (`storage.*` methods); routes never touch `db` directly.
 - `server/services/` — external integrations (Asaas, SendGrid, S3, Lambda, QR). See [[20-Backend/Services-Overview]].
-- `server/middleware/` — `auth.ts` (`authenticateToken`, `requireEmailVerification`), `errorHandler.ts`.
+- `server/middleware/` — `auth.ts` (`authenticateToken`, `signSessionToken`, `sessionUserFromToken`: the one session check, ADR-017), `errorHandler.ts`.
 - `server/workers/emailWorker.ts` — polls `email_queue`, sends via SendGrid, retries. See [[20-Backend/Workers-and-Middleware]].
 - `server/print/printCoordinator.ts` — WebSocket coordinator for badge printing. See [[20-Backend/Print-Coordinator]].
 - `server/utils/finalizeOrderPaidLikeWebhook.ts` — shared payment finalization used by webhook and manual status check. After `paid`, `sendPurchaseConfirmationEmail` sends a QR ticket (presencial) or the meeting URL (online), with optional `confirmation_email_html` injected. See [[20-Backend/Event-Modality]].

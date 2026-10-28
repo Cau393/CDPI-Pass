@@ -110,7 +110,7 @@ import { asaasService } from "./services/asaasService";
 import { qrCodeService } from "./services/qrCodeService";
 import { s3Service } from "./services/s3Service";
 import { invokeGenerateCertificatePdf } from "./services/certificateLambdaService";
-import { requireEmailVerification } from "./middleware/auth"; 
+import { authenticateToken, signSessionToken } from "./middleware/auth";
 import { authRateLimitMax, lookupEmailRateLimitMax } from "./utils/authRateLimitMax";
 import { maskEmail } from "./utils/maskEmail";
 import { getJwtSecret } from "./utils/requiredSecret";
@@ -158,30 +158,6 @@ interface CSVRow {
   event_id: string;
   [key: string]: string;
 }
-
-// Auth middleware
-const authenticateToken = async (req: any, res: any, next: any) => {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-
-  if (!token) {
-    return res.status(401).json({ message: "Token de acesso requerido" });
-  }
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
-    const user = await storage.getUser(decoded.userId);
-    
-    if (!user) {
-      return res.status(401).json({ message: "Usuário não encontrado" });
-    }
-
-    req.user = user;
-    next();
-  } catch (error) {
-    return res.status(403).json({ message: "Token inválido" });
-  }
-};
 
 const EVENT_EDIT_CONFLICT = "Este evento foi alterado por outra pessoa. Recarregue a página.";
 
@@ -264,14 +240,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         phone,
       });
       
-      await emailService.sendVerificationEmail(user.email, user.id);
-
+      // ADR-017: no e-mail code. The account is logged in at once; its e-mail
+      // becomes verified when the owner uses a link sent to it (reset-password).
       res.status(201).json({
-    message: "Conta criada! Um código de verificação foi enviado para o seu e-mail.",
-    // We send the email back so the frontend knows who to verify
-    email: user.email
+        message: "Conta criada!",
+        token: signSessionToken(user),
+        user: { id: user.id, email: user.email, name: user.name, emailVerified: user.emailVerified },
       });
-    
     } catch (error) {
       console.error("Registration error:", error);
       if (error instanceof z.ZodError) {
@@ -284,49 +259,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/auth/verify-code", async (req, res) => {
-    try {
-        const { email, code } = req.body;
-        const user = await storage.getUserByEmail(email);
-
-        if (!user || user.emailVerificationCode !== code) {
-            return res.status(400).json({ message: "Código inválido." });
-        }
-
-        if (!user.emailVerificationCodeExpiresAt || new Date() > new Date(user.emailVerificationCodeExpiresAt)) {
-            return res.status(400).json({ message: "O código expirou." });
-        }
-
-        // Success! Verify the user and log them in.
-        await storage.updateUser(user.id, {
-            emailVerified: true,
-            emailVerificationCode: null, // Clear the code
-            emailVerificationCodeExpiresAt: null,
-        });
-
-        const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
-        res.json({ token, user: { id: user.id, email: user.email, name: user.name, emailVerified: true } });
-
-    } catch (error) {
-        res.status(500).json({ message: "Erro interno do servidor." });
-    }
-  });
-
-  app.post("/api/auth/resend-code", async (req, res) => {
-    try {
-        const { email } = req.body;
-        const user = await storage.getUserByEmail(email);
-
-        if (user && !user.emailVerified) {
-            await emailService.sendVerificationEmail(user.email, user.id);
-        }
-
-        res.status(200).json({ message: "Um novo código foi enviado." });
-    } catch (error) {
-        res.status(500).json({ message: "Erro ao reenviar o código." });
-    }
-  });
-
   app.post("/api/auth/login", async (req, res) => {
     try {
       const { email, password } = loginSchema.parse(req.body);
@@ -336,17 +268,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Email ou senha incorretos" });
       }
 
-      // Skip email verification check for MVP
-
       const isValidPassword = await bcrypt.compare(password, user.password);
       if (!isValidPassword) {
         return res.status(401).json({ message: "Email ou senha incorretos" });
       }
 
-      const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
-
       res.json({
-        token,
+        token: signSessionToken(user),
         user: { id: user.id, email: user.email, name: user.name, emailVerified: user.emailVerified }
       });
     } catch (error) {
@@ -457,6 +385,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!token || !newPassword) {
             return res.status(400).json({ message: "Token e nova senha são obrigatórios." });
         }
+        if (typeof newPassword !== "string" || newPassword.length < 6) {
+            return res.status(400).json({ message: "Nova senha deve ter pelo menos 6 caracteres" });
+        }
 
         const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; type: string };
 
@@ -465,7 +396,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         const hashedPassword = await bcrypt.hash(newPassword, 10);
-        await storage.updateUser(decoded.userId, { password: hashedPassword });
+        // Only the owner of the mailbox gets the link, so this also verifies the
+        // e-mail. The new hash ends every older session (pv claim).
+        await storage.updateUser(decoded.userId, { password: hashedPassword, emailVerified: true });
 
         res.status(200).json({ message: "Senha redefinida com sucesso." });
     } catch (error) {
@@ -478,30 +411,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/auth/resend-verification", authenticateToken, async (req: any, res) => {
-    try {
-      const userId = req.user.id;
-      const user = req.user;
-      
-      // Check if email is already verified
-      if (user.emailVerified) {
-        return res.status(400).json({ message: "Email já está verificado" });
-      }
-      
-      // Send verification email
-      const sent = await emailService.sendVerificationEmail(user.email, userId);
-      
-      if (sent) {
-        res.json({ message: "Email de verificação enviado com sucesso!" });
-      } else {
-        res.status(500).json({ message: "Erro ao enviar email de verificação" });
-      }
-    } catch (error) {
-      console.error("Resend verification error:", error);
-      res.status(500).json({ message: "Erro ao reenviar email de verificação" });
-    }
-  });
-  
   app.post("/api/admin/generate-reset-link", authenticateToken, async (req: any, res) => {
   try {
     // 1. Check if the logged-in user is an admin
@@ -2507,7 +2416,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
   // Orders routes
-  app.post("/api/orders", authenticateToken, requireEmailVerification, async (req: any, res) => {
+  app.post("/api/orders", authenticateToken, async (req: any, res) => {
     try {
       const { eventId, paymentMethod, promoCode } = req.body;
       const userId = req.user.id;
@@ -2695,7 +2604,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * The event must actually be free in the DB. The client cannot make a paid
    * event free by calling this route.
    */
-  app.post("/api/events/:id/subscribe", authenticateToken, requireEmailVerification, async (req: any, res) => {
+  app.post("/api/events/:id/subscribe", authenticateToken, async (req: any, res) => {
     try {
       const userId = req.user.id;
 
@@ -2821,7 +2730,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/orders", authenticateToken, requireEmailVerification, async (req: any, res) => {
+  app.get("/api/orders", authenticateToken, async (req: any, res) => {
     try {
       const userId = req.user.id;
       const page = parseInt(req.query.page as string) || 1;
@@ -3312,7 +3221,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.id;
       const { currentPassword, newPassword } = req.body;
 
-      if (!currentPassword || !newPassword) {
+      if (typeof currentPassword !== "string" || typeof newPassword !== "string" || !currentPassword || !newPassword) {
         return res.status(400).json({ message: "Senhas são obrigatórias" });
       }
 
@@ -3329,10 +3238,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Hash new password
       const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-      // Update password
+      // Update password. The new hash ends every other session (pv claim), so
+      // this one gets a fresh token.
       await storage.updateUser(userId, { password: hashedPassword });
 
-      res.json({ message: "Senha alterada com sucesso" });
+      res.json({ message: "Senha alterada com sucesso", token: signSessionToken({ id: userId, password: hashedPassword }) });
     } catch (error) {
       console.error("Change password error:", error);
       res.status(500).json({ message: "Erro interno do servidor" });
@@ -3500,7 +3410,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/courtesy/redeem", authenticateToken, requireEmailVerification, async (req: any, res) => {
+  app.post("/api/courtesy/redeem", authenticateToken, async (req: any, res) => {
     try {
       const userId = req.user.id;
       const { code, ...userData } = req.body ?? {};
