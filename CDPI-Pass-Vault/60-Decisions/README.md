@@ -23,3 +23,4 @@ Architecture Decision Records. One file per decision: `ADR-NNN-short-title.md`. 
 - [[60-Decisions/ADR-014-foreigner-without-cpf]]
 - [[60-Decisions/ADR-015-drizzle-kit-push]] (supersedes ADR-001)
 - [[60-Decisions/ADR-016-event-registration-forms-and-minimal-signup]] (runbook: [[70-Operations/Plan-Event-Registration-Forms]])
+- [[60-Decisions/ADR-017-guest-checkout-inline-card]] (draft; Stage 1 = signup without an e-mail code)

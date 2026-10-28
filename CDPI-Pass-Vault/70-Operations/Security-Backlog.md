@@ -543,6 +543,11 @@ Merged 2026-10-13 13:16 BRT on the owner's explicit go (launch day). CI run `384
 - **C5, concurrent courtesy redeems:** the already-registered and event-full checks moved into `storage.claimCourtesyRedeem`'s transaction, after the event row `FOR UPDATE`. Proof: "creates exactly one order for 8 concurrent redeems of the same attendee". Run alone, it failed 10/10 before the change and passed 10/10 after.
 - **deploy.yml** now restarts `cdpi-pass-email-worker --update-env` after the live check. Before, the worker kept the code from its last manual restart.
 - **Residual (C3):** `/verify-email` opens without sending a new code, so an account with an expired code presses "Reenviar" (30 s wait). Grandfathering removed this for existing accounts.
+- **#16 reversed by ADR-017 Stage 1 (2026-10-28, owner decision; PR `feat/signup-without-code`, deploy A):** signup no longer sends a code and no route requires a verified e-mail. `requireEmailVerification`, `verify-code`, `resend-code`, `resend-verification`, `VerifyCodePage` and `useVerifyEmailRedirect` are deleted. What replaces the proof of ownership:
+  - the `pv` session claim, so a password reset by the real owner ends a squatter's session;
+  - link tokens (any `type` claim) are rejected as sessions; before this, a reset link token worked as a Bearer session;
+  - reset-password sets `emailVerified`, and stage 2 hides guest orders from unverified accounts.
+  - Tests: the three #16 integration tests are inverted (201 without a code), plus "sessions once signup has no e-mail code" (6 tests) and `sessionToken.test.ts`. See [[60-Decisions/ADR-017-guest-checkout-inline-card]].
 
 ### 2026-10-13 — pre-freeze deps (PR #21, deployed `2db9291`)
 

@@ -1,20 +1,17 @@
 # API Endpoints
 
-All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, 🔑 JWT (`authenticateToken`), 👑 JWT + `isAdmin` check inside handler, ✉️ JWT + `requireEmailVerification`.
+All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, 🔑 JWT (`authenticateToken`), 👑 JWT + `isAdmin` check inside handler. Since ADR-017 Stage 1 no route requires a verified e-mail.
 
 ## Auth
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/auth/register` | 🔓 | Create user, send 6-digit verification code. `email` is trimmed and stored lowercase; `User@Example.COM` and `user@example.com` are the same mailbox. Invalid address is 400 `Email inválido`. A mailbox that already exists in any casing is 400 `Email já cadastrado` (including a unique-constraint race), for Brazilian and foreign accounts. ADR-016 Phase 4: the body is `registerUserSchema` = `name` (2–255), `email`, `phone` (E.164 digits without `+`, 8–15; normalized with `normalizePhoneE164`, invalid is 400 `Telefone inválido`) and `password` (≥ 6). Every other key (work fields, `isAdmin`, …) is stripped. A body that carries a `cpf` or `birthDate` key comes from a tab still running the old full-signup bundle and is answered **409** `{ message: "Atualize a página para concluir o cadastro" }` with no account created, so the user does not lose what they typed. The account is created with no document, birth date or address and the `Nao aplicavel` work defaults; the document and address are asked at the first inscription that needs them (`identity_required` → `PUT /api/profile/identity`) |
-| POST | `/api/auth/verify-code` | 🔓 | Verify email with 6-digit code |
-| POST | `/api/auth/resend-code` | 🔓 | Resend verification code |
-| POST | `/api/auth/login` | 🔓 | Login, returns JWT. Email is trimmed and lowercased before lookup, so mixed-case input still finds the account. `Email ou senha incorretos` means the mailbox or password is actually wrong |
+| POST | `/api/auth/register` | 🔓 | Create user and log in: 201 `{ message, token, user: { id, email, name, emailVerified } }`, no e-mail sent (ADR-017 Stage 1; the 6-digit code is gone). `email` is trimmed and stored lowercase; `User@Example.COM` and `user@example.com` are the same mailbox. Invalid address is 400 `Email inválido`. A mailbox that already exists in any casing is 400 `Email já cadastrado` (including a unique-constraint race), for Brazilian and foreign accounts. ADR-016 Phase 4: the body is `registerUserSchema` = `name` (2–255), `email`, `phone` (E.164 digits without `+`, 8–15; normalized with `normalizePhoneE164`, invalid is 400 `Telefone inválido`) and `password` (≥ 6). Every other key (work fields, `isAdmin`, …) is stripped. A body that carries a `cpf` or `birthDate` key comes from a tab still running the old full-signup bundle and is answered **409** `{ message: "Atualize a página para concluir o cadastro" }` with no account created, so the user does not lose what they typed. The account is created with no document, birth date or address and the `Nao aplicavel` work defaults; the document and address are asked at the first inscription that needs them (`identity_required` → `PUT /api/profile/identity`) |
+| POST | `/api/auth/login` | 🔓 | Login, returns a session JWT (`signSessionToken`: `userId` + `pv`, 7 days). Email is trimmed and lowercased before lookup, so mixed-case input still finds the account. `Email ou senha incorretos` means the mailbox or password is actually wrong |
 | GET | `/api/auth/me` | 🔑 | Current user profile. Every user response (this, `PUT /api/profile`, `PUT /api/profile/identity`) goes through `toPublicUser` (`server/utils/publicUser.ts`): no `password`, `emailVerificationCode` or `emailVerificationCodeExpiresAt` |
-| GET | `/api/auth/verify-email` | 🔓 | Legacy link-based email verification |
+| GET | `/api/auth/verify-email` | 🔓 | Link-based e-mail verification: `?token=` signed `{ userId, type: "email-verification" }` → sets `emailVerified`. Kept by ADR-017; stage 2 e-mails it ("Ver em Meus Ingressos") |
 | POST | `/api/auth/forgot-password` | 🔓 | Send reset email |
 | POST | `/api/auth/lookup-email` | 🔓 | "Esqueci meu e-mail". Body `{ isForeigner?: boolean, cpf?: string }` or `{ isForeigner: true, foreignDocument: string }`, parsed by `resolveRegisterIdentity` (CPF checksum, passport normalized). Always `200 { found: true, maskedEmail }` or `200 { found: false }`; `400` for a malformed/mixed document. `maskedEmail` comes from `maskEmail` (`re•••••@ep•••.com.br`: 2 chars of the local part, fixed-length mask, 2 chars of the first domain label). Nothing else is returned (no name, id, phone, full e-mail) and no e-mail is sent. Brazilian accounts with a null CPF (ADR-016) match nothing. Own limit of 10 requests / 15 min per real IP (`lookupEmailRateLimitMax`, test-only override `LOOKUP_EMAIL_RATE_LIMIT_MAX`) on top of the `/api/auth` limiter, because it is an enumeration surface |
-| POST | `/api/auth/reset-password` | 🔓 | Reset with token |
-| POST | `/api/auth/resend-verification` | 🔑 | Resend verification for logged user |
+| POST | `/api/auth/reset-password` | 🔓 | Reset with a `password-reset` link token. `newPassword` must be a string of ≥ 6 chars (400 otherwise). Sets `emailVerified = true` (only the mailbox owner gets the link). The new hash ends every older session (`pv`) |
 | POST | `/api/admin/generate-reset-link` | 👑 | Admin generates password reset link for a user |
 
 ## Events (public)
@@ -86,7 +83,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | POST | `/api/orders` | 🔑 | Create order → Asaas payment (PIX/Boleto/Card for Brazilians). A foreigner may only send `credit_card`; the charge is one international card invoice, not a payment link. QR generated only if the event is presencial. ADR-016: a paid event needs the document (Asaas `cpfCnpj`), in-person also the address; when missing, 400 `{ code: "identity_required", missing, message }`. Body `answers` as in `/subscribe`. The foreigner card-only rule runs first. Charge failure deletes the pending order and answers **503** `{code:"foreign_payment_unavailable"}` when Asaas refuses foreign payers (message carries the CDPI contact), **502** `{code:"payment_provider_error"}` for any other Asaas HTTP error, **500** otherwise |
-| GET | `/api/orders` | ✉️ | My orders. Nested event includes `modality`. `meetingUrl`, `meetingPassword`, and `whatsappGroupUrl` only for `paid`/`courtesy` online orders; omitted otherwise. Never includes `confirmationEmailHtml` |
+| GET | `/api/orders` | 🔑 | My orders. Nested event includes `modality`. `meetingUrl`, `meetingPassword`, and `whatsappGroupUrl` only for `paid`/`courtesy` online orders; omitted otherwise. Never includes `confirmationEmailHtml` |
 | GET | `/api/orders/:id` | 🔑 | Order detail |
 | POST | `/api/orders/:id/check-status` | 🔑 | Poll Asaas payment status |
 | DELETE | `/api/orders/:id/cancel` | 🔑 | Cancel own pending order |
@@ -97,7 +94,7 @@ All routes live in `server/routes.ts` (61 routes). Auth column: 🔓 public, �
 |---|---|---|---|
 | PUT | `/api/profile` | 🔑 | Update profile (allowlist: name, email, phone, address, birthDate, occupation, partnerCompany, areaOfActivity). When present, occupation, partnerCompany, and areaOfActivity are trimmed strings of 2–255 characters; null and blank are 400. `email` is trimmed and stored lowercase. Changing it to a mailbox another user already has, in any casing, is 400 `Email já cadastrado`. A save that only changes email casing is the same mailbox and does not require the current password. Password is required only to change name, email (a different mailbox), or phone. Unknown keys, including `isAdmin`, are stripped |
 | PUT | `/api/profile/identity` | 🔑 | ADR-016. Body `{ cpf, address? }`, `{ isForeigner: true, foreignDocument, address? }` or `{ address }` (10–500 chars, free text, any country). The document is **write-once**: a different one than on file is 409 `Documento já informado; fale com o suporte para alterar.`; one owned by another account is 409 `Este documento já está cadastrado em outra conta.`; re-sending the same one is 200. Invalid CPF (checksum) or passport is 400. Every other key is stripped. Returns the user without password |
-| PUT | `/api/profile/password` | 🔑 | Change password |
+| PUT | `/api/profile/password` | 🔑 | Change password (current password required, new ≥ 6). Returns `{ message, token }`: the new hash ends every other session (`pv`), so the calling tab stores the fresh token (ADR-017 Stage 1) |
 | DELETE | `/api/profile` | 🔑 | Delete account |
 
 ## Courtesy (user-facing)
