@@ -149,9 +149,15 @@ async function signUpAndLogIn(password = "senha-antiga"): Promise<TestUser & { p
   return { id: rows[0].id, token: login.body.token, email, password };
 }
 
-/** The link token e-mailed by forgot-password (emailService.sendPasswordResetEmail). */
-function resetToken(userId: string): string {
-  return jwt.sign({ userId, type: "password-reset" }, JWT_SECRET, { expiresIn: "30m" });
+/**
+ * The link token e-mailed by forgot-password (emailService.sendPasswordResetEmail). It is bound
+ * to the password hash of that moment (pv), so it is signed from the stored row; a token without
+ * pv is rejected (ADR-017 Stage 2, ruling R2).
+ */
+async function resetToken(userId: string): Promise<string> {
+  const { signPasswordResetToken } = await import("../../middleware/auth");
+  const { rows } = await pool.query(`SELECT id, password FROM users WHERE id = $1`, [userId]);
+  return signPasswordResetToken(rows[0]);
 }
 
 async function courtesyCode(eventId: string, createdBy: string, ticketCount = 5): Promise<string> {
@@ -285,7 +291,7 @@ describe.skipIf(!enabled)("hardening batch 2 (real routes + real DB)", () => {
       expect((await api("GET", "/api/auth/me", { token: user.token })).status).toBe(200);
 
       const reset = await api("POST", "/api/auth/reset-password", {
-        body: { token: resetToken(user.id), newPassword: "senha-nova" },
+        body: { token: await resetToken(user.id), newPassword: "senha-nova" },
       });
       const oldSession = await api("GET", "/api/auth/me", { token: user.token });
       const relogin = await api("POST", "/api/auth/login", { body: { email: user.email, password: "senha-nova" } });
@@ -302,23 +308,46 @@ describe.skipIf(!enabled)("hardening batch 2 (real routes + real DB)", () => {
       const user = await createUser({ verified: true });
       const link = jwt.sign({ userId: user.id, type: "email-verification" }, JWT_SECRET, { expiresIn: "7d" });
 
-      expect((await api("GET", "/api/auth/me", { token: resetToken(user.id) })).status).toBe(401);
+      expect((await api("GET", "/api/auth/me", { token: await resetToken(user.id) })).status).toBe(401);
       expect((await api("GET", "/api/auth/me", { token: link })).status).toBe(401);
-      expect((await api("GET", "/api/orders", { token: resetToken(user.id) })).status).toBe(401);
+      expect((await api("GET", "/api/orders", { token: await resetToken(user.id) })).status).toBe(401);
     });
 
     it("reset-password rejects a password under 6 characters and keeps the old one", async () => {
       const user = await signUpAndLogIn();
 
       const short = await api("POST", "/api/auth/reset-password", {
-        body: { token: resetToken(user.id), newPassword: "12345" },
+        body: { token: await resetToken(user.id), newPassword: "12345" },
       });
       const notString = await api("POST", "/api/auth/reset-password", {
-        body: { token: resetToken(user.id), newPassword: 1234567 },
+        body: { token: await resetToken(user.id), newPassword: 1234567 },
       });
 
       expect(short.status).toBe(400);
       expect(notString.status).toBe(400);
+      expect((await api("POST", "/api/auth/login", { body: { email: user.email, password: user.password } })).status).toBe(200);
+    });
+
+    it("a reset link works once: the second use is 400", async () => {
+      const user = await signUpAndLogIn();
+      const token = await resetToken(user.id);
+
+      const first = await api("POST", "/api/auth/reset-password", { body: { token, newPassword: "senha-nova" } });
+      const second = await api("POST", "/api/auth/reset-password", { body: { token, newPassword: "outra-senha" } });
+
+      expect(first.status, JSON.stringify(first.body)).toBe(200);
+      expect(second.status).toBe(400);
+      expect((await api("POST", "/api/auth/login", { body: { email: user.email, password: "senha-nova" } })).status).toBe(200);
+      expect((await api("POST", "/api/auth/login", { body: { email: user.email, password: "outra-senha" } })).status).toBe(401);
+    });
+
+    it("a reset token without pv is rejected", async () => {
+      const user = await signUpAndLogIn();
+      const legacy = jwt.sign({ userId: user.id, type: "password-reset" }, JWT_SECRET, { expiresIn: "30m" });
+
+      const res = await api("POST", "/api/auth/reset-password", { body: { token: legacy, newPassword: "senha-nova" } });
+
+      expect(res.status).toBe(400);
       expect((await api("POST", "/api/auth/login", { body: { email: user.email, password: user.password } })).status).toBe(200);
     });
 
@@ -327,7 +356,7 @@ describe.skipIf(!enabled)("hardening batch 2 (real routes + real DB)", () => {
       const before = await pool.query(`SELECT email_verified FROM users WHERE id = $1`, [user.id]);
 
       const reset = await api("POST", "/api/auth/reset-password", {
-        body: { token: resetToken(user.id), newPassword: "senha-nova" },
+        body: { token: await resetToken(user.id), newPassword: "senha-nova" },
       });
       const after = await pool.query(`SELECT email_verified FROM users WHERE id = $1`, [user.id]);
 

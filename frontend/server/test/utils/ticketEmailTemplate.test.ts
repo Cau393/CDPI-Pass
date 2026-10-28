@@ -154,3 +154,33 @@ describe("confirmationKindForPaymentMethod", () => {
     expect(confirmationKindForPaymentMethod(null)).toBe("paid");
   });
 });
+
+describe("ticket e-mail for a guest buyer (ADR-017)", () => {
+  const link = "https://cdpipass.test/verify-email?token=abc.def.ghi";
+
+  it("escapes userName in the HTML body", () => {
+    const html = buildTicketEmailHtml({ ...base, userName: "<script>alert(1)</script>", confirmationKind: "paid" });
+
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("renders a Ver em Meus Ingressos link in the HTML and the URL in the text when myTicketsUrl is set", () => {
+    const html = buildTicketEmailHtml({ ...base, confirmationKind: "paid", myTicketsUrl: link });
+    const text = buildTicketEmailText({ ...base, confirmationKind: "paid", myTicketsUrl: link });
+
+    expect(html).toContain("Ver em Meus Ingressos");
+    expect(html).toContain(`href="${link}"`);
+    expect(text).toContain(link);
+  });
+
+  it("has no such link when myTicketsUrl is absent or null", () => {
+    for (const myTicketsUrl of [undefined, null]) {
+      const html = buildTicketEmailHtml({ ...base, confirmationKind: "paid", myTicketsUrl });
+      const text = buildTicketEmailText({ ...base, confirmationKind: "paid", myTicketsUrl });
+
+      expect(html).not.toContain("Ver em Meus Ingressos");
+      expect(text).not.toContain("verify-email");
+    }
+  });
+});
