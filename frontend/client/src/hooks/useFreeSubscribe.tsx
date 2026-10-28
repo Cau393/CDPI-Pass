@@ -3,7 +3,6 @@ import { useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
-import { useVerifyEmailRedirect } from "@/hooks/useVerifyEmailRedirect";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { isOnlineEvent } from "@shared/eventModality";
 import { loginRequiredDescription } from "@/lib/eventCta";
@@ -33,7 +32,6 @@ export function useFreeSubscribe() {
   const { isAuthenticated, user } = useAuth();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const redirectToVerifyEmail = useVerifyEmailRedirect();
   const [prompt, setPrompt] = useState<{ event: Event; missing?: SystemField[] } | null>(null);
   const [promptError, setPromptError] = useState<string | null>(null);
 
@@ -74,7 +72,6 @@ export function useFreeSubscribe() {
       setLocation("/profile");
     },
     onError: (error: Error, input) => {
-      if (redirectToVerifyEmail(error)) return;
       // The form may have changed since this event was cached. Refetch in the
       // background (the mutation settles now) and swap the fresh event into the
       // open dialog when it arrives.

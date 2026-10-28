@@ -63,37 +63,6 @@ describe("useFreeSubscribe — stale cached event", () => {
   });
 });
 
-describe("useFreeSubscribe — e-mail not verified (#16)", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-    setLocation.mockClear();
-    window.history.pushState({}, "", "/");
-  });
-
-  it("sends the account to /verify-email and back to the event page", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(JSON.stringify({ message: "E-mail não verificado.", code: "EMAIL_NOT_VERIFIED" }), {
-          status: 403,
-          headers: { "Content-Type": "application/json" },
-        }),
-      ),
-    );
-    window.history.pushState({}, "", `/event/${event.id}`);
-    const { result } = renderHook(() => useFreeSubscribe(), { wrapper });
-
-    act(() => result.current.subscribe(event));
-
-    await waitFor(() => {
-      expect(setLocation).toHaveBeenCalledWith(
-        `/verify-email?email=maria%40example.com&next=${encodeURIComponent(`/event/${event.id}`)}`,
-      );
-    });
-  });
-});
-
 describe("useFreeSubscribe — list page with a form the admin changed", () => {
   const oldQuestion = { id: "q-old", type: "text", label: "Pergunta antiga", options: [], required: false, archived: false };
   const newQuestion = { id: "q-new", type: "text", label: "Pergunta nova", options: [], required: false, archived: false };

@@ -134,27 +134,6 @@ describe("PaymentModal — registration answers", () => {
     );
   });
 
-  it("sends an unverified account to /verify-email and back to this event (#16)", async () => {
-    authState.user = { isForeigner: false, email: "maria@example.com" };
-    vi.stubGlobal(
-      "fetch",
-      mockOrders({ status: 403, body: { message: "E-mail não verificado.", code: "EMAIL_NOT_VERIFIED" } }),
-    );
-    window.history.pushState({}, "", `/event/${event.id}?promo=ABC`);
-    const user = userEvent.setup();
-    renderModal();
-
-    await user.click(screen.getByTestId("button-confirm-payment"));
-
-    await waitFor(() => {
-      expect(setLocation).toHaveBeenCalledWith(
-        `/verify-email?email=maria%40example.com&next=${encodeURIComponent(`/event/${event.id}?promo=ABC`)}`,
-      );
-    });
-    expect(toastSpy).not.toHaveBeenCalledWith(expect.objectContaining({ variant: "destructive" }));
-    window.history.pushState({}, "", "/");
-  });
-
   it("shows the server's message, not the raw response, for other errors", async () => {
     authState.user = { isForeigner: false };
     vi.stubGlobal(

@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 let search = "";
@@ -52,5 +53,39 @@ describe("LoginPage sign-up button", () => {
       "href",
       "/register",
     );
+  });
+});
+
+describe("LoginPage — unverified account", () => {
+  beforeEach(() => {
+    search = "?next=%2Fevent%2Fabc";
+    setLocation.mockReset();
+    localStorage.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ token: "jwt-login", user: { id: "u1", email: "maria@example.com", name: "Maria", emailVerified: false } }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("goes straight to next (not /verify-email) and stores the token", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByTestId("input-email"), "maria@example.com");
+    await user.type(screen.getByTestId("input-password"), "secret1");
+    await user.click(screen.getByTestId("button-login"));
+
+    await waitFor(() => expect(setLocation).toHaveBeenCalledWith("/event/abc"));
+    expect(setLocation).not.toHaveBeenCalledWith(expect.stringContaining("/verify-email"));
+    expect(localStorage.getItem("token")).toBe("jwt-login");
   });
 });

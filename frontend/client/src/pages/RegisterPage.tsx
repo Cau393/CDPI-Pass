@@ -8,12 +8,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { accountEmailSchema, registerUserSchema } from "@shared/schema";
 import { z } from "zod";
 import { useState, useMemo } from "react";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
-import { verifyEmailHref } from "@/lib/authRedirect";
+import { getValidatedNextPath } from "@/lib/authRedirect";
 
 // ADR-016: name, e-mail, phone and password only. The document and address
 // are asked at the first inscription that needs them.
@@ -37,7 +37,6 @@ export default function RegisterPage() {
   const nextRaw = useMemo(() => new URLSearchParams(search).get("next"), [search]);
   const { toast } = useToast();
   const [acceptTerms, setAcceptTerms] = useState(false);
-  const [verificationLink, setVerificationLink] = useState<string | null>(null);
 
   const form = useForm<RegisterFormData>({
     resolver: zodResolver(registerFormSchema),
@@ -59,14 +58,11 @@ export default function RegisterPage() {
       return response.json();
     },
     onSuccess: (data) => {
-  if (data.email) {
-    toast({
-      title: "Conta criada com sucesso!",
-      description: "Enviamos um código para o seu e-mail.",
-    });
-    setLocation(verifyEmailHref(data.email, nextRaw));
-    }
-  },
+      localStorage.setItem("token", data.token);
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      toast({ title: "Conta criada com sucesso!" });
+      setLocation(getValidatedNextPath(nextRaw));
+    },
     onError: (error: Error) => {
       toast({
         title: "Erro no cadastro",

@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { downloadDataUrl } from "@/lib/downloadDataUrl";
-import { Download, Eye, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, Shield, AlertTriangle, RefreshCw, Mail, ChevronLeft, ChevronRight, Award } from "lucide-react";
+import { Download, Eye, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, Shield, AlertTriangle, RefreshCw, ChevronLeft, ChevronRight, Award } from "lucide-react";
 import { CertificatesTab } from "@/components/CertificatesTab";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 import { NOT_APPLICABLE_PROFILE_VALUE, type User, type Order, type CourtesyLink } from "@shared/schema";
@@ -83,7 +83,6 @@ export default function ProfilePage() {
   const [deletePassword, setDeletePassword] = useState("");
   const [profilePassword, setProfilePassword] = useState("");
   const [hasChangedSensitiveFields, setHasChangedSensitiveFields] = useState(false);
-  const [cooldownTime, setCooldownTime] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [qrPreview, setQrPreview] = useState<
     { orderId: string; title: string; dataUrl: string } | null
@@ -95,16 +94,6 @@ export default function ProfilePage() {
       setLocation("/login");
     }
   }, [isAuthenticated, setLocation]);
-
-  // Cooldown timer effect
-  useEffect(() => {
-    if (cooldownTime > 0) {
-      const timer = setTimeout(() => {
-        setCooldownTime((prev) => prev - 1);
-      }, 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [cooldownTime]);
 
   const { data: ordersData, isLoading: ordersLoading, refetch: refetchOrders } = useQuery({
   queryKey: ["/api/orders", currentPage],
@@ -176,7 +165,9 @@ export default function ProfilePage() {
       const response = await apiRequest("PUT", "/api/profile/password", data);
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: { token?: unknown }) => {
+      // The old session token is rejected after a password change.
+      if (typeof data?.token === "string") localStorage.setItem("token", data.token);
       toast({
         title: "Senha alterada",
         description: "Sua senha foi alterada com sucesso.",
@@ -186,27 +177,6 @@ export default function ProfilePage() {
     onError: (error: Error) => {
       toast({
         title: "Erro ao alterar senha",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const resendVerificationMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("POST", "/api/auth/resend-verification");
-    },
-    onSuccess: () => {
-      toast({
-        title: "Email enviado!",
-        description: "Verifique sua caixa de entrada para confirmar seu email.",
-      });
-      setCooldownTime(30); // Set 30 seconds cooldown
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Erro ao enviar email",
         description: error.message,
         variant: "destructive",
       });
@@ -392,28 +362,6 @@ const handleCancelOrder = (orderId: string) => {
               <p className="text-gray-600 mb-4" data-testid="text-user-email">
                 {currentUser.email}
               </p>
-              {!currentUser.emailVerified && (
-                <div className="space-y-3">
-                  <Badge variant="outline" className="text-orange-600 border-orange-600">
-                    Email não verificado
-                  </Badge>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => resendVerificationMutation.mutate()}
-                    disabled={cooldownTime > 0 || resendVerificationMutation.isPending}
-                    className="w-full"
-                    data-testid="button-resend-verification"
-                  >
-                    <Mail className="h-4 w-4 mr-2" />
-                    {cooldownTime > 0 
-                      ? `Aguarde ${cooldownTime}s` 
-                      : resendVerificationMutation.isPending 
-                        ? "Enviando..." 
-                        : "Reenviar Email"}
-                  </Button>
-                </div>
-              )}
             </CardContent>
           </Card>
         </div>

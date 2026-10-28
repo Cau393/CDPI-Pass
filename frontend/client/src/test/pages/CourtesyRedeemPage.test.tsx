@@ -339,42 +339,6 @@ describe("CourtesyRedeemPage — registration questions", () => {
     });
   });
 
-  it("sends an unverified account to /verify-email and back to this code (#16)", async () => {
-    authState.user = { email: "juan@example.com", name: "Juan Pérez", phone: "595981123456" };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const json = (status: number, body: unknown) =>
-          new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-        if (String(input) === "/api/courtesy/redeem" && init?.method === "POST") {
-          return json(403, { message: "E-mail não verificado.", code: "EMAIL_NOT_VERIFIED" });
-        }
-        return json(200, {
-          code: CODE,
-          overridePrice: null,
-          remainingTickets: 1,
-          event: { id: EVENT_ID, title: "Webinar CDPI", modality: "online", registrationForm: [origem] },
-        });
-      }),
-    );
-    window.history.pushState({}, "", `/cortesia?code=${CODE}`);
-    const user = userEvent.setup();
-    renderPage();
-
-    await user.type(await screen.findByTestId("input-partner-company"), "Laboratorio Asunción");
-    await user.type(screen.getByTestId("input-occupation"), "Farmacéutico");
-    await user.click(screen.getByRole("radio", { name: "Instagram" }));
-    await user.click(screen.getByTestId("button-redeem"));
-
-    await waitFor(() => {
-      expect(setLocation).toHaveBeenCalledWith(
-        `/verify-email?email=juan%40example.com&next=${encodeURIComponent(`/cortesia?code=${CODE}`)}`,
-      );
-    });
-    expect(toastSpy).not.toHaveBeenCalledWith(expect.objectContaining({ variant: "destructive" }));
-    window.history.pushState({}, "", "/");
-  });
-
   it("shows the question an admin added after the page loaded, once the redeem is refused for the old form", async () => {
     authState.user = { email: "juan@example.com", name: "Juan Pérez", phone: "595981123456" };
     const turno = {
