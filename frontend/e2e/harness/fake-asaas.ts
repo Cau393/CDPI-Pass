@@ -11,12 +11,15 @@
  */
 import http from "node:http";
 import { loadConfig } from "./config";
+import { FAKE_CARDS } from "./fakeCards";
 
 const cfg = loadConfig();
 // 1x1 transparent PNG.
 const PIX_IMAGE =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 let seq = 0;
+// installment id -> row values, answered by GET /payments?installment=<id>.
+const installments = new Map<string, number[]>();
 const requests: { method: string; path: string; body: unknown }[] = [];
 
 function send(res: http.ServerResponse, status: number, body: unknown, type = "application/json") {
@@ -43,7 +46,7 @@ const server = http.createServer((req, res) => {
     }
     if (path === "/__requests") return send(res, 200, requests);
     if (path === "/health") return send(res, 200, { ok: true });
-    requests.push({ method, path, body: body ? { ...body, cpfCnpj: undefined } : null });
+    requests.push({ method, path, body: body ? { ...body, cpfCnpj: undefined, creditCard: undefined, creditCardHolderInfo: undefined } : null });
     if (requests.length > 500) requests.shift();
 
     if (method === "GET" && path === "/customers") return send(res, 200, { data: [] });
@@ -70,6 +73,34 @@ const server = http.createServer((req, res) => {
         dateCreated: new Date().toISOString(),
       });
     }
+    if (method === "POST" && path === "/payments" && body?.creditCard) {
+      const number = String(body.creditCard.number ?? "").replace(/\D/g, "");
+      if (number === FAKE_CARDS.declined) {
+        return send(res, 400, {
+          errors: [{ code: "invalid_creditCard", description: "Transação não autorizada." }],
+        });
+      }
+      const id = `pay_fake${++seq}`;
+      const count = Number(body.installmentCount) || 1;
+      const total = Number(body.totalValue ?? body.value);
+      const value = count > 1 ? Math.round((total / count) * 100) / 100 : total;
+      let installment: string | undefined;
+      if (count > 1) {
+        installment = `ins_fake${++seq}`;
+        installments.set(installment, Array.from({ length: count }, () => value));
+      }
+      const risk = number === FAKE_CARDS.risk;
+      return send(res, 200, {
+        id,
+        status: risk ? "AWAITING_RISK_ANALYSIS" : "CONFIRMED",
+        value,
+        netValue: value,
+        billingType: "CREDIT_CARD",
+        ...(installment ? { installment } : {}),
+        dateCreated: new Date().toISOString(),
+        creditCard: { creditCardNumber: number.slice(-4), creditCardBrand: "VISA", creditCardToken: "fake-token" },
+      });
+    }
     if (method === "POST" && path === "/payments") {
       const id = `pay_fake${++seq}`;
       return send(res, 200, {
@@ -89,6 +120,10 @@ const server = http.createServer((req, res) => {
         payload: "00020126FAKE-PIX-PAYLOAD-FOR-E2E",
         expirationDate: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       });
+    }
+    if (method === "GET" && path === "/payments" && url.searchParams.get("installment")) {
+      const rows = installments.get(url.searchParams.get("installment")!) ?? [];
+      return send(res, 200, { data: rows.map((value, i) => ({ id: `pay_fakeins${i}`, value })) });
     }
     if (method === "GET" && path.startsWith("/payments")) return send(res, 200, { data: [] });
     if (method === "GET" && /^\/(invoice|boleto|link)\//.test(path)) {

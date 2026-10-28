@@ -65,6 +65,8 @@ function startServer() {
     JWT_SECRET: "e2e-jwt-secret",
     // Every test logs in from 127.0.0.1; production ignores this (server/utils/authRateLimitMax.ts).
     AUTH_RATE_LIMIT_MAX: "100000",
+    CARD_ATTEMPT_IP_RATE_LIMIT_MAX: "100000",
+    CARD_ATTEMPT_EMAIL_RATE_LIMIT_MAX: "100000",
     QR_CODE_SECRET: "e2e-qr",
     ASAAS_API_KEY: "e2e-dummy-not-a-key",
     ASAAS_WEBHOOK_TOKEN: "e2e-dummy",
