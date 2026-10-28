@@ -218,6 +218,23 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     expect(acceptedRefunds.filter((c) => c.includes(body.payment.id))).toEqual([]);
   });
 
+  it.each(["PAYMENT_REPROVED_BY_RISK_ANALYSIS", "PAYMENT_CREDIT_CARD_CAPTURE_REFUSED"])(
+    "%s on a legacy payment-link order (by link id and externalReference) does not cancel it",
+    async (event) => {
+      const linkId = `lnk${randomUUID().slice(0, 12)}`;
+      const { eventId, orderId } = await pendingOrder("credit_card", linkId);
+
+      const status = await deliver({
+        event,
+        payment: { id: `pay_${randomUUID().slice(0, 12)}`, billingType: "CREDIT_CARD", status: "REFUSED", value: 212.33, externalReference: orderId, paymentLink: linkId },
+      });
+
+      // One failed attempt on the link must not kill the order that can still be bought through it.
+      expect(status).toBe(200);
+      expect(await state(orderId, eventId)).toEqual({ status: "pending", attendees: 0 });
+    },
+  );
+
   it("installments delivered at the same time count one seat and send one ticket", async () => {
     const linkId = `lnk${randomUUID().slice(0, 12)}`;
     const { eventId, orderId, email } = await pendingOrder("credit_card", linkId);

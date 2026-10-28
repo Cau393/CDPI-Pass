@@ -22,6 +22,7 @@ const CARD_PAYMENT = {
   customer: { name: "Comprador Teste", email: "comprador@example.test", cpfCnpj: "52998224725", phone: "11987654321" },
   reuseCustomer: false,
   value: 150,
+  dueDate: new Date("2026-12-05T00:00:00Z"),
   installmentCount: 1 as 1 | 2 | 3,
   description: "Ingresso para Evento",
   externalReference: "order-card-1",
@@ -217,7 +218,8 @@ describe("AsaasService.createCardPayment (ADR-017 Stage 3)", () => {
       creditCard: { holderName: "COMPRADOR TESTE", number: PAN, expiryMonth: "12", expiryYear: "2031", ccv: CCV },
       creditCardHolderInfo: CARD_PAYMENT.holder,
     });
-    expect(charge.body.dueDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // The date passed in (the +7 day one of the PIX/boleto branch), not today.
+    expect(charge.body.dueDate).toBe("2026-12-05");
     expect(charge.body).not.toHaveProperty("installmentCount");
     expect(charge.body).not.toHaveProperty("totalValue");
   });

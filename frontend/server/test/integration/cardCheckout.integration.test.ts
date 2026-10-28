@@ -181,6 +181,12 @@ function fakeAsaas(method: string, path: string, query: Record<string, string>, 
   throw new Error(`fake Asaas: unexpected request ${method} ${path}`);
 }
 
+/** Test hooks on POST /payments with a card: a failure to simulate, or code to run before Asaas answers. */
+const cardHooks: {
+  failure: "network" | "503" | null;
+  beforeAnswer: ((body: any, answer: any) => Promise<void>) | null;
+} = { failure: null, beforeAnswer: null };
+
 /** Answers the Asaas base URL, passes the test's own calls to the local server, throws on anything else. */
 const stubbedFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = new URL(String(input));
@@ -188,7 +194,18 @@ const stubbedFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (`${url.origin}${url.pathname}`.startsWith(ASAAS_BASE)) {
     const path = url.pathname.slice(new URL(ASAAS_BASE).pathname.length);
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    return fakeAsaas(init?.method ?? "GET", path, Object.fromEntries(url.searchParams), body);
+    const isCardCharge = (init?.method ?? "GET") === "POST" && path === "/payments" && Boolean(body?.creditCard);
+    if (isCardCharge && cardHooks.failure === "network") {
+      asaasRequests.push({ method: "POST", path, query: {}, body });
+      throw new TypeError("fetch failed");
+    }
+    if (isCardCharge && cardHooks.failure === "503") {
+      asaasRequests.push({ method: "POST", path, query: {}, body });
+      return asaasJson(503, {});
+    }
+    const answer = fakeAsaas(init?.method ?? "GET", path, Object.fromEntries(url.searchParams), body);
+    if (isCardCharge && cardHooks.beforeAnswer && answer.ok) await cardHooks.beforeAnswer(body, await answer.clone().json());
+    return answer;
   }
   throw new Error(`unexpected outbound fetch to ${url.origin}`);
 }) as typeof fetch;
@@ -416,6 +433,12 @@ function cardWebhook(event: string, orderId: string, paymentId: string, value: n
   };
 }
 
+/** A card webhook with any event name and payment status. */
+function cardEvent(event: string, status: string, orderId: string, paymentId: string, value: number) {
+  const base = cardWebhook("PAYMENT_CONFIRMED", orderId, paymentId, value);
+  return { event, payment: { ...base.payment, status } };
+}
+
 /** UUIDs and the like are hex, so a 4-digit CVV can occur inside one by chance: look at it without them. */
 function stripIds(text: string): string {
   return text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "");
@@ -459,6 +482,9 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
     mocks.sendOnlineEventEmail.mockClear();
     mocks.sendCardPaymentLinkEmail.mockClear();
     mocks.foreignPaidEnabled.value = false;
+    mocks.sendTicketEmail.mockImplementation(async () => true);
+    cardHooks.failure = null;
+    cardHooks.beforeAnswer = null;
     asaasRequests.length = 0;
     responseTexts.length = 0;
   });
@@ -732,6 +758,154 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
       expect(res.body.code).toBe("invalid_card");
       expect(await orderCount(eventId)).toBe(0);
       expect(asaasRequests).toHaveLength(0);
+    });
+  });
+
+  describe("Asaas docs amendments (A1 to A5)", () => {
+    it("A1: the card charge's dueDate is the +7 day date of PIX/boleto, not today", async () => {
+      const eventId = await createEvent();
+
+      await placeGuestCardOrder(eventId);
+
+      const [charge] = asaasCharges();
+      const days = (Date.parse(charge.body.dueDate) - Date.parse(new Date().toISOString().slice(0, 10))) / 86400_000;
+      expect(charge.body.dueDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(days).toBeGreaterThanOrEqual(6);
+      expect(days).toBeLessThanOrEqual(8);
+    });
+
+    it("A2: PAYMENT_CONFIRMED arriving before Asaas answers the charge → 201 paid, one ticket e-mail, and the QR already stored", async () => {
+      const eventId = await createEvent();
+      const typed = buyer();
+      const qrWhenEmailed: Array<string | null> = [];
+      let racedOrderId = "";
+      mocks.sendTicketEmail.mockImplementation(async () => {
+        qrWhenEmailed.push((await orderRow(racedOrderId)).qr_code_data);
+        return true;
+      });
+      cardHooks.beforeAnswer = async (body, answer) => {
+        racedOrderId = body.externalReference;
+        const raced = await orderRow(racedOrderId);
+        const status = await deliverWebhook({
+          event: "PAYMENT_CONFIRMED",
+          payment: { ...cardWebhook("PAYMENT_CONFIRMED", racedOrderId, answer.id, Number(raced.amount)).payment, installment: null },
+        });
+        expect(status).toBe(200);
+      };
+
+      const { res } = await placeGuestCardOrder(eventId, { typed });
+
+      expect(res.body.order.status).toBe("paid");
+      expect(confirmationsTo(typed.email)).toHaveLength(1);
+      expect(qrWhenEmailed).toHaveLength(1);
+      expect(qrWhenEmailed[0]).toEqual(expect.any(String));
+      expect(qrWhenEmailed[0]).not.toBe("");
+      expect((await orderRow(res.body.order.id)).status).toBe("paid");
+    });
+
+    it.each([["network error", "network"], ["503", "503"]] as const)(
+      "A3: a %s on POST /payments → 5xx, the order is kept pending with no e-mail; a later PAYMENT_CONFIRMED by externalReference pays it",
+      async (_label, failure) => {
+        const eventId = await createEvent();
+        const typed = buyer();
+        cardHooks.failure = failure;
+
+        const res = await submitCard(eventId, { typed });
+
+        expect(res.status).toBeGreaterThanOrEqual(500);
+        expect(res.status).toBeLessThan(600);
+        expect(JSON.stringify(res.body)).not.toContain("fetch failed");
+        expect(await orderCount(eventId)).toBe(1);
+        const { rows } = await pool.query(`SELECT * FROM orders WHERE event_id = $1`, [eventId]);
+        expect(rows[0].status).toBe("pending");
+        expect(rows[0].asaas_payment_id).toBeNull();
+        expect(confirmationsTo(typed.email)).toHaveLength(0);
+
+        cardHooks.failure = null;
+        const status = await deliverWebhook(
+          cardEvent("PAYMENT_CONFIRMED", "CONFIRMED", rows[0].id, "pay_late_charge_1", Number(rows[0].amount)),
+        );
+
+        expect(status).toBe(200);
+        expect((await orderRow(rows[0].id)).status).toBe("paid");
+        expect(confirmationsTo(typed.email)).toHaveLength(1);
+      },
+    );
+
+    it("A4: AWAITING_RISK_ANALYSIS then PAYMENT_REPROVED_BY_RISK_ANALYSIS → cancelled, no e-mail, and the pending cap no longer counts it", async () => {
+      const eventId = await createEvent();
+      const typed = buyer();
+      const placed = [];
+      for (let i = 0; i < 3; i++) placed.push((await placeGuestCardOrder(eventId, { typed, number: PAN_RISK })).res.body);
+      const capped = await submitCard(eventId, { typed, number: PAN_RISK });
+      expect(capped.status).toBe(429);
+      expect(capped.body.code).toBe("too_many_pending_orders");
+      const row = await orderRow(placed[0].order.id);
+
+      const status = await deliverWebhook(
+        cardEvent("PAYMENT_REPROVED_BY_RISK_ANALYSIS", "REFUSED", row.id, row.asaas_payment_id, Number(row.amount)),
+      );
+
+      expect(status).toBe(200);
+      expect((await orderRow(row.id)).status).toBe("cancelled");
+      expect(confirmationsTo(typed.email)).toHaveLength(0);
+      const again = await submitCard(eventId, { typed, number: PAN_RISK });
+      expect(again.status, JSON.stringify(again.body)).toBe(201);
+    });
+
+    it("A4: PAYMENT_CREDIT_CARD_CAPTURE_REFUSED cancels the pending order, with no e-mail", async () => {
+      const eventId = await createEvent();
+      const { res, typed } = await placeGuestCardOrder(eventId, { number: PAN_RISK });
+      const row = await orderRow(res.body.order.id);
+
+      const status = await deliverWebhook(
+        cardEvent("PAYMENT_CREDIT_CARD_CAPTURE_REFUSED", "REFUSED", row.id, row.asaas_payment_id, Number(row.amount)),
+      );
+
+      expect(status).toBe(200);
+      expect((await orderRow(row.id)).status).toBe("cancelled");
+      expect(confirmationsTo(typed.email)).toHaveLength(0);
+    });
+
+    it("A4: a reproval is matched by the stored payment id only: another payment id with this externalReference does not cancel", async () => {
+      const eventId = await createEvent();
+      const { res } = await placeGuestCardOrder(eventId, { number: PAN_RISK });
+      const row = await orderRow(res.body.order.id);
+
+      const status = await deliverWebhook(
+        cardEvent("PAYMENT_REPROVED_BY_RISK_ANALYSIS", "REFUSED", row.id, "pay_some_other_attempt", Number(row.amount)),
+      );
+
+      expect(status).toBe(200);
+      expect((await orderRow(row.id)).status).toBe("pending");
+    });
+
+    it("A5: PAYMENT_APPROVED_BY_RISK_ANALYSIS with status CONFIRMED pays the order, with one e-mail", async () => {
+      const eventId = await createEvent();
+      const { res, typed } = await placeGuestCardOrder(eventId, { number: PAN_RISK });
+      const row = await orderRow(res.body.order.id);
+
+      const status = await deliverWebhook(
+        cardEvent("PAYMENT_APPROVED_BY_RISK_ANALYSIS", "CONFIRMED", row.id, row.asaas_payment_id, Number(row.amount)),
+      );
+
+      expect(status).toBe(200);
+      expect((await orderRow(row.id)).status).toBe("paid");
+      expect(confirmationsTo(typed.email)).toHaveLength(1);
+    });
+
+    it("A5: PAYMENT_APPROVED_BY_RISK_ANALYSIS with status AWAITING_RISK_ANALYSIS leaves the order pending, with no e-mail", async () => {
+      const eventId = await createEvent();
+      const { res, typed } = await placeGuestCardOrder(eventId, { number: PAN_RISK });
+      const row = await orderRow(res.body.order.id);
+
+      const status = await deliverWebhook(
+        cardEvent("PAYMENT_APPROVED_BY_RISK_ANALYSIS", "AWAITING_RISK_ANALYSIS", row.id, row.asaas_payment_id, Number(row.amount)),
+      );
+
+      expect(status).toBe(200);
+      expect((await orderRow(row.id)).status).toBe("pending");
+      expect(confirmationsTo(typed.email)).toHaveLength(0);
     });
   });
 
