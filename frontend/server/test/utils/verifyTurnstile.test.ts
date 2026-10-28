@@ -4,8 +4,8 @@ import { verifyTurnstile } from "../../utils/verifyTurnstile";
 // ADR-017 Stage 2: Cloudflare Turnstile gate for guest checkout. Fail-closed in production.
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
-function fakeFetch(json: unknown) {
-  return vi.fn(async (_url: unknown, _init?: RequestInit) => ({ json: async () => json }) as unknown as Response);
+function fakeFetch(json: unknown, ok = true) {
+  return vi.fn(async (_url: unknown, _init?: RequestInit) => ({ ok, json: async () => json }) as unknown as Response);
 }
 
 afterEach(() => {
@@ -46,6 +46,10 @@ describe("verifyTurnstile with a secret", () => {
 
   it("is false when success is false", async () => {
     await expect(verifyTurnstile("tok", "1.1.1.1", env, fakeFetch({ success: false }))).resolves.toBe(false);
+  });
+
+  it("is false when Cloudflare answers an error status", async () => {
+    await expect(verifyTurnstile("tok", "1.1.1.1", env, fakeFetch({ success: false }, false))).resolves.toBe(false);
   });
 
   it("is false when fetch throws", async () => {

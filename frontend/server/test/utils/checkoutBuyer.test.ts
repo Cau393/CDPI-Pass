@@ -316,6 +316,19 @@ describe("resolveCheckoutBuyer: existing guest row (no password)", () => {
     expect(writes(store)).toBe(0);
   });
 
+  it("maps document_already_set from setUserIdentity to the same generic 409", async () => {
+    rows.push(makeUser({ email: "maria@example.test", password: null }));
+    const store = fakeStorage();
+    store.setUserIdentity.mockResolvedValueOnce({ ok: false, reason: "document_already_set" });
+
+    const result = await resolveCheckoutBuyer(
+      { sessionUser: undefined, buyer: brBuyer, event: presencialPaid, paid: true },
+      store,
+    );
+
+    expect(result).toEqual({ ok: false, status: 409, body: IDENTITY_CONFLICT });
+  });
+
   it("maps document_taken from setUserIdentity to the same generic 409", async () => {
     rows.push(makeUser({ email: "maria@example.test", password: null }));
     const store = fakeStorage();
@@ -398,6 +411,17 @@ describe("resolveCheckoutBuyer: concurrent creation", () => {
     );
 
     expect(result).toMatchObject({ ok: true, user: { id: winner.id, name: "Vencedor" }, placedAsGuest: true });
+  });
+
+  it("lets a non-unique createGuestUser error propagate", async () => {
+    const store = fakeStorage();
+    store.createGuestUser.mockImplementationOnce(async () => {
+      throw new Error("connection lost");
+    });
+
+    await expect(
+      resolveCheckoutBuyer({ sessionUser: undefined, buyer: buyerBase, event: onlineFree, paid: false }, store),
+    ).rejects.toThrow("connection lost");
   });
 
   it("answers 409 when the unique violation leaves no row to read", async () => {

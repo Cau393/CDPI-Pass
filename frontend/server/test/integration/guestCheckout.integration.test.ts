@@ -135,11 +135,12 @@ async function createEvent(opts: {
   modality: "presencial" | "online";
   isFree: boolean;
   price?: string;
+  certificateTemplateUrl?: string;
 }): Promise<string> {
   const id = randomUUID();
   await pool.query(
-    `INSERT INTO events (id, title, description, date, location, price, is_active, nps_type, is_free, modality, meeting_url, registration_form, current_attendees)
-     VALUES ($1,$2,'<p>Teste</p>',$3,'Local de teste',$4,true,'cdpi_event',$5,$6,$7,'[]'::jsonb,0)`,
+    `INSERT INTO events (id, title, description, date, location, price, is_active, nps_type, is_free, modality, meeting_url, registration_form, current_attendees, certificate_template_url)
+     VALUES ($1,$2,'<p>Teste</p>',$3,'Local de teste',$4,true,'cdpi_event',$5,$6,$7,'[]'::jsonb,0,$8)`,
     [
       id,
       `[TEST] Convidado ${id.slice(0, 8)}`,
@@ -148,6 +149,7 @@ async function createEvent(opts: {
       opts.isFree,
       opts.modality,
       opts.modality === "online" ? "https://meet.test/sala" : null,
+      opts.certificateTemplateUrl ?? null,
     ],
   );
   createdEventIds.push(id);
@@ -233,13 +235,22 @@ function confirmationsTo(to: string): Array<{ to: string; data: any }> {
     .map((call) => ({ to: call[0] as string, data: call[1] as any }));
 }
 
-/** A guest PIX order on a paid in-person event, through the real route. */
-async function placeGuestPixOrder(eventId: string, over: Record<string, unknown> = {}) {
+/** POST /api/orders as a guest on a paid in-person event; the caller checks the outcome. */
+async function postGuestPixOrder(eventId: string, over: Record<string, unknown> = {}) {
   const typed = buyer({ cpf: makeCpf(), address: ADDRESS, ...over });
   const res = await api("POST", "/api/orders", {
     body: { eventId, paymentMethod: "pix", buyer: typed, turnstileToken: "ok" },
   });
   return { res, buyer: typed };
+}
+
+/** A guest PIX order that must succeed, with its access token. */
+async function placeGuestPixOrder(eventId: string, over: Record<string, unknown> = {}) {
+  const placed = await postGuestPixOrder(eventId, over);
+  // Every caller relies on the order and its token: fail here, not later, if they are missing.
+  expect(placed.res.status, JSON.stringify(placed.res.body)).toBe(201);
+  expect(typeof placed.res.body.orderAccessToken).toBe("string");
+  return placed;
 }
 
 async function freeGuestSubscribe(eventId: string, typed: Buyer) {
@@ -395,22 +406,24 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
       const eventId = await createEvent({ modality: "presencial", isFree: false });
       const account = await createPasswordUser({ cpf: makeCpf() });
 
-      const { res } = await placeGuestPixOrder(eventId, { email: account.email, cpf: makeCpf() });
+      const { res } = await postGuestPixOrder(eventId, { email: account.email, cpf: makeCpf() });
 
       expect(res.status).toBe(409);
       expect(res.body.code).toBe("identity_conflict");
       expect(mocks.createPayment).not.toHaveBeenCalled();
+      expect(await ordersOf(account.id, eventId)).toHaveLength(0);
     });
 
     it("a new e-mail with a CPF owned by another user → 409 identity_conflict and no row", async () => {
       const eventId = await createEvent({ modality: "presencial", isFree: false });
       const owner = await createPasswordUser({ complete: true });
 
-      const { res, buyer: typed } = await placeGuestPixOrder(eventId, { cpf: owner.cpf });
+      const { res, buyer: typed } = await postGuestPixOrder(eventId, { cpf: owner.cpf });
 
       expect(res.status).toBe(409);
       expect(res.body.code).toBe("identity_conflict");
       expect(await userRows(typed.email)).toHaveLength(0);
+      expect(await orderCount(eventId)).toBe(0);
     });
 
     it("a new e-mail with a passport owned by another user → 409 identity_conflict and no row", async () => {
@@ -430,6 +443,7 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
       expect(res.status).toBe(409);
       expect(res.body.code).toBe("identity_conflict");
       expect(await userRows(typed.email)).toHaveLength(0);
+      expect(await orderCount(eventId)).toBe(0);
     });
   });
 
@@ -449,21 +463,26 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
       expect(mocks.createPayment).not.toHaveBeenCalled();
     });
 
-    it("a duplicate paid holder (the CPF already has a paid order for the event) → 409 and no Asaas call", async () => {
+    it("a duplicate paid holder (another user's paid order already carries the CPF) → 409 and no Asaas call", async () => {
       const eventId = await createEvent({ modality: "presencial", isFree: false });
       const cpf = makeCpf();
-      const holder = await createPasswordUser({ cpf });
+      // The earlier buyer's account has no CPF of its own: only orders.cpf holds it, so the
+      // resolver lets the new e-mail through and the CPF branch of the duplicate check decides.
+      const earlier = await createPasswordUser();
       await pool.query(
         `INSERT INTO orders (id, user_id, event_id, status, amount, payment_method, asaas_payment_id, cpf, qr_code_data)
          VALUES ($1,$2,$3,'paid','105.00','pix','pay_already',$4,'qr-data')`,
-        [randomUUID(), holder.id, eventId, cpf],
+        [randomUUID(), earlier.id, eventId, cpf],
       );
 
-      const { res } = await placeGuestPixOrder(eventId, { email: holder.email, cpf });
+      const { res, buyer: typed } = await postGuestPixOrder(eventId, { cpf });
 
       expect(res.status, JSON.stringify(res.body)).toBe(409);
       expect(res.body.message).toMatch(/já possui inscrição/i);
       expect(mocks.createPayment).not.toHaveBeenCalled();
+      expect(await orderCount(eventId)).toBe(1);
+      const guest = await userRows(typed.email);
+      for (const row of guest) expect(await ordersOf(row.id, eventId)).toHaveLength(0);
     });
   });
 
@@ -498,6 +517,71 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
       expect(res.status).toBe(401);
       expect(await userRows(typed.email)).toHaveLength(0);
     });
+  });
+
+  describe("a typed, empty or stale Authorization header never degrades to a guest", () => {
+    type Presented = { token?: string; headers?: Record<string, string> };
+    const kinds: Array<[string, (user: TestUser) => Promise<Presented>]> = [
+      [
+        "a password-reset token",
+        async (user) => {
+          const { signPasswordResetToken } = await import("../../middleware/auth");
+          return { token: signPasswordResetToken({ id: user.id, password: "x" }) };
+        },
+      ],
+      [
+        "an order-access token",
+        async () => {
+          const { signOrderAccessToken } = await import("../../middleware/auth");
+          return { token: signOrderAccessToken(randomUUID()) };
+        },
+      ],
+      [
+        "an e-mail-verification token",
+        async (user) => {
+          const { signEmailVerificationToken } = await import("../../middleware/auth");
+          return { token: signEmailVerificationToken(user.id) };
+        },
+      ],
+      ["an empty Bearer", async () => ({ headers: { Authorization: "Bearer " } })],
+      [
+        "a session token with a stale pv",
+        async (user) => ({ token: jwt.sign({ userId: user.id, pv: "stale0000000" }, JWT_SECRET) }),
+      ],
+    ];
+
+    for (const [label, present] of kinds) {
+      it(`${label} on POST /api/events/:id/subscribe → 401, no row, no order`, async () => {
+        const eventId = await createEvent({ modality: "online", isFree: true });
+        const user = await createPasswordUser();
+        const typed = buyer();
+
+        const res = await api("POST", `/api/events/${eventId}/subscribe`, {
+          ...(await present(user)),
+          body: { buyer: typed, turnstileToken: "ok" },
+        });
+
+        expect(res.status).toBe(401);
+        expect(await userRows(typed.email)).toHaveLength(0);
+        expect(await orderCount(eventId)).toBe(0);
+      });
+
+      it(`${label} on POST /api/orders → 401, no row, no order, no Asaas call`, async () => {
+        const eventId = await createEvent({ modality: "presencial", isFree: false });
+        const user = await createPasswordUser();
+        const typed = buyer({ cpf: makeCpf(), address: ADDRESS });
+
+        const res = await api("POST", "/api/orders", {
+          ...(await present(user)),
+          body: { eventId, paymentMethod: "pix", buyer: typed, turnstileToken: "ok" },
+        });
+
+        expect(res.status).toBe(401);
+        expect(await userRows(typed.email)).toHaveLength(0);
+        expect(await orderCount(eventId)).toBe(0);
+        expect(mocks.createPayment).not.toHaveBeenCalled();
+      });
+    }
   });
 
   describe("concurrency and limits", () => {
@@ -564,6 +648,8 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
 
       expect(guest.status).toBe(403);
       expect(guest.body.code).toBe("turnstile_failed");
+      // Only the guest request is checked; the session request never reaches Turnstile (R1).
+      expect(mocks.verifyTurnstile).toHaveBeenCalledTimes(1);
       expect(mocks.verifyTurnstile.mock.calls[0][0]).toBe("bad-token");
       expect(await userRows(typed.email)).toHaveLength(0);
       expect(session.status).not.toBe(403);
@@ -593,6 +679,17 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
 
       const check = await api("POST", `/api/orders/${y.res.body.order.id}/check-status`, {
         headers: { "X-Order-Access": x.res.body.orderAccessToken },
+      });
+
+      expect(check.status).toBe(404);
+    });
+
+    it("a valid token for an order that does not exist → 404", async () => {
+      const { signOrderAccessToken } = await import("../../middleware/auth");
+      const orderId = randomUUID();
+
+      const check = await api("POST", `/api/orders/${orderId}/check-status`, {
+        headers: { "X-Order-Access": signOrderAccessToken(orderId) },
       });
 
       expect(check.status).toBe(404);
@@ -661,20 +758,54 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
   describe("Meus Ingressos visibility", () => {
     it("a guest order on an unverified password account is hidden until the e-mail is verified", async () => {
       const { signEmailVerificationToken } = await import("../../middleware/auth");
-      const eventId = await createEvent({ modality: "online", isFree: true });
+      const eventId = await createEvent({
+        modality: "online",
+        isFree: true,
+        certificateTemplateUrl: "https://s3.test/template.pdf",
+      });
       const account = await createPasswordUser({ verified: false });
       const sub = await freeGuestSubscribe(eventId, buyer({ email: account.email }));
       expect(sub.status, JSON.stringify(sub.body)).toBe(201);
       const [order] = await ordersOf(account.id, eventId);
       expect(order.placed_as_guest).toBe(true);
+      // Attended: the certificate routes derive from orders with qr_code_used.
+      await pool.query(`UPDATE orders SET qr_code_used = true WHERE id = $1`, [order.id]);
+      const certificateBody = {
+        eventId,
+        npsType: "cdpi_event",
+        answers: {
+          name: "Maria Silva",
+          email: account.email,
+          phone: "5511987654321",
+          workshopFeeling: "Gostei bastante",
+          themesRelevant: "Sim",
+          instructorsDidactics: "Boa",
+          highlight: "ok",
+          careerValue: "Em partes",
+          wouldAttendAgain: "Talvez, depende do tema",
+          supportRating: "Bom, mas pode melhorar",
+          supportOtherText: "",
+          messageToTeam: "",
+          privacyConsent: true,
+        },
+      };
 
       const list = await api("GET", "/api/orders", { token: account.token });
       const detail = await api("GET", `/api/orders/${order.id}`, { token: account.token });
       const check = await api("POST", `/api/orders/${order.id}/check-status`, { token: account.token });
       const cancel = await api("DELETE", `/api/orders/${order.id}/cancel`, { token: account.token });
 
+      const certificates = await api("GET", "/api/users/me/certificates", { token: account.token });
+      const generate = await api("POST", "/api/certificates/generate", { token: account.token, body: certificateBody });
+
       expect(list.status).toBe(200);
       expect(list.body.orders.map((o: any) => o.id)).not.toContain(order.id);
+      expect(list.body.totalPages).toBe(0);
+      expect(certificates.status).toBe(200);
+      expect(certificates.body.data).toEqual([]);
+      expect(certificates.body.pagination.total).toBe(0);
+      expect(generate.status).toBe(400);
+      expect(generate.body.message).toMatch(/elegível/i);
       expect(detail.status).toBe(404);
       expect(check.status).toBe(404);
       expect(cancel.status).toBe(404);
@@ -688,6 +819,12 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
       expect(verify.status).toBe(200);
       expect(listAfter.body.orders.map((o: any) => o.id)).toContain(order.id);
       expect(detailAfter.status).toBe(200);
+      expect(listAfter.body.totalPages).toBe(1);
+      const certificatesAfter = await api("GET", "/api/users/me/certificates", { token: account.token });
+      const generateAfter = await api("POST", "/api/certificates/generate", { token: account.token, body: certificateBody });
+      expect(certificatesAfter.body.data.map((c: any) => c.eventId)).toEqual([eventId]);
+      // Past the eligibility gate (it may still fail later on the unconfigured certificate service).
+      expect(String(generateAfter.body?.message ?? "")).not.toMatch(/elegível/i);
     });
   });
 
@@ -705,10 +842,10 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
       const { email } = await guestRowAfterFreeOrder();
 
       const login = await api("POST", "/api/auth/login", { body: { email, password: "qualquer-senha" } });
-      const empty = await api("POST", "/api/auth/login", { body: { email, password: "x" } });
+      const other = await api("POST", "/api/auth/login", { body: { email, password: "x" } });
 
       expect(login.status).toBe(401);
-      expect(empty.status).toBe(401);
+      expect(other.status).toBe(401);
     });
 
     it("register on a guest e-mail → 409 guest_account_claim, a create-password e-mail, the password stays NULL", async () => {
@@ -752,11 +889,35 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
         body: { currentPassword: "qualquer", newPassword: "senha-nova-123" },
       });
       const remove = await api("DELETE", "/api/profile", { token, body: { password: "qualquer" } });
+      const profile = await api("PUT", "/api/profile", {
+        token,
+        body: { name: "Outro Nome Completo", currentPassword: "qualquer" },
+      });
 
       expect(change.status).toBe(400);
       expect(change.body.code).toBe("password_not_set");
       expect(remove.status).toBe(400);
       expect(remove.body.code).toBe("password_not_set");
+      expect(profile.status).toBe(400);
+      expect(profile.body.code).toBe("password_not_set");
+    });
+
+    it("forgot-password on a guest e-mail sends a create-password link; on a password account, a reset link", async () => {
+      const { email } = await guestRowAfterFreeOrder();
+      const account = await createPasswordUser();
+
+      const guest = await api("POST", "/api/auth/forgot-password", { body: { email } });
+      expect(guest.status).toBe(200);
+      expect(mocks.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+      expect(mocks.sendPasswordResetEmail).toHaveBeenLastCalledWith(expect.objectContaining({ email }), { purpose: "create" });
+
+      mocks.sendPasswordResetEmail.mockClear();
+      const reset = await api("POST", "/api/auth/forgot-password", { body: { email: account.email } });
+      expect(reset.status).toBe(200);
+      expect(mocks.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+      const [target, options] = mocks.sendPasswordResetEmail.mock.calls[0] as [{ email: string }, { purpose?: string } | undefined];
+      expect(target.email).toBe(account.email);
+      expect(options?.purpose ?? "reset").toBe("reset");
     });
   });
 
