@@ -54,6 +54,24 @@ export class CardDeclinedError extends AsaasApiError {
   }
 }
 
+/**
+ * The card charge request (POST /payments) failed in a way that does not prove Asaas refused it
+ * (network, timeout, 5xx, 401): the charge may exist. Keeps only the HTTP status and Asaas error
+ * codes of the original failure, never its request data.
+ */
+export class CardChargeOutcomeUnknownError extends Error {
+  readonly status: number | null;
+  readonly codes: string[];
+
+  constructor(cause: unknown) {
+    const status = cause instanceof AsaasApiError ? cause.status : null;
+    super(`Card charge outcome unknown${status ? ` (Asaas ${status})` : ""}`);
+    this.name = "CardChargeOutcomeUnknownError";
+    this.status = status;
+    this.codes = cause instanceof AsaasApiError ? cause.codes : [];
+  }
+}
+
 export interface CheckoutPaymentErrorResponse {
   status: number;
   body: { message: string; code?: string };
@@ -82,7 +100,7 @@ export function checkoutPaymentErrorResponse(error: unknown): CheckoutPaymentErr
       },
     };
   }
-  if (error instanceof AsaasApiError) {
+  if (error instanceof AsaasApiError || error instanceof CardChargeOutcomeUnknownError) {
     return {
       status: 502,
       body: {

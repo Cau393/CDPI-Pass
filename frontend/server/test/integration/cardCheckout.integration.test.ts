@@ -18,6 +18,8 @@ import jwt from "jsonwebtoken";
 import { Pool } from "pg";
 import { randomUUID, randomInt } from "crypto";
 
+import { requestErrorHandler } from "../../utils/requestErrorHandler";
+
 const VERIFY_URL = process.env.VERIFY_DATABASE_URL;
 const enabled = Boolean(VERIFY_URL);
 
@@ -44,7 +46,7 @@ const PAN_RISK = "4000000000009995";
 const PAN_DECLINE = "4000000000000002";
 const CCV = "6024";
 const EXPIRY_MONTH = "09";
-const EXPIRY_YEAR = "2033";
+const EXPIRY_YEAR = String(new Date().getUTCFullYear() + 5);
 /** What the fake Asaas returns as `creditCard.creditCardToken`: a reusable charge token. */
 const ASAAS_CARD_TOKEN = "tok_leakcheck_9f3a7c21e4";
 
@@ -184,8 +186,10 @@ function fakeAsaas(method: string, path: string, query: Record<string, string>, 
 /** Test hooks on POST /payments with a card: a failure to simulate, or code to run before Asaas answers. */
 const cardHooks: {
   failure: "network" | "503" | null;
+  /** Answer POST /customers with a 503. */
+  customerFailure: boolean;
   beforeAnswer: ((body: any, answer: any) => Promise<void>) | null;
-} = { failure: null, beforeAnswer: null };
+} = { failure: null, customerFailure: false, beforeAnswer: null };
 
 /** Answers the Asaas base URL, passes the test's own calls to the local server, throws on anything else. */
 const stubbedFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -194,6 +198,10 @@ const stubbedFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (`${url.origin}${url.pathname}`.startsWith(ASAAS_BASE)) {
     const path = url.pathname.slice(new URL(ASAAS_BASE).pathname.length);
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    if (cardHooks.customerFailure && (init?.method ?? "GET") === "POST" && path === "/customers") {
+      asaasRequests.push({ method: "POST", path, query: {}, body });
+      return asaasJson(503, {});
+    }
     const isCardCharge = (init?.method ?? "GET") === "POST" && path === "/payments" && Boolean(body?.creditCard);
     if (isCardCharge && cardHooks.failure === "network") {
       asaasRequests.push({ method: "POST", path, query: {}, body });
@@ -324,9 +332,9 @@ function buyer(overrides: Record<string, unknown> = {}): Buyer {
 type TestUser = { id: string; token: string; email: string; cpf: string };
 
 /** An account with a password, a CPF and an address (so a session order needs nothing else). */
-async function createPasswordUser(): Promise<TestUser> {
+async function createPasswordUser(emailFor: (id: string) => string = (id) => `acct-${id.slice(0, 8)}@example.test`): Promise<TestUser> {
   const id = randomUUID();
-  const email = `acct-${id.slice(0, 8)}@example.test`;
+  const email = emailFor(id);
   const cpf = makeCpf();
   await pool.query(
     `INSERT INTO users (id, email, email_verified, password, name, cpf, phone, address)
@@ -468,6 +476,8 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
     app.set("trust proxy", 1);
     app.use(express.json());
     server = await registerRoutes(app);
+    // As in server/index.ts, after the routes.
+    app.use(requestErrorHandler);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
     const addr = server.address();
     if (!addr || typeof addr === "string") throw new Error("no port");
@@ -484,6 +494,7 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
     mocks.foreignPaidEnabled.value = false;
     mocks.sendTicketEmail.mockImplementation(async () => true);
     cardHooks.failure = null;
+    cardHooks.customerFailure = false;
     cardHooks.beforeAnswer = null;
     asaasRequests.length = 0;
     responseTexts.length = 0;
@@ -660,6 +671,19 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
       expect(await orderCount(eventId)).toBe(0);
     });
 
+    it("the e-mail bucket ignores the case of a session e-mail: the lower-case guest form shares it", async () => {
+      const eventId = await createEvent();
+      const user = await createPasswordUser((id) => `Acct-${id.slice(0, 8)}@Example.Test`);
+      for (let i = 0; i < 5; i++) {
+        expect((await submitCard(eventId, { token: user.token, number: PAN_DECLINE, cardHolder: { cpf: user.cpf } })).status).toBe(402);
+      }
+
+      const guest = await submitCard(eventId, { typed: buyer({ email: user.email.toLowerCase() }) });
+
+      expect(guest.status).toBe(429);
+      expect(guest.body.code).toBe("rate_limited");
+    });
+
     it("the 11th card submit from one IP (different e-mails) → 429 rate_limited", async () => {
       const eventId = await createEvent();
       const ip = `10.${randomInt(0, 256)}.${randomInt(0, 256)}.250`;
@@ -832,6 +856,47 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
       },
     );
 
+    it("a customer creation failure (nothing charged) deletes the order, unlike an unknown charge outcome", async () => {
+      const eventId = await createEvent();
+      cardHooks.customerFailure = true;
+
+      const res = await submitCard(eventId, { typed: buyer() });
+
+      expect(res.status).toBe(502);
+      expect(asaasCharges()).toHaveLength(0);
+      expect(await orderCount(eventId)).toBe(0);
+    });
+
+    it("sends an E.164 guest phone to Asaas in the national form", async () => {
+      const eventId = await createEvent();
+
+      await placeGuestCardOrder(eventId, { typed: buyer({ phone: "+55 11 98765-4321" }) });
+
+      expect(asaasCalls("POST", "/customers")[0].body.phone).toBe("11987654321");
+      expect(asaasCharges()[0].body.creditCardHolderInfo.phone).toBe("11987654321");
+    });
+
+    it("A5: PAYMENT_APPROVED_BY_RISK_ANALYSIS (CONFIRMED) on an already cancelled order logs REFUND_NEEDED and does not pay it", async () => {
+      const logged: string[] = [];
+      vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => void logged.push(args.map(String).join(" ")));
+      const eventId = await createEvent();
+      const { res, typed } = await placeGuestCardOrder(eventId, { number: PAN_RISK });
+      const row = await orderRow(res.body.order.id);
+      await deliverWebhook(
+        cardEvent("PAYMENT_REPROVED_BY_RISK_ANALYSIS", "REFUSED", row.id, row.asaas_payment_id, Number(row.amount)),
+      );
+      expect((await orderRow(row.id)).status).toBe("cancelled");
+
+      const status = await deliverWebhook(
+        cardEvent("PAYMENT_APPROVED_BY_RISK_ANALYSIS", "CONFIRMED", row.id, row.asaas_payment_id, Number(row.amount)),
+      );
+
+      expect(status).toBe(200);
+      expect((await orderRow(row.id)).status).toBe("cancelled");
+      expect(confirmationsTo(typed.email)).toHaveLength(0);
+      expect(logged.some((line) => line.includes(`REFUND_NEEDED order=${row.id}`))).toBe(true);
+    });
+
     it("A4: AWAITING_RISK_ANALYSIS then PAYMENT_REPROVED_BY_RISK_ANALYSIS → cancelled, no e-mail, and the pending cap no longer counts it", async () => {
       const eventId = await createEvent();
       const typed = buyer();
@@ -942,6 +1007,37 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
   });
 
   describe("PCI: card data is never logged or echoed", () => {
+    it("a malformed JSON body holding the PAN gets a fixed 400 with no fragment in the response or the console", async () => {
+      const logged = spyOnConsole();
+      const res = await fetch(`${baseUrl}/api/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Forwarded-For": randomIp() },
+        body: `{"paymentMethod":"credit_card","card":{"number":"${PAN_OK}","ccv":"${CCV}",`,
+      });
+      const text = await res.text();
+
+      expect(res.status).toBe(400);
+      expect(JSON.parse(text)).toEqual({ message: "Requisição inválida." });
+      expect(leaksIn(text)).toEqual([]);
+      expect(text).not.toContain(PAN_OK.slice(0, 8));
+      const consoleText = logged.join("\n");
+      expect(leaksIn(consoleText)).toEqual([]);
+      expect(consoleText).not.toContain(PAN_OK.slice(0, 8));
+    });
+
+    it("no orders, users or email_queue row holds the PAN or CVV after approved, declined and risk cases", async () => {
+      const eventId = await createEvent();
+      await placeGuestCardOrder(eventId);
+      await submitCard(eventId, { typed: buyer(), number: PAN_DECLINE });
+      await placeGuestCardOrder(eventId, { number: PAN_RISK });
+
+      for (const table of ["orders", "users", "email_queue"]) {
+        const { rows } = await pool.query(`SELECT t::text AS row FROM ${table} t`);
+        const text = rows.map((r) => r.row).join("\n");
+        expect(leaksIn(text), table).toEqual([]);
+      }
+    });
+
     const CONSOLE_METHODS = ["log", "info", "warn", "error", "debug"] as const;
 
     function spyOnConsole(): string[] {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { CONTACT_EMAIL } from "@shared/contact";
-import { AsaasApiError, CardDeclinedError, checkoutPaymentErrorResponse } from "../../utils/asaasErrors";
+import { AsaasApiError, CardChargeOutcomeUnknownError, CardDeclinedError, checkoutPaymentErrorResponse } from "../../utils/asaasErrors";
 
 // Body Asaas returned on 2026-10-06 for a passport customer in production.
 const FOREIGN_PAYER_DENIED = {
@@ -89,5 +89,21 @@ describe("checkoutPaymentErrorResponse", () => {
       status: 502,
       body: { code: "payment_provider_error" },
     });
+  });
+});
+
+describe("CardChargeOutcomeUnknownError", () => {
+  it("maps to the same 502 payment_provider_error as an AsaasApiError and keeps only status and codes", () => {
+    const wrapped = new CardChargeOutcomeUnknownError(new AsaasApiError(503, { errors: [{ code: "x", description: "secret" }] }));
+
+    expect(wrapped.status).toBe(503);
+    expect(wrapped.codes).toEqual(["x"]);
+    expect(JSON.stringify(wrapped)).not.toContain("secret");
+    expect(checkoutPaymentErrorResponse(wrapped)).toEqual(checkoutPaymentErrorResponse(new AsaasApiError(503, null)));
+    expect(checkoutPaymentErrorResponse(wrapped).status).toBe(502);
+  });
+
+  it("has a null status when the cause is not an Asaas answer (network)", () => {
+    expect(new CardChargeOutcomeUnknownError(new TypeError("fetch failed")).status).toBeNull();
   });
 });

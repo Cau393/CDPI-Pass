@@ -1,4 +1,4 @@
-import { AsaasApiError, CardDeclinedError } from "../utils/asaasErrors";
+import { AsaasApiError, CardChargeOutcomeUnknownError, CardDeclinedError } from "../utils/asaasErrors";
 import { brazilianNationalPhone } from "../utils/normalizePhoneE164";
 
 const DEFAULT_ASAAS_API_URL = "https://api.asaas.com/v3";
@@ -190,13 +190,17 @@ export class AsaasService {
    * Inline card charge (ADR-017). This is the only place that builds the Asaas card
    * request, and it never logs it: makeRequest logs method, path and the error
    * (status and codes only). A 400 from POST /payments is a declined card (Asaas
-   * does not save the charge); any other failure is left to the caller as an
-   * unknown outcome.
+   * does not save the charge); any other failure of that request is an unknown
+   * outcome (CardChargeOutcomeUnknownError). Customer-step failures propagate as is:
+   * nothing was charged.
    */
   async createCardPayment(params: CardPaymentParams): Promise<CardPaymentResult> {
+    // Asaas wants the national form of a Brazilian phone ("11987654321"), not E.164.
+    const nationalPhone = (phone: string) => brazilianNationalPhone(phone) ?? phone;
+    const contact = { ...params.customer, phone: nationalPhone(params.customer.phone) };
     const customer = params.reuseCustomer
-      ? await this.createCustomer(params.customer)
-      : await this.makeRequest("/customers", "POST", params.customer);
+      ? await this.createCustomer(contact)
+      : await this.makeRequest("/customers", "POST", contact);
 
     const body = {
       customer: customer.id,
@@ -220,7 +224,7 @@ export class AsaasService {
         cpfCnpj: params.holder.cpfCnpj,
         postalCode: params.holder.postalCode,
         addressNumber: params.holder.addressNumber,
-        phone: params.holder.phone,
+        phone: nationalPhone(params.holder.phone),
       },
       remoteIp: params.remoteIp,
     };
@@ -232,7 +236,8 @@ export class AsaasService {
       if (error instanceof AsaasApiError && error.status === 400) {
         throw new CardDeclinedError(error.codes);
       }
-      throw error;
+      // Not a refusal: Asaas may have created the charge, the route keeps the order for the webhook.
+      throw new CardChargeOutcomeUnknownError(error);
     }
     return {
       id: payment.id,

@@ -1,6 +1,6 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { AsaasService, asaasBaseUrl } from "../../services/asaasService";
-import { AsaasApiError, CardDeclinedError } from "../../utils/asaasErrors";
+import { AsaasApiError, CardChargeOutcomeUnknownError, CardDeclinedError } from "../../utils/asaasErrors";
 
 const FOREIGN_PAYMENT = {
   name: "Participante Estrangeira",
@@ -296,15 +296,54 @@ describe("AsaasService.createCardPayment (ADR-017 Stage 3)", () => {
     expect(failure).not.toBeInstanceOf(CardDeclinedError);
   });
 
-  it("a 500 on POST /payments propagates as a plain AsaasApiError", async () => {
+  it("a 500 on POST /payments is an unknown outcome, not a decline", async () => {
     stubCardFetch(() => jsonResponse(500, {}));
     vi.spyOn(console, "error").mockImplementation(() => {});
 
     const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
 
-    expect(failure).toBeInstanceOf(AsaasApiError);
+    expect(failure).toBeInstanceOf(CardChargeOutcomeUnknownError);
     expect(failure).not.toBeInstanceOf(CardDeclinedError);
     expect(failure.status).toBe(500);
+  });
+
+  it("a network error on POST /payments is an unknown outcome whose surfaces hold no PAN or CVV", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).endsWith("/customers")) return jsonResponse(200, { id: "cus_new" });
+      throw new TypeError(`fetch failed ${PAN} ${CCV}`);
+    }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(CardChargeOutcomeUnknownError);
+    expect(failure.status).toBeNull();
+    const surfaces = [failure.message, String(failure), JSON.stringify(failure), failure.stack].join("\n");
+    expect(surfaces).not.toContain(PAN);
+    expect(surfaces).not.toContain(CCV);
+  });
+
+  it("a failure of POST /customers is not an unknown outcome (nothing was charged)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(503, {})));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(AsaasApiError);
+    expect(failure).not.toBeInstanceOf(CardChargeOutcomeUnknownError);
+  });
+
+  it("sends E.164 phones in the national form to the customer and the holder info", async () => {
+    const calls = stubCardFetch(CONFIRMED_PAYMENT);
+
+    await new AsaasService().createCardPayment({
+      ...CARD_PAYMENT,
+      customer: { ...CARD_PAYMENT.customer, phone: "5511987654321" },
+      holder: { ...CARD_PAYMENT.holder, phone: "5511987654321" },
+    });
+
+    expect(calls.find((c) => c.url.endsWith("/customers"))!.body.phone).toBe("11987654321");
+    expect(calls.find((c) => c.url.endsWith("/payments"))!.body.creditCardHolderInfo.phone).toBe("11987654321");
   });
 
   it("neither the thrown error nor any console call contains the PAN or CVV", async () => {

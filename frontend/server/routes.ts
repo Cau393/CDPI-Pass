@@ -143,7 +143,7 @@ import { toPublicUser } from "./utils/publicUser";
 import { registrationFormsEqual } from "./utils/registrationFormEqual";
 import { decodeCsvBuffer } from "./utils/decodeCsvBuffer";
 import { normalizePhoneE164 } from "./utils/normalizePhoneE164";
-import { CardDeclinedError, checkoutPaymentErrorResponse } from "./utils/asaasErrors";
+import { CardChargeOutcomeUnknownError, checkoutPaymentErrorResponse } from "./utils/asaasErrors";
 import {
   cdpiApoiandoNpsAnswersSchema,
   cdpiEventNpsAnswersSchema,
@@ -272,7 +272,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     ...cardAttemptRateLimited,
     max: cardAttemptEmailRateLimitMax(),
     keyGenerator: (req: any) =>
-      `card:${req.user?.email ?? String(req.body?.buyer?.email ?? "").trim().toLowerCase()}`,
+      `card:${String(req.user?.email ?? req.body?.buyer?.email ?? "").trim().toLowerCase()}`,
   });
 
   // Auth routes
@@ -2672,9 +2672,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         placedAsGuest,
       });
 
-      // Set just before the card charge: from then on a failure is an unknown outcome.
-      let cardChargeStarted = false;
-
       // Create payment with Asaas
       try {
         if (inlineCard && cardInput?.ok) {
@@ -2693,7 +2690,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             await storage.updateOrder(order.id, { qrCodeData });
           }
 
-          cardChargeStarted = true;
           const payment = await asaasService.createCardPayment({
             customer: {
               name: contactName,
@@ -2843,11 +2839,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         res.status(201).json(response);
       } catch (paymentError) {
-        // Card charge with an unknown outcome (network, timeout, 5xx): Asaas may have created it
-        // ("Timeout não significa que a cobrança não foi criada"). Keep the order pending, the
-        // webhook matches it by externalReference. Only a decline (nothing saved on Asaas) or a
-        // failure before the charge deletes it, like PIX/boleto.
-        if (cardChargeStarted && !(paymentError instanceof CardDeclinedError)) {
+        // Card charge request with an unknown outcome (network, timeout, 5xx): Asaas may have created
+        // it ("Timeout não significa que a cobrança não foi criada"). Keep the order pending, the
+        // webhook matches it by externalReference. A decline, or any failure before the charge
+        // request (customer, QR), deletes it, like PIX/boleto.
+        if (paymentError instanceof CardChargeOutcomeUnknownError) {
           console.error(`Card payment outcome unknown (order ${order.id})`);
           const failure = checkoutPaymentErrorResponse(paymentError);
           return res.status(failure.status).json(failure.body);
@@ -3282,7 +3278,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       
       // Handle different payment events
-      if (eventType === "PAYMENT_CONFIRMED" || eventType === "PAYMENT_RECEIVED") {
+      // Risk analysis approval counts as paid only when the payload already says so: the docs do not
+      // say whether PAYMENT_CONFIRMED follows it.
+      const paidStatus = payment?.status === "CONFIRMED" || payment?.status === "RECEIVED";
+      if (
+        eventType === "PAYMENT_CONFIRMED" ||
+        eventType === "PAYMENT_RECEIVED" ||
+        (eventType === "PAYMENT_APPROVED_BY_RISK_ANALYSIS" && paidStatus)
+      ) {
         const order = await findOrderForPaidAsaasPayment(payment);
 
         if (order) {
@@ -3319,21 +3322,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ) {
             await refundAndNotify(order, payment, "duplicate");
           }
-        }
-      } else if (
-        eventType === "PAYMENT_APPROVED_BY_RISK_ANALYSIS" &&
-        (payment?.status === "CONFIRMED" || payment?.status === "RECEIVED")
-      ) {
-        // Risk analysis approved the card charge. Finalize only when the payload already says
-        // paid: the docs do not say whether PAYMENT_CONFIRMED follows (same idempotent path).
-        const order = await findOrderForPaidAsaasPayment(payment);
-        if (order) {
-          await finalizeOrderPaidLikeWebhook(order, {
-            billingType: payment?.billingType || "unknown",
-            value: payment?.value ?? null,
-            paymentId: payment?.id ?? null,
-            installment: payment?.installment ?? null,
-          });
         }
       } else if (
         (eventType === "PAYMENT_OVERDUE" ||

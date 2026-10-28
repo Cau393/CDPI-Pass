@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { parseCardPayment } from "../../utils/cardPaymentSchema";
 
 const NEXT_YEAR = new Date().getUTCFullYear() + 1;
+/** A 2-digit year a few years ahead, so the expected 4-digit form follows the clock. */
+const TWO_DIGIT_YEAR = (new Date().getUTCFullYear() + 4) % 100;
 
 function body(overrides: { card?: Record<string, unknown>; cardHolder?: Record<string, unknown>; installmentCount?: unknown } = {}) {
   const { card, cardHolder, ...rest } = overrides;
@@ -27,7 +29,7 @@ function body(overrides: { card?: Record<string, unknown>; cardHolder?: Record<s
 
 describe("parseCardPayment (ADR-017 Stage 3)", () => {
   it("accepts a valid card and normalizes the fields", () => {
-    const parsed = parseCardPayment(body({ card: { number: "4111 1111-1111 1111", expiryMonth: 3, expiryYear: "30" } }));
+    const parsed = parseCardPayment(body({ card: { number: "4111 1111-1111 1111", expiryMonth: 3, expiryYear: String(TWO_DIGIT_YEAR) } }));
 
     expect(parsed).toEqual({
       ok: true,
@@ -36,7 +38,7 @@ describe("parseCardPayment (ADR-017 Stage 3)", () => {
           holderName: "Comprador Teste",
           number: "4111111111111111",
           expiryMonth: "03",
-          expiryYear: "2030",
+          expiryYear: String(2000 + TWO_DIGIT_YEAR),
           ccv: "123",
         },
         cardHolder: {
