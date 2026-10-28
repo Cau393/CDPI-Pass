@@ -189,8 +189,11 @@ server (`POST /payments` with `creditCard`); the hosted `/paymentLinks` card bra
   - 402 `card_declined`, order deleted. Only a 400 from `POST /payments` is a decline.
   - 400 `invalid_card` (local validation, nothing sent to Asaas).
   - 429 `rate_limited` (card limiter) or `too_many_pending_orders`.
-  - 502 `payment_provider_error` for a definite rejection (Asaas 401/403/404/429) or a failure before the charge
-    request (customer, QR): nothing was charged, the order is deleted, retry is safe.
+  - 502 `payment_provider_error` for an Asaas HTTP error that is a definite rejection (401/403/404/429, or a
+    customer-call error): nothing was charged, the order is deleted, retry is safe.
+  - 500 "Erro ao processar pagamento. Tente novamente." for any other failure before the charge request (QR
+    generation, a network error on the customer call, the "inline card path skipped" guard): nothing was charged and
+    the order is deleted too. Only an `AsaasApiError` maps to 502 (`checkoutPaymentErrorResponse`).
   - Once the charge request was sent, the order is never deleted. Already paid: 201. Otherwise 202
     `payment_pending_confirmation` with `order.id` and, for a guest, `orderAccessToken`; the buyer must not pay again.
   - The card `POST /payments` times out at 90 s (`AbortSignal.timeout`); a timeout is an unknown outcome.
@@ -231,7 +234,8 @@ server (`POST /payments` with `creditCard`); the hosted `/paymentLinks` card bra
 - R20 only a 400 from `POST /payments` is `card_declined`; a 400 on `POST /customers` stays 502
   `payment_provider_error`.
 - R21 (A1) card `dueDate` is the same +7 day date as PIX/boleto: the docs make it required and say it does not
-  schedule capture, and OVERDUE is not terminal for cards, so a same-day date could cancel an order mid risk analysis.
+  schedule capture, and the docs do not say explicitly whether a card payment can go OVERDUE (the webhook flow diagram shows OVERDUE
+  followed by CONFIRMED), so a same-day date could cancel an order mid risk analysis.
 - R22 (A2) card orders generate the in-person QR before calling Asaas: a webhook can race ahead of the
   `POST /payments` response and its finalize sends the ticket e-mail (a QR row for a declined order dies with it).
 - R23 (A3) an unknown card outcome keeps the order pending instead of deleting it (docs: "Timeout não significa que a
@@ -252,7 +256,7 @@ server (`POST /payments` with `creditCard`); the hosted `/paymentLinks` card bra
   PNGs, the limiters bound it, and deleting is racy (unawaited upload).
 - I2 (Task 2 review) overrides spec §5.8: only a non-400 failure of `POST /payments` is an unknown outcome
   (`CardChargeOutcomeUnknownError`, codes and status only, 502, order kept). A customer-phase or pre-charge error
-  deletes the order as before, since it cannot have charged (otherwise pending orders pile up toward the 429 cap).
+  deletes the order as before (502 for an Asaas error, 500 otherwise), since it cannot have charged (otherwise pending orders pile up toward the 429 cap).
 - Minor 5 raised to a fix (PCI): the parse-failure handler above.
 - Fix round 1 ride-alongs: holder and customer phone through `brazilianNationalPhone` (a 13-digit phone 400 would
   label every guest card as declined); e-mail limiter key lower-cased (the lockout by typed e-mail is the
@@ -279,7 +283,7 @@ server (`POST /payments` with `creditCard`); the hosted `/paymentLinks` card bra
   note below); the result mapping inside the unknown-outcome try and a "charge answered" flag independent of
   `payment.id`; a loud guard before `createPayment` for a non-foreign card order.
 - M7 goes to the Stage 4 harness (the fake keeps card payments, answers `GET /payments/{id}`, flips status); M8 (Asaas
-  notifications for inline charges) and M9/Q1 (polling never cancels a deleted or reproved card) go to the Stage 5
+  notifications for inline charges) and M9/Q1 (polling never sees a deleted or reproved card payment) go to the Stage 5
   checklist; N3 is in API-Endpoints; Q3 client notes (reset Turnstile after every response, `installmentCount` is a
   number and `ccv` a string, handle 202, two check-status shapes, block double submits, a non-JSON 504 is an unknown
   outcome) go to the Stage 4 prompt.
@@ -293,16 +297,17 @@ server (`POST /payments` with `creditCard`); the hosted `/paymentLinks` card bra
   (https://docs.asaas.com/docs/cobran%C3%A7a-duplicada-ap%C3%B3s-retry-sem-idempot%C3%AAncia). No idempotency key is
   documented; use one stable `externalReference` per operation (https://docs.asaas.com/docs/retries-e-idempotência).
   This drives R23, M2 and the 202.
-- Minimum timeout of 60 seconds for requests, so the card POST waits 90 s (rate-limit and timeout page:
-  https://docs.asaas.com/docs/requests-blocked-due-to-missing-rate-limit-control).
+- Minimum timeout of 60 seconds for requests, so the card POST waits 90 s ("Configure timeout mínimo de 60 segundos para esta
+  requisição", https://docs.asaas.com/reference/criar-cobranca-com-cartao-de-credito).
 - `dueDate` is required on the card charge and does not schedule capture
-  (https://docs.asaas.com/reference/criar-cobranca-com-cartao-de-credito); OVERDUE is not terminal for cards
-  (https://docs.asaas.com/reference/recuperar-uma-unica-cobranca status list). Drives A1/R21.
+  (https://docs.asaas.com/reference/criar-cobranca-com-cartao-de-credito); whether a card payment can go OVERDUE is
+  NOT DOCUMENTED explicitly; the webhook flow diagram shows PAYMENT_OVERDUE followed by CONFIRMED
+  (https://docs.asaas.com/docs/webhook-para-cobrancas), which is why we treat OVERDUE as not terminal. Drives A1/R21.
 - Risk-analysis events `PAYMENT_AWAITING_RISK_ANALYSIS`, `PAYMENT_APPROVED_BY_RISK_ANALYSIS`,
   `PAYMENT_REPROVED_BY_RISK_ANALYSIS`, `PAYMENT_CREDIT_CARD_CAPTURE_REFUSED`
   (https://docs.asaas.com/docs/cobrancas-via-cartao-de-credito, https://docs.asaas.com/docs/webhook-para-cobrancas).
   "A criação da cobrança não representa a disponibilização definitiva do valor. Acompanhe o processamento pelos
-  Webhooks." Drives A4/A5, R24, R25.
+  Webhooks." (https://docs.asaas.com/reference/criar-cobranca-com-cartao-de-credito). Drives A4/A5, R24, R25.
 - A webhook can arrive before the create response, so the finalize needs its rows first. Drives A2/R22.
 - Sandbox decline card 5184019740373151 (https://docs.asaas.com/docs/testando-pagamento-com-cartão-de-crédito). R27.
 - PCI: using the API keeps our infrastructure in scope (SAQ-D), and "Não armazene dados de autenticação sensíveis
@@ -319,7 +324,7 @@ server (`POST /payments` with `creditCard`); the hosted `/paymentLinks` card bra
 - A definite-rejection 429 from Asaas that did charge would leave a charge with no order (M3).
 - The already-paid 201 fallback can carry `payment.id` null and an approximated `value`.
 - The after-charge 202 text is generic even when the charge was approved and finalized in the same request.
-- Polling never cancels a deleted or reproved card order; only the webhook does (M9/Q1).
+- Polling never sees a deleted or reproved card payment (it cancels only on OVERDUE/CANCELED); only the webhook cancels such an order (M9/Q1).
 
 **Deploy notes (deploy B)**
 - Asaas must enable the direct card API (`POST /payments` with `creditCard`) on the production account.
