@@ -349,6 +349,18 @@ describe.skipIf(!enabled)("hardening batch 2 (real routes + real DB)", () => {
       expect((await api("GET", "/api/auth/me", { token: change.body.token })).status).toBe(200);
       expect((await api("GET", "/api/auth/me", { token: user.token })).status).toBe(401);
     });
+
+    it("changing the password answers 400, not 500, for a password that is not a string", async () => {
+      const user = await signUpAndLogIn();
+
+      const res = await api("PUT", "/api/profile/password", {
+        token: user.token,
+        body: { currentPassword: user.password, newPassword: ["a", "b", "c", "d", "e", "f"] },
+      });
+
+      expect(res.status).toBe(400);
+      expect((await api("GET", "/api/auth/me", { token: user.token })).status).toBe(200);
+    });
   });
 
   describe("concurrent courtesy redeems (C5)", () => {

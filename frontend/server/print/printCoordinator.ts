@@ -225,7 +225,14 @@ export function initPrintWebSocket(httpServer: Server) {
         return;
       }
       // Same rules as the HTTP session: no link tokens, ends on a password reset.
-      const user = await sessionUserFromToken(token);
+      let user: Awaited<ReturnType<typeof sessionUserFromToken>>;
+      try {
+        user = await sessionUserFromToken(token);
+      } catch (err) {
+        console.error("[print-ws] session check failed:", err);
+        ws.close(1011, "erro interno");
+        return;
+      }
       if (!user) {
         ws.close(4001, "token inválido");
         return;

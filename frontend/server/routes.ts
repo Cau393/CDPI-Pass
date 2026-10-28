@@ -268,8 +268,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Email ou senha incorretos" });
       }
 
-      // Skip email verification check for MVP
-
       const isValidPassword = await bcrypt.compare(password, user.password);
       if (!isValidPassword) {
         return res.status(401).json({ message: "Email ou senha incorretos" });
@@ -3223,7 +3221,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.id;
       const { currentPassword, newPassword } = req.body;
 
-      if (!currentPassword || !newPassword) {
+      if (typeof currentPassword !== "string" || typeof newPassword !== "string" || !currentPassword || !newPassword) {
         return res.status(400).json({ message: "Senhas são obrigatórias" });
       }
 
