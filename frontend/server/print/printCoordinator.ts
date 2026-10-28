@@ -1,13 +1,11 @@
 import type { Server } from "http";
 import { randomUUID } from "crypto";
-import jwt from "jsonwebtoken";
 import { WebSocket, WebSocketServer } from "ws";
 import type { PrintJob } from "@shared/schema";
 import { storage } from "../storage";
-import { getJwtSecret } from "../utils/requiredSecret";
+import { sessionUserFromToken } from "../middleware/auth";
 import { startWsHeartbeat } from "./wsHeartbeat";
 
-const JWT_SECRET = getJwtSecret();
 
 type Client = {
   socketId: string;
@@ -226,16 +224,14 @@ export function initPrintWebSocket(httpServer: Server) {
         ws.close(4000, "token ou eventId ausente");
         return;
       }
-      let userId: string;
-      try {
-        const dec = jwt.verify(token, JWT_SECRET) as { userId: string };
-        userId = dec.userId;
-      } catch {
+      // Same rules as the HTTP session: no link tokens, ends on a password reset.
+      const user = await sessionUserFromToken(token);
+      if (!user) {
         ws.close(4001, "token inválido");
         return;
       }
-      const user = await storage.getUser(userId);
-      if (!user?.isAdmin) {
+      const userId = user.id;
+      if (!user.isAdmin) {
         ws.close(4002, "acesso negado");
         return;
       }

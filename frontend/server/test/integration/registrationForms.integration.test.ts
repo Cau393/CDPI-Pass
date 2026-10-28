@@ -17,6 +17,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { LEGACY_QUESTIONS, type RegistrationField } from "@shared/eventRegistrationForm";
 import { FOREIGN_PAID_CHECKOUT_ENABLED } from "@shared/foreignCheckout";
+import { emailService } from "../../services/emailService";
 
 const VERIFY_URL = process.env.VERIFY_DATABASE_URL;
 const enabled = Boolean(VERIFY_URL);
@@ -245,12 +246,20 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
       return { res, row: rows[0] };
     }
 
-    it("creates a Brazilian account with no document, birth date or address", async () => {
+    it("creates a Brazilian account with no document, birth date or address, logged in with no e-mail sent", async () => {
       const email = `forms-signup-${randomUUID().slice(0, 8)}@example.test`;
+      const mails = Object.values(emailService).map((fn) => vi.mocked(fn as () => unknown));
+      mails.forEach((fn) => fn.mockClear());
 
       const { res, row } = await register({ name: "maria silva", email, phone: "5561987654321", password: "secret1" });
+      const me = await api("GET", "/api/auth/me", { token: res.body.token });
 
       expect(res.status).toBe(201);
+      expect(res.body.user).toMatchObject({ email, name: "Maria Silva", emailVerified: false });
+      expect(me.status).toBe(200);
+      expect(me.body.email).toBe(email);
+      // ADR-017 Stage 1: no verification code (or any other e-mail) at signup.
+      for (const fn of mails) expect(fn).not.toHaveBeenCalled();
       expect(row).toMatchObject({
         cpf: null,
         is_foreigner: false,
@@ -266,8 +275,8 @@ describe.skipIf(!enabled)("ADR-016 Phase 3 registration forms (real routes + rea
       const email = `forms-signup-py-${randomUUID().slice(0, 8)}@example.test`;
       const eventId = await createEvent({ modality: "online", isFree: true });
 
+      // Not verified: since ADR-017 Stage 1 the account joins events without an e-mail code.
       const { res, row } = await register({ name: "Pedro Gómez", email, phone: "595981123456", password: "secret1" });
-      await pool.query(`UPDATE users SET email_verified = true WHERE id = $1`, [row.id]);
       const loginRes = await api("POST", "/api/auth/login", { body: { email, password: "secret1" } });
       const subscribe = await api("POST", `/api/events/${eventId}/subscribe`, { token: loginRes.body.token, body: {} });
 
