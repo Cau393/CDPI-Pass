@@ -127,7 +127,7 @@ interface AsaasRequest {
 const asaasRequests: AsaasRequest[] = [];
 /** installment id -> plan, so GET /payments?installment= answers like Asaas. */
 const installmentPlans = new Map<string, { count: number; each: number }>();
-const asaasPayments = new Map<string, { id: string; status: string; value: number }>();
+const asaasPayments = new Map<string, { id: string; status: string; value: number; externalReference?: string }>();
 let asaasSeq = 0;
 
 function asaasJson(status: number, body: unknown): Response {
@@ -156,7 +156,7 @@ function fakeAsaas(method: string, path: string, query: Record<string, string>, 
     const installment = count > 1 ? `ins_card_${++asaasSeq}` : null;
     if (installment) installmentPlans.set(installment, { count, each });
     const status = card.number === PAN_RISK ? "AWAITING_RISK_ANALYSIS" : "CONFIRMED";
-    asaasPayments.set(id, { id, status, value: each });
+    asaasPayments.set(id, { id, status, value: each, externalReference: body.externalReference });
     return asaasJson(200, {
       id,
       status,
@@ -171,6 +171,11 @@ function fakeAsaas(method: string, path: string, query: Record<string, string>, 
   if (pix && method === "GET") {
     return asaasJson(200, { encodedImage: "AAAA", payload: "00020126pixpayload", expirationDate: "2030-01-01 00:00:00" });
   }
+  if (path === "/payments" && method === "GET" && query.externalReference) {
+    const data = Array.from(asaasPayments.values()).filter((p) => p.externalReference === query.externalReference);
+    return asaasJson(200, { data });
+  }
+  if (/^\/payments\/[^/]+\/refund$/.test(path) && method === "POST") return asaasJson(200, {});
   if (path === "/payments" && method === "GET" && query.installment) {
     const plan = installmentPlans.get(query.installment);
     return asaasJson(200, { data: Array.from({ length: plan?.count ?? 0 }, () => ({ value: plan?.each })) });
@@ -185,11 +190,15 @@ function fakeAsaas(method: string, path: string, query: Record<string, string>, 
 
 /** Test hooks on POST /payments with a card: a failure to simulate, or code to run before Asaas answers. */
 const cardHooks: {
-  failure: "network" | "503" | null;
+  failure: "network" | "timeout" | "503" | "401" | "403" | "404" | "429" | null;
   /** Answer POST /customers with a 503. */
   customerFailure: boolean;
+  /** Answer a card POST /payments with this raw 200 body instead of a payment. */
+  rawAnswer: string | null;
+  /** Answer GET /payments?externalReference= with a 503. */
+  listFailure: boolean;
   beforeAnswer: ((body: any, answer: any) => Promise<void>) | null;
-} = { failure: null, customerFailure: false, beforeAnswer: null };
+} = { failure: null, customerFailure: false, listFailure: false, rawAnswer: null, beforeAnswer: null };
 
 /** Answers the Asaas base URL, passes the test's own calls to the local server, throws on anything else. */
 const stubbedFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -202,14 +211,26 @@ const stubbedFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       asaasRequests.push({ method: "POST", path, query: {}, body });
       return asaasJson(503, {});
     }
+    if (cardHooks.listFailure && (init?.method ?? "GET") === "GET" && path === "/payments") {
+      asaasRequests.push({ method: "GET", path, query: {}, body });
+      return asaasJson(503, {});
+    }
     const isCardCharge = (init?.method ?? "GET") === "POST" && path === "/payments" && Boolean(body?.creditCard);
     if (isCardCharge && cardHooks.failure === "network") {
       asaasRequests.push({ method: "POST", path, query: {}, body });
       throw new TypeError("fetch failed");
     }
-    if (isCardCharge && cardHooks.failure === "503") {
+    if (isCardCharge && cardHooks.failure === "timeout") {
       asaasRequests.push({ method: "POST", path, query: {}, body });
-      return asaasJson(503, {});
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    }
+    if (isCardCharge && cardHooks.failure && /^\d{3}$/.test(cardHooks.failure)) {
+      asaasRequests.push({ method: "POST", path, query: {}, body });
+      return asaasJson(Number(cardHooks.failure), {});
+    }
+    if (isCardCharge && cardHooks.rawAnswer !== null) {
+      asaasRequests.push({ method: "POST", path, query: {}, body });
+      return new Response(cardHooks.rawAnswer, { status: 200, headers: { "Content-Type": "application/json" } });
     }
     const answer = fakeAsaas(init?.method ?? "GET", path, Object.fromEntries(url.searchParams), body);
     if (isCardCharge && cardHooks.beforeAnswer && answer.ok) await cardHooks.beforeAnswer(body, await answer.clone().json());
@@ -255,6 +276,14 @@ async function api(
     body = text;
   }
   return { status: res.status, body };
+}
+
+const PENDING_CONFIRMATION_MESSAGE =
+  "Não conseguimos confirmar seu pagamento agora. Não pague de novo: se a cobrança for aprovada, você recebe o ingresso por e-mail.";
+
+/** The guest poll: the order-access token goes in X-Order-Access. */
+function checkStatus(orderId: string, orderAccessToken: string) {
+  return api("POST", `/api/orders/${orderId}/check-status`, { headers: { "X-Order-Access": orderAccessToken } });
 }
 
 async function deliverWebhook(body: unknown): Promise<number> {
@@ -495,6 +524,8 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
     mocks.sendTicketEmail.mockImplementation(async () => true);
     cardHooks.failure = null;
     cardHooks.customerFailure = false;
+    cardHooks.listFailure = false;
+    cardHooks.rawAnswer = null;
     cardHooks.beforeAnswer = null;
     asaasRequests.length = 0;
     responseTexts.length = 0;
@@ -671,6 +702,33 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
       expect(await orderCount(eventId)).toBe(0);
     });
 
+    it("M1: card submits failing Turnstile do not use up the e-mail bucket (the IP bucket still counts them)", async () => {
+      const eventId = await createEvent();
+      const typed = buyer();
+
+      const failed: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        failed.push((await submitCard(eventId, { typed, turnstileToken: "bad" })).status);
+      }
+      const valid = await submitCard(eventId, { typed });
+
+      expect(failed).toEqual([403, 403, 403, 403, 403, 403]);
+      expect(valid.status, JSON.stringify(valid.body)).toBe(201);
+    });
+
+    it("M1: the IP bucket does count Turnstile failures: the 11th submit from one IP is 429", async () => {
+      const eventId = await createEvent();
+      const ip = randomIp();
+
+      const statuses: number[] = [];
+      for (let i = 0; i < 11; i++) {
+        statuses.push((await submitCard(eventId, { typed: buyer(), turnstileToken: "bad", forwardedFor: ip })).status);
+      }
+
+      expect(statuses.slice(0, 10)).toEqual(Array(10).fill(403));
+      expect(statuses[10]).toBe(429);
+    });
+
     it("the e-mail bucket ignores the case of a session e-mail: the lower-case guest form shares it", async () => {
       const eventId = await createEvent();
       const user = await createPasswordUser((id) => `Acct-${id.slice(0, 8)}@Example.Test`);
@@ -827,8 +885,8 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
       expect((await orderRow(res.body.order.id)).status).toBe("paid");
     });
 
-    it.each([["network error", "network"], ["503", "503"]] as const)(
-      "A3: a %s on POST /payments → 5xx, the order is kept pending with no e-mail; a later PAYMENT_CONFIRMED by externalReference pays it",
+    it.each([["network error", "network"], ["503", "503"], ["timeout", "timeout"]] as const)(
+      "A3: a %s on POST /payments → 202 payment_pending_confirmation with the order id and token, the order kept pending with no e-mail; polling says pending, a later PAYMENT_CONFIRMED pays it",
       async (_label, failure) => {
         const eventId = await createEvent();
         const typed = buyer();
@@ -836,14 +894,22 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
 
         const res = await submitCard(eventId, { typed });
 
-        expect(res.status).toBeGreaterThanOrEqual(500);
-        expect(res.status).toBeLessThan(600);
+        expect(res.status).toBe(202);
+        expect(Object.keys(res.body)).toEqual(["code", "message", "order", "orderAccessToken"]);
+        expect(res.body.code).toBe("payment_pending_confirmation");
+        expect(res.body.message).toBe(PENDING_CONFIRMATION_MESSAGE);
+        expect(Object.keys(res.body.order)).toEqual(["id"]);
         expect(JSON.stringify(res.body)).not.toContain("fetch failed");
         expect(await orderCount(eventId)).toBe(1);
         const { rows } = await pool.query(`SELECT * FROM orders WHERE event_id = $1`, [eventId]);
+        expect(rows[0].id).toBe(res.body.order.id);
         expect(rows[0].status).toBe("pending");
         expect(rows[0].asaas_payment_id).toBeNull();
         expect(confirmationsTo(typed.email)).toHaveLength(0);
+
+        const poll = await checkStatus(rows[0].id, res.body.orderAccessToken);
+        expect(poll.status).toBe(200);
+        expect(poll.body.status).toBe("pending");
 
         cardHooks.failure = null;
         const status = await deliverWebhook(
@@ -853,8 +919,89 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
         expect(status).toBe(200);
         expect((await orderRow(rows[0].id)).status).toBe("paid");
         expect(confirmationsTo(typed.email)).toHaveLength(1);
+        const after = await checkStatus(rows[0].id, res.body.orderAccessToken);
+        expect(after.body.status).toBe("paid");
       },
     );
+
+    it("a session buyer's unknown outcome is a 202 without a token", async () => {
+      const eventId = await createEvent();
+      const user = await createPasswordUser();
+      cardHooks.failure = "503";
+
+      const res = await submitCard(eventId, { token: user.token, holderCpf: user.cpf });
+
+      expect(res.status).toBe(202);
+      expect(Object.keys(res.body)).toEqual(["code", "message", "order"]);
+      expect(res.body.order.id).toBe((await pool.query(`SELECT id FROM orders WHERE event_id = $1`, [eventId])).rows[0].id);
+    });
+
+    it.each(["401", "403", "404", "429"] as const)(
+      "M3: a %s on POST /payments is a definite rejection → retry-safe 502 payment_provider_error and the order is gone",
+      async (failure) => {
+        const eventId = await createEvent();
+        cardHooks.failure = failure;
+
+        const res = await submitCard(eventId, { typed: buyer() });
+
+        expect(res.status).toBe(502);
+        expect(res.body.code).toBe("payment_provider_error");
+        expect(await orderCount(eventId)).toBe(0);
+      },
+    );
+
+    it("M2: polling an unknown-outcome order finds the charge by externalReference, stores its id and pays the order (token and session paths)", async () => {
+      const eventId = await createEvent();
+      const typed = buyer();
+      cardHooks.failure = "network";
+      const res = await submitCard(eventId, { typed });
+      expect(res.status).toBe(202);
+      const orderId = res.body.order.id;
+      const row = await orderRow(orderId);
+      asaasPayments.set("pay_lost_answer_1", {
+        id: "pay_lost_answer_1",
+        status: "CONFIRMED",
+        value: Number(row.amount),
+        externalReference: orderId,
+      });
+
+      const poll = await checkStatus(orderId, res.body.orderAccessToken);
+
+      expect(poll.status).toBe(200);
+      expect(poll.body.status).toBe("paid");
+      const after = await orderRow(orderId);
+      expect(after.asaas_payment_id).toBe("pay_lost_answer_1");
+      expect(confirmationsTo(typed.email)).toHaveLength(1);
+    });
+
+    it("M2: the session check-status reconciles too, and answers the stored status (never 400) when nothing is found", async () => {
+      const eventId = await createEvent();
+      const user = await createPasswordUser();
+      cardHooks.failure = "503";
+      const res = await submitCard(eventId, { token: user.token, holderCpf: user.cpf });
+      expect(res.status).toBe(202);
+      const orderId = res.body.order.id;
+
+      const none = await api("POST", `/api/orders/${orderId}/check-status`, { token: user.token });
+      expect(none.status).toBe(200);
+      expect(none.body.order.status).toBe("pending");
+      expect((await orderRow(orderId)).asaas_payment_id).toBeNull();
+      expect(JSON.stringify(none.body)).not.toContain("sem ID");
+    });
+
+    it("M2: an Asaas error while looking for the charge still answers the stored status", async () => {
+      const eventId = await createEvent();
+      cardHooks.failure = "network";
+      const res = await submitCard(eventId, { typed: buyer() });
+      expect(res.status).toBe(202);
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      cardHooks.listFailure = true;
+
+      const poll = await checkStatus(res.body.order.id, res.body.orderAccessToken);
+
+      expect(poll.status).toBe(200);
+      expect(poll.body.status).toBe("pending");
+    });
 
     it("a customer creation failure (nothing charged) deletes the order, unlike an unknown charge outcome", async () => {
       const eventId = await createEvent();
@@ -867,7 +1014,7 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
       expect(await orderCount(eventId)).toBe(0);
     });
 
-    it("an error after the charge (asaasPaymentId write) keeps the order; the webhook then pays it, with one e-mail", async () => {
+    it("an error after the charge (asaasPaymentId write) keeps the order and answers 202 with the handle; the webhook then pays it, with one e-mail", async () => {
       const logged: string[] = [];
       for (const method of ["log", "info", "warn", "error", "debug"] as const) {
         vi.spyOn(console, method).mockImplementation((...args: unknown[]) => void logged.push(args.map(String).join(" ")));
@@ -878,22 +1025,36 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
       vi.spyOn(storage, "updateOrder").mockImplementation(async (id: string, data: any) => {
         if (!failed && data && "asaasPaymentId" in data) {
           failed = true;
-          throw new Error("db hiccup after charge");
+          throw Object.assign(new Error(`db hiccup after charge ${PAN_OK} ${CCV}`), { code: "57P01" });
         }
         return original(id, data);
       });
       const eventId = await createEvent();
       const typed = buyer();
 
-      const res = await submitCard(eventId, { typed });
+      // Risk analysis: the charge exists at Asaas but is not approved yet, so the poll stays pending.
+      const res = await submitCard(eventId, { typed, number: PAN_RISK });
 
       expect(failed).toBe(true);
-      expect(res.status).toBeGreaterThanOrEqual(500);
+      expect(res.status).toBe(202);
+      expect(Object.keys(res.body)).toEqual(["code", "message", "order", "orderAccessToken"]);
+      expect(res.body.code).toBe("payment_pending_confirmation");
       expect(asaasCharges()).toHaveLength(1);
       expect(await orderCount(eventId)).toBe(1);
       const { rows } = await pool.query(`SELECT * FROM orders WHERE event_id = $1`, [eventId]);
+      expect(rows[0].id).toBe(res.body.order.id);
       expect(rows[0].status).toBe("pending");
-      expect(leaksIn(logged.join("\n"))).toEqual([]);
+      const logText = logged.join("\n");
+      expect(leaksIn(logText)).toEqual([]);
+      // M4: the class of the failure and its driver code are logged, never its message.
+      expect(logText).toContain("Error");
+      expect(logText).toContain("57P01");
+      expect(logText).not.toContain("db hiccup");
+
+      const poll = await checkStatus(rows[0].id, res.body.orderAccessToken);
+      expect(poll.body.status).toBe("pending");
+      // The poll found the charge by externalReference and stored its id.
+      expect((await orderRow(rows[0].id)).asaas_payment_id).toMatch(/^pay_card_/);
 
       const status = await deliverWebhook(
         cardEvent("PAYMENT_CONFIRMED", "CONFIRMED", rows[0].id, "pay_after_charge_1", Number(rows[0].amount)),
@@ -901,6 +1062,92 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
 
       expect(status).toBe(200);
       expect((await orderRow(rows[0].id)).status).toBe("paid");
+      expect(confirmationsTo(typed.email)).toHaveLength(1);
+    });
+
+    it("an error after the charge on an order that is already paid (webhook raced ahead) → the normal 201, with the token", async () => {
+      const { storage } = await import("../../storage");
+      const original = storage.updateOrder.bind(storage);
+      vi.spyOn(storage, "updateOrder").mockImplementation(async (id: string, data: any) => {
+        if (data && "asaasPaymentId" in data) throw new Error("db hiccup after charge");
+        return original(id, data);
+      });
+      cardHooks.beforeAnswer = async (body, answer) => {
+        const raced = await orderRow(body.externalReference);
+        await deliverWebhook(cardWebhook("PAYMENT_CONFIRMED", body.externalReference, answer.id, Number(raced.amount)));
+      };
+      const eventId = await createEvent();
+      const typed = buyer();
+
+      const res = await submitCard(eventId, { typed });
+
+      expect(res.status).toBe(201);
+      expect(Object.keys(res.body).slice(0, 2)).toEqual(["order", "orderAccessToken"]);
+      expect(res.body.order.status).toBe("paid");
+      expect(res.body.payment).toMatchObject({ status: "CONFIRMED", installmentCount: 1 });
+      expect(res.body.code).toBeUndefined();
+      expect(confirmationsTo(typed.email)).toHaveLength(1);
+    });
+
+    it("N1: a 200 with an unreadable body after the charge request keeps the order (never deleted) and answers 202", async () => {
+      cardHooks.rawAnswer = "null";
+      const eventId = await createEvent();
+
+      const res = await submitCard(eventId, { typed: buyer() });
+
+      expect(res.status).toBe(202);
+      expect(res.body.code).toBe("payment_pending_confirmation");
+      expect(await orderCount(eventId)).toBe(1);
+    });
+
+    it("M5: duplicate_other_paid on the inline confirm → 409, one refund call, the order cancelled", async () => {
+      const eventId = await createEvent();
+      const typed = buyer();
+      cardHooks.beforeAnswer = async (body) => {
+        // Another paid order of the same holder appears while the charge is being answered.
+        const pending = await orderRow(body.externalReference);
+        await pool.query(
+          `INSERT INTO orders (id, user_id, event_id, cpf, status, payment_method, amount)
+           VALUES ($1,$2,$3,$4,'paid','pix','100.00')`,
+          [randomUUID(), pending.user_id, eventId, pending.cpf],
+        );
+      };
+
+      const res = await submitCard(eventId, { typed });
+
+      expect(res.status).toBe(409);
+      expect(res.body.message).toBe("Você já possui inscrição confirmada para este evento.");
+      expect(asaasRequests.filter((r) => r.method === "POST" && /^\/payments\/pay_[^/]+\/refund$/.test(r.path))).toHaveLength(1);
+      const { rows } = await pool.query(`SELECT status FROM orders WHERE event_id = $1 AND payment_method = 'credit_card'`, [eventId]);
+      expect(rows).toEqual([{ status: "cancelled" }]);
+      expect(confirmationsTo(typed.email)).toHaveLength(0);
+    });
+
+    it("M5: the inline finalize throws once → 201 with the order still pending; the PAYMENT_CONFIRMED webhook then pays it, with one e-mail", async () => {
+      const { storage } = await import("../../storage");
+      const original = storage.claimPaidOrder.bind(storage);
+      let thrown = false;
+      vi.spyOn(storage, "claimPaidOrder").mockImplementation(async (...args: Parameters<typeof original>) => {
+        if (!thrown) {
+          thrown = true;
+          throw new Error("db hiccup in claim");
+        }
+        return original(...args);
+      });
+      const eventId = await createEvent();
+      const typed = buyer();
+
+      const { res } = await placeGuestCardOrder(eventId, { typed });
+
+      expect(thrown).toBe(true);
+      expect(res.body.order.status).toBe("pending");
+      expect(res.body.payment.status).toBe("CONFIRMED");
+      expect(confirmationsTo(typed.email)).toHaveLength(0);
+      const row = await orderRow(res.body.order.id);
+
+      expect(await deliverWebhook(cardWebhook("PAYMENT_CONFIRMED", row.id, row.asaas_payment_id, Number(row.amount)))).toBe(200);
+
+      expect((await orderRow(row.id)).status).toBe("paid");
       expect(confirmationsTo(typed.email)).toHaveLength(1);
     });
 

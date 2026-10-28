@@ -84,6 +84,9 @@ export interface CardPaymentResult {
   installment: string | null;
 }
 
+/** Asaas asks for at least 60 s on the card charge; nginx in front of the API waits 120 s. */
+const CARD_CHARGE_TIMEOUT_MS = 90_000;
+
 export class AsaasService {
   private apiKey: string;
   private baseUrl: string;
@@ -97,7 +100,12 @@ export class AsaasService {
     }
   }
 
-  private async makeRequest(endpoint: string, method: string = "GET", data?: any): Promise<any> {
+  private async makeRequest(
+    endpoint: string,
+    method: string = "GET",
+    data?: any,
+    signal?: AbortSignal,
+  ): Promise<any> {
     const url = `${this.baseUrl}${endpoint}`;
     
     const options: RequestInit = {
@@ -106,6 +114,7 @@ export class AsaasService {
         "Content-Type": "application/json",
         "access_token": this.apiKey,
       },
+      ...(signal ? { signal } : {}),
     };
 
     if (data && (method === "POST" || method === "PUT")) {
@@ -229,22 +238,26 @@ export class AsaasService {
       remoteIp: params.remoteIp,
     };
 
-    let payment: { id: string; status: string; value: number; installment?: string | null };
     try {
-      payment = await this.makeRequest("/payments", "POST", body);
+      const payment: { id: string; status: string; value: number; installment?: string | null } =
+        await this.makeRequest("/payments", "POST", body, AbortSignal.timeout(CARD_CHARGE_TIMEOUT_MS));
+      if (typeof payment?.id !== "string" || !payment.id) throw new Error("card charge answer without an id");
+      return {
+        id: payment.id,
+        status: payment.status,
+        value: payment.value,
+        installment: payment.installment ?? null,
+      };
     } catch (error) {
-      if (error instanceof AsaasApiError && error.status === 400) {
-        throw new CardDeclinedError(error.codes);
+      if (error instanceof AsaasApiError) {
+        if (error.status === 400) throw new CardDeclinedError(error.codes);
+        // Definite rejections of the request itself (credentials, route, rate limit): no charge exists.
+        if ([401, 403, 404, 429].includes(error.status)) throw error;
       }
-      // Not a refusal: Asaas may have created the charge, the route keeps the order for the webhook.
+      // Anything else (network, timeout, 408, 5xx, an unreadable answer) does not prove Asaas refused
+      // it: the charge may exist, the route keeps the order for the webhook.
       throw new CardChargeOutcomeUnknownError(error);
     }
-    return {
-      id: payment.id,
-      status: payment.status,
-      value: payment.value,
-      installment: payment.installment ?? null,
-    };
   }
 
   /**

@@ -307,6 +307,63 @@ describe("AsaasService.createCardPayment (ADR-017 Stage 3)", () => {
     expect(failure.status).toBe(500);
   });
 
+  it.each([401, 403, 404, 429])(
+    "a %i on POST /payments is a definite rejection: a plain AsaasApiError, not an unknown outcome",
+    async (status) => {
+      stubCardFetch(() => jsonResponse(status, {}));
+      vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+      expect(failure).toBeInstanceOf(AsaasApiError);
+      expect(failure).not.toBeInstanceOf(CardChargeOutcomeUnknownError);
+      expect(failure).not.toBeInstanceOf(CardDeclinedError);
+      expect(failure.status).toBe(status);
+    },
+  );
+
+  it("a 408 on POST /payments is still an unknown outcome", async () => {
+    stubCardFetch(() => jsonResponse(408, {}));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(CardChargeOutcomeUnknownError);
+    expect(failure.status).toBe(408);
+  });
+
+  it("only the card charge request carries a 90 s timeout signal; an abort is an unknown outcome", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const signals: Record<string, unknown> = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        signals[`${init?.method ?? "GET"} ${String(url).replace(/^.*\/v3/, "")}`] = init?.signal;
+        if (String(url).endsWith("/customers")) return jsonResponse(200, { id: "cus_new" });
+        throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      }),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(CardChargeOutcomeUnknownError);
+    expect(failure.status).toBeNull();
+    expect(timeoutSpy).toHaveBeenCalledTimes(1);
+    expect(timeoutSpy).toHaveBeenCalledWith(90_000);
+    expect(signals["POST /payments"]).toBeInstanceOf(AbortSignal);
+    expect(signals["POST /customers"]).toBeUndefined();
+  });
+
+  it.each(["null", "{}", '{"id":""}'])("a 200 with an odd body (%s) is an unknown outcome, not a thrown TypeError", async (raw) => {
+    stubCardFetch(() => new Response(raw, { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(CardChargeOutcomeUnknownError);
+  });
+
   it("a network error on POST /payments is an unknown outcome whose surfaces hold no PAN or CVV", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (String(url).endsWith("/customers")) return jsonResponse(200, { id: "cus_new" });

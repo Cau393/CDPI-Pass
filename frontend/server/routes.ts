@@ -268,9 +268,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     message: { code: "rate_limited", message: "Muitas tentativas. Tente novamente em alguns minutos." },
   };
   const cardAttemptIpLimiter = rateLimit({ ...cardAttemptRateLimited, max: cardAttemptIpRateLimitMax() });
+  // A submit that failed Turnstile (flagged on res.locals by the route) is taken back out of the
+  // per-e-mail count: otherwise anyone could lock a buyer out of card checkout without solving the
+  // challenge. The IP limiter above still counts it, and declines (402) still count here.
   const cardAttemptEmailLimiter = rateLimit({
     ...cardAttemptRateLimited,
     max: cardAttemptEmailRateLimitMax(),
+    skipFailedRequests: true,
+    requestWasSuccessful: (_req: any, res: any) => !res.locals.cardTurnstileFailed,
     keyGenerator: (req: any) =>
       `card:${String(req.user?.email ?? req.body?.buyer?.email ?? "").trim().toLowerCase()}`,
   });
@@ -2516,6 +2521,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         (!req.user || paymentMethod === "credit_card") &&
         !(await verifyTurnstile(req.body?.turnstileToken, req.ip))
       ) {
+        res.locals.cardTurnstileFailed = paymentMethod === "credit_card";
         return res.status(403).json(TURNSTILE_FAILED_BODY);
       }
 
@@ -2672,13 +2678,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         placedAsGuest,
       });
 
-      // Id of the card charge once Asaas answered: from then on the order is never deleted.
+      // Set as soon as the card charge request returns, whatever it holds: from then on the order
+      // is never deleted. `cardPayment` is what Asaas answered, for the response of a kept order.
+      let chargeAnswered = false;
       let cardChargeId: string | null = null;
+      let cardPayment: { id: string; status: string; value: number } | null = null;
+      let cardInstallmentCount = 1;
 
       // Create payment with Asaas
       try {
         if (inlineCard && cardInput?.ok) {
           const { card, cardHolder, installmentCount } = cardInput.value;
+          cardInstallmentCount = installmentCount;
           const dueDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
           const phoneDigits = contactPhone?.replace(/\D/g, '') || '';
 
@@ -2718,7 +2729,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             remoteIp: req.ip,
           });
 
+          chargeAnswered = true;
           cardChargeId = payment.id;
+          cardPayment = payment;
           await storage.updateOrder(order.id, { asaasPaymentId: payment.id });
 
           // Approved on the spot: same path as the webhook (idempotent, one ticket e-mail).
@@ -2757,6 +2770,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               installmentCount,
             },
           });
+        }
+
+        // A card order of a Brazilian buyer is charged inline above; failing loudly here keeps a
+        // future change from issuing a boleto for it.
+        if (paymentMethod === "credit_card" && !isForeigner) {
+          throw new Error("inline card path skipped");
         }
 
         const paymentData = isForeigner
@@ -2843,20 +2862,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         res.status(201).json(response);
       } catch (paymentError) {
-        // Card charge request with an unknown outcome (network, timeout, 5xx): Asaas may have created
-        // it ("Timeout não significa que a cobrança não foi criada"). Keep the order pending, the
-        // webhook matches it by externalReference. A decline, or any failure before the charge
-        // request (customer, QR), deletes it, like PIX/boleto.
-        if (cardChargeId) {
-          // The charge exists: the order stays (pending, or paid by finalize) so the webhook finds it.
-          console.error(`Card order step failed after the charge (order ${order.id}, payment ${cardChargeId})`);
-          const failure = checkoutPaymentErrorResponse(new CardChargeOutcomeUnknownError(paymentError));
-          return res.status(failure.status).json(failure.body);
-        }
-        if (paymentError instanceof CardChargeOutcomeUnknownError) {
-          console.error(`Card payment outcome unknown (order ${order.id})`);
-          const failure = checkoutPaymentErrorResponse(paymentError);
-          return res.status(failure.status).json(failure.body);
+        // Once the card charge request was sent and may exist (an unknown outcome, or a step after
+        // Asaas answered) the order is kept: the webhook matches it by externalReference. A decline,
+        // or any failure before the charge request (customer, QR), deletes it, like PIX/boleto.
+        if (chargeAnswered || paymentError instanceof CardChargeOutcomeUnknownError) {
+          if (chargeAnswered) {
+            // Name and driver code only: messages of driver errors can embed query params (buyer PII).
+            const errName = paymentError instanceof Error ? paymentError.name : typeof paymentError;
+            const errCode = (paymentError as { code?: unknown } | null)?.code;
+            console.error(
+              `Card order step failed after the charge (order ${order.id}, payment ${cardChargeId ?? "unknown"}): ${errName}${typeof errCode === "string" ? ` ${errCode}` : ""}`,
+            );
+          } else {
+            console.error(`Card payment outcome unknown (order ${order.id})`);
+          }
+          // The token is a convenience for the guest: if signing it is what failed, answer without it.
+          const tokenFields = () => {
+            if (!placedAsGuest) return {};
+            try {
+              return { orderAccessToken: signOrderAccessToken(order.id) };
+            } catch {
+              return {};
+            }
+          };
+          let keptOrder: Awaited<ReturnType<typeof storage.getOrder>> | undefined;
+          try {
+            keptOrder = await storage.getOrder(order.id);
+          } catch {
+            keptOrder = undefined;
+          }
+          if (keptOrder?.status === "paid") {
+            try {
+              return res.status(201).json({
+                order: guestSafeOrder(withoutBuyerAnswers(keptOrder), placedAsGuest),
+                // Key order matters: the request logger cuts the body at 80 characters.
+                ...tokenFields(),
+                payment: {
+                  id: cardPayment?.id ?? keptOrder.asaasPaymentId ?? cardChargeId,
+                  status: cardPayment?.status ?? "CONFIRMED",
+                  value: cardPayment?.value ?? Number((totalAmount / cardInstallmentCount).toFixed(2)),
+                  installmentCount: cardInstallmentCount,
+                },
+              });
+            } catch {
+              // Falls through to the pending-confirmation answer.
+            }
+          }
+          return res.status(202).json({
+            code: "payment_pending_confirmation",
+            message:
+              "Não conseguimos confirmar seu pagamento agora. Não pague de novo: se a cobrança for aprovada, você recebe o ingresso por e-mail.",
+            order: { id: order.id },
+            ...tokenFields(),
+          });
         }
         console.error(`Payment creation error (order ${order.id}):`, paymentError);
         // Delete the order if payment creation fails

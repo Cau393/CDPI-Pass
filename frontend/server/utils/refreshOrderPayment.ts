@@ -41,7 +41,10 @@ export async function refreshOrderPayment(order: Order): Promise<RefreshOrderPay
   if (order.status !== "pending") {
     return { kind: "unchanged", order, paymentStatus: null };
   }
-  if (!order.asaasPaymentId) {
+  // A card order whose charge answer was lost (unknown outcome) has no payment id yet: it is
+  // looked up by externalReference below instead of being reported as unpayable.
+  const reconcileCard = !order.asaasPaymentId && order.paymentMethod === "credit_card";
+  if (!order.asaasPaymentId && !reconcileCard) {
     return { kind: "no_payment_id", order, paymentStatus: null };
   }
 
@@ -54,14 +57,21 @@ export async function refreshOrderPayment(order: Order): Promise<RefreshOrderPay
 
   let payment: Awaited<ReturnType<typeof asaasService.getPayment>>;
   try {
-    payment = await asaasService.getPayment(order.asaasPaymentId, order.id);
+    // An id that is not "pay_..." makes getPayment list by externalReference (= the order id).
+    payment = await asaasService.getPayment(order.asaasPaymentId ?? "", order.id);
   } catch (error) {
     // Nothing was learned: retry in about 3 s, not at once (a failing Asaas must not be
     // hammered) and not after the whole window. Only our own claim is shortened.
     if (lastCheckMs.get(order.id) === now) {
       lastCheckMs.set(order.id, now - REFRESH_WINDOW_MS + FAILURE_RETRY_MS);
     }
+    // The reconcile is best effort: the poller still answers the stored status.
+    if (reconcileCard) return { kind: "unchanged", order, paymentStatus: null };
     throw error;
+  }
+  if (reconcileCard) {
+    if (!payment.id) return { kind: "unchanged", order, paymentStatus: null };
+    await storage.updateOrder(order.id, { asaasPaymentId: payment.id });
   }
   console.log(`Manual check - Payment status for order ${order.id}:`, payment.status);
 

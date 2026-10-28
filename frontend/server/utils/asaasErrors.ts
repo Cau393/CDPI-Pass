@@ -56,7 +56,7 @@ export class CardDeclinedError extends AsaasApiError {
 
 /**
  * The card charge request (POST /payments) failed in a way that does not prove Asaas refused it
- * (network, timeout, 5xx, 401): the charge may exist. Keeps only the HTTP status and Asaas error
+ * (network, timeout, 408, 5xx): the charge may exist. Keeps only the HTTP status and Asaas error
  * codes of the original failure, never its request data.
  */
 export class CardChargeOutcomeUnknownError extends Error {
