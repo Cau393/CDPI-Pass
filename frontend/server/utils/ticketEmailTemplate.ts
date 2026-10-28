@@ -1,4 +1,5 @@
 import { EMAIL_CONTACT_FOOTER_HTML, EMAIL_CONTACT_LINE } from "@shared/contact";
+import { escapeHtml } from "./onlineEventEmailTemplate";
 import {
   confirmationEmailCustomBlockHtml,
   confirmationEmailCustomBlockText,
@@ -21,6 +22,8 @@ export interface TicketEmailData {
   confirmationKind: TicketConfirmationKind;
   /** Optional TipTap HTML injected after the greeting. */
   customHtml?: string | null;
+  /** Guest buyers (ADR-017): one-click link into Meus Ingressos that also verifies the e-mail. */
+  myTicketsUrl?: string | null;
 }
 
 export const TICKET_CONFIRMATION_LINE: Record<TicketConfirmationKind, string> = {
@@ -54,6 +57,19 @@ function formatTicketEventDate(date: Date): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+/** "Ver em Meus Ingressos" button, or nothing when the buyer has no link (ADR-017). */
+export function myTicketsButtonHtml(url: string | null | undefined): string {
+  if (!url) return "";
+  return `<p style="text-align: center; margin: 20px 0;">
+              <a href="${escapeHtml(url)}" style="background: #0F4C75; color: #ffffff; padding: 12px 24px; border-radius: 5px; text-decoration: none; font-weight: bold; display: inline-block;">Ver em Meus Ingressos</a>
+            </p>`;
+}
+
+/** Plain-text counterpart of the button. */
+export function myTicketsLinkText(url: string | null | undefined): string {
+  return url ? `\n      Ver em Meus Ingressos: ${url}\n` : "";
 }
 
 export function buildTicketEmailHtml(data: TicketEmailData): string {
@@ -101,7 +117,7 @@ export function buildTicketEmailHtml(data: TicketEmailData): string {
             <h2>CDPI Pass</h2>
           </div>
           <div class="content">
-            <p>Olá, <strong>${data.userName}</strong>!</p>
+            <p>Olá, <strong>${escapeHtml(data.userName)}</strong>!</p>
             <p>${confirmation} Aqui está seu ingresso para o evento:</p>
             ${customBlock}
             
@@ -122,6 +138,7 @@ export function buildTicketEmailHtml(data: TicketEmailData): string {
               </div>
             </div>
             
+            ${myTicketsButtonHtml(data.myTicketsUrl)}
             <div style="background: #BBE1FA; padding: 15px; border-radius: 5px; margin: 20px 0;">
               <h4>📋 Instruções Importantes:</h4>
               <ul style="text-align: left;">
@@ -156,7 +173,7 @@ ${customText}
       Data: ${eventDate}
       Local: ${data.eventLocation}
       Pedido: #${data.orderId}
-      
+${myTicketsLinkText(data.myTicketsUrl)}
       Importante: Seu QR Code está anexado neste email. Para visualizá-lo, abra este email em HTML ou acesse sua conta no site.
       
       Instruções Importantes:

@@ -1,6 +1,8 @@
 import { EMAIL_CONTACT_FOOTER_HTML, EMAIL_CONTACT_LINE } from "@shared/contact";
 import {
   TICKET_CONFIRMATION_LINE,
+  myTicketsButtonHtml,
+  myTicketsLinkText,
   type TicketConfirmationKind,
 } from "./ticketEmailTemplate";
 import {
@@ -20,6 +22,8 @@ export interface OnlineEventEmailData {
   orderId: string;
   confirmationKind: TicketConfirmationKind;
   customHtml?: string | null;
+  /** Guest buyers (ADR-017): one-click link into Meus Ingressos that also verifies the e-mail. */
+  myTicketsUrl?: string | null;
 }
 
 export const ONLINE_EVENT_INSTRUCTIONS = [
@@ -140,6 +144,7 @@ export function buildOnlineEventEmailHtml(data: OnlineEventEmailData): string {
               </p>
             </div>
 
+            ${myTicketsButtonHtml(data.myTicketsUrl)}
             <div style="background: #BBE1FA; padding: 15px; border-radius: 5px; margin: 20px 0;">
               <h4>Instruções Importantes:</h4>
               <ul style="text-align: left;">
@@ -178,7 +183,7 @@ ${customText}
       Pedido: #${data.orderId}
 
       Link da reunião: ${data.meetingUrl}
-${meetingPasswordText(data.meetingPassword)}
+${meetingPasswordText(data.meetingPassword)}${myTicketsLinkText(data.myTicketsUrl)}
       Um convite de calendário (invite.ics) está anexado a este e-mail. Abra o anexo para adicionar o evento à sua agenda.
 
       Instruções Importantes:

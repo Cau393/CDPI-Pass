@@ -110,7 +110,7 @@ import { asaasService } from "./services/asaasService";
 import { qrCodeService } from "./services/qrCodeService";
 import { s3Service } from "./services/s3Service";
 import { invokeGenerateCertificatePdf } from "./services/certificateLambdaService";
-import { authenticateToken, signSessionToken } from "./middleware/auth";
+import { authenticateToken, hasPassword, signSessionToken } from "./middleware/auth";
 import { authRateLimitMax, lookupEmailRateLimitMax } from "./utils/authRateLimitMax";
 import { maskEmail } from "./utils/maskEmail";
 import { getJwtSecret } from "./utils/requiredSecret";
@@ -264,7 +264,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { email, password } = loginSchema.parse(req.body);
 
       const user = await storage.getUserByEmail(email);
-      if (!user) {
+      // A guest row (ADR-017) has no password: same answer as a wrong one.
+      if (!user || !hasPassword(user)) {
         return res.status(401).json({ message: "Email ou senha incorretos" });
       }
 
@@ -333,7 +334,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // For security, always return a success message, even if the user doesn't exist.
         if (user) {
-            await emailService.sendPasswordResetEmail(user.email, user.id);
+            await emailService.sendPasswordResetEmail(user, { purpose: "reset" });
         }
 
         res.status(200).json({ message: "Se o e-mail estiver cadastrado, um link de redefinição foi enviado." });

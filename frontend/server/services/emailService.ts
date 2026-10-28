@@ -1,8 +1,6 @@
 import { MailService } from '@sendgrid/mail';
 import { courtesyEntryUrl } from '../utils/courtesyEntryUrl';
-import jwt from 'jsonwebtoken';
 import { storage } from '../storage';
-import { getJwtSecret } from '../utils/requiredSecret';
 import { EMAIL_CONTACT_FOOTER_HTML, EMAIL_CONTACT_LINE } from '@shared/contact';
 import { buildTicketQrAttachment } from '../utils/ticketQrAttachment';
 import {
@@ -16,6 +14,10 @@ import {
   type OnlineEventEmailData,
 } from '../utils/onlineEventEmailTemplate';
 import { buildCalendarInviteAttachment } from '../utils/calendarInvite';
+import { escapeHtml } from '../utils/onlineEventEmailTemplate';
+import { APP_BASE_URL } from '../utils/myTicketsUrl';
+import { signPasswordResetToken } from '../middleware/auth';
+import type { User } from '@shared/schema';
 
 if (!process.env.SENDGRID_API_KEY) {
   console.warn("SENDGRID_API_KEY environment variable not set");
@@ -26,8 +28,6 @@ if (process.env.SENDGRID_API_KEY) {
   mailService.setApiKey(process.env.SENDGRID_API_KEY);
 }
 
-// Signs password-reset links; read at load so the worker cannot boot without it (#6).
-const JWT_SECRET = getJwtSecret();
 const FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || "relacionamento.mkt@cdpipharma.com.br";
 
 /** Rough HTML to plain text for multipart/alternative body (no external deps). */
@@ -183,7 +183,7 @@ class EmailService {
       ? "Após a confirmação do pagamento, você receberá o link de acesso por e-mail."
       : "Após a confirmação do pagamento, você receberá o QR Code do ingresso por e-mail.";
     const html = `
-      <p>Olá, <strong>${data.userName}</strong>,</p>
+      <p>Olá, <strong>${escapeHtml(data.userName)}</strong>,</p>
       <p>Para pagar com cartão o ingresso <strong>${data.eventTitle}</strong>, use o link abaixo:</p>
       <p><a href="${data.paymentUrl}">${data.paymentUrl}</a></p>
       <p>${afterPay}</p>
@@ -228,28 +228,37 @@ ${EMAIL_CONTACT_LINE}`;
     }
   }
 
-  async sendPasswordResetEmail(email: string, userId: string): Promise<boolean> {
-    // Create a password reset token that expires in 30 minutes
-    const resetToken = jwt.sign(
-        { userId, type: 'password-reset' },
-        JWT_SECRET,
-        { expiresIn: '30m' }
-    );
+  /**
+   * "reset" is the classic forgot-password mail; "create" goes to an account that has
+   * no password yet (a guest buyer, ADR-017) and asks them to create one. The link is
+   * single-use: it carries the password fingerprint (see signPasswordResetToken).
+   */
+  async sendPasswordResetEmail(
+    user: Pick<User, "id" | "email" | "password">,
+    options: { purpose?: "reset" | "create" } = {},
+  ): Promise<boolean> {
+    const resetLink = `${APP_BASE_URL}/reset-password?token=${signPasswordResetToken(user)}`;
+    const creating = options.purpose === "create";
 
-    const resetLink = `https://cdpipass.com.br/reset-password?token=${resetToken}`;
+    const heading = creating ? "Crie sua senha" : "Redefinição de Senha";
+    const intro = creating
+      ? "Você já tem ingressos no CDPI Pass. Clique no link abaixo para criar sua senha e acessar sua conta:"
+      : "Você solicitou a redefinição de sua senha. Clique no link abaixo para criar uma nova:";
+    const button = creating ? "Criar senha" : "Redefinir Senha";
+    const subject = creating ? "Crie sua senha no CDPI Pass" : "Redefinição de Senha - CDPI Pass";
 
     const html = `
-        <h1>Redefinição de Senha</h1>
-        <p>Você solicitou a redefinição de sua senha. Clique no link abaixo para criar uma nova:</p>
-        <a href="${resetLink}">Redefinir Senha</a>
+        <h1>${heading}</h1>
+        <p>${intro}</p>
+        <a href="${resetLink}">${button}</a>
         <p>Este link expirará em 30 minutos.</p>
         ${EMAIL_CONTACT_FOOTER_HTML}
     `;
-    const text = `Acesse este link para redefinir sua senha: ${resetLink}
+    const text = `${creating ? "Acesse este link para criar sua senha" : "Acesse este link para redefinir sua senha"}: ${resetLink}
 
 ${EMAIL_CONTACT_LINE}`;
 
-    return this.sendEmail(email, "Redefinição de Senha - CDPI Pass", html, text);
+    return this.sendEmail(user.email, subject, html, text);
   }
 
   /**

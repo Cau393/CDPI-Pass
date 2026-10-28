@@ -39,7 +39,7 @@ export const users = pgTable(
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     email: varchar("email", { length: 255 }).notNull().unique(),
     emailVerified: boolean("email_verified").default(false),
-    password: text("password").notNull(),
+    password: text("password"),
     name: varchar("name", { length: 255 }).notNull(),
     /**
      * Brazilian CPF. Null when `is_foreigner` is true.
@@ -344,6 +344,8 @@ export const orders = pgTable("orders", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
   qr_code_s3_url: varchar("qr_code_s3_url", { length: 500 }),
+  // ADR-017: bought without logging in; hidden from the e-mail's account until it is verified.
+  placedAsGuest: boolean("placed_as_guest").notNull().default(false),
   /**
    * Snapshot of the event interest-area label chosen at order creation.
    * Null when the event list was empty. Not a foreign key: later edits to

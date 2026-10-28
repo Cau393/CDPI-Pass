@@ -29,8 +29,9 @@ import {
   type CommunicateRecipientMode,
 } from "@shared/schema";
 import { db } from "./db";
+import { isUsersEmailUniqueViolation } from "./utils/usersEmailUnique";
 import { isEventFull } from "./utils/eventSalesPolicy";
-import { eq, ne, desc, sql, asc, count, and, isNull, or, inArray } from "drizzle-orm";
+import { eq, ne, desc, sql, asc, count, and, isNull, or, inArray, gte } from "drizzle-orm";
 import type { RegistrationAnswer } from "@shared/eventRegistrationForm";
 import { s3Service } from "./services/s3Service";
 import { buildUndoCheckInPatch } from "./utils/undoCheckInUpdate";
@@ -72,6 +73,14 @@ export interface IStorage {
   getUserByCpf(cpf: string): Promise<User | undefined>;
   getUserByForeignDocument(foreignDocument: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  /** ADR-017 guest buyer: a row with a NULL password; on an e-mail race returns the row that won. */
+  createGuestUser(data: {
+    email: string;
+    name: string;
+    phone: string;
+    document: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null } | null;
+    address: string | null;
+  }): Promise<User>;
   updateUser(id: string, updates: Partial<User>): Promise<User | undefined>;
   verifyUserEmail(id: string): Promise<boolean>;
   deleteUser(id: string): Promise<boolean>;
@@ -104,7 +113,14 @@ export interface IStorage {
   // Order operations
   getOrder(id: string): Promise<Order | undefined>;
   /** "Meus ingressos": buyer-facing, so registration answers are not selected (ADR-016). */
-  getOrdersByUser(userId: string, page: number, limit: number): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }>;
+  getOrdersByUser(
+    userId: string,
+    page: number,
+    limit: number,
+    options?: { includeGuestOrders?: boolean },
+  ): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }>;
+  /** Pending orders a user opened for an event since `since` (guest checkout cap, ADR-017). */
+  countPendingOrdersSince(params: { userId: string; eventId: string; since: Date }): Promise<number>;
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
   /** pending -> paid in one statement; false when the order was no longer pending. */
@@ -291,6 +307,45 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  /**
+   * ADR-017: the row a guest buyer becomes: no password yet, e-mail unverified. A unique
+   * violation on the e-mail (a concurrent request) returns the row that won; anything
+   * else is rethrown for the resolver to handle.
+   */
+  async createGuestUser(data: {
+    email: string;
+    name: string;
+    phone: string;
+    document: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null } | null;
+    address: string | null;
+  }): Promise<User> {
+    try {
+      const [user] = await db
+        .insert(users)
+        .values({
+          email: data.email,
+          name: data.name,
+          phone: data.phone,
+          password: null,
+          emailVerified: false,
+          isForeigner: data.document?.isForeigner ?? false,
+          cpf: data.document?.cpf ?? null,
+          foreignDocument: data.document?.foreignDocument ?? null,
+          address: data.address,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .returning();
+      return user;
+    } catch (error) {
+      if (isUsersEmailUniqueViolation(error)) {
+        const existing = await this.getUserByEmail(data.email);
+        if (existing) return existing;
+      }
+      throw error;
+    }
+  }
+
   async updateUser(id: string, updates: Partial<User>): Promise<User | undefined> {
     const [user] = await db
       .update(users)
@@ -410,8 +465,18 @@ export class DatabaseStorage implements IStorage {
     return order;
   }
 
-  async getOrdersByUser(userId: string, page: number = 1, limit: number = 10): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }> {
+  async getOrdersByUser(
+    userId: string,
+    page: number = 1,
+    limit: number = 10,
+    options: { includeGuestOrders?: boolean } = {},
+  ): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }> {
     const offset = (page - 1) * limit;
+    // ADR-017: guest orders stay hidden until the account's e-mail is verified.
+    const ownerFilter =
+      options.includeGuestOrders === false
+        ? and(eq(orders.userId, userId), eq(orders.placedAsGuest, false))
+        : eq(orders.userId, userId);
     
     const ordersQuery = db
       .select({
@@ -428,6 +493,7 @@ export class DatabaseStorage implements IStorage {
         courtesyLinkId: orders.courtesyLinkId,
         qrCodeData: orders.qrCodeData,
         qr_code_s3_url: orders.qr_code_s3_url,
+        placedAsGuest: orders.placedAsGuest,
         qrCodeUsed: orders.qrCodeUsed,
         maxUses: orders.maxUses,
         amntUsed: orders.amntUsed,
@@ -450,7 +516,7 @@ export class DatabaseStorage implements IStorage {
       })
       .from(orders)
       .leftJoin(events, eq(orders.eventId, events.id))
-      .where(eq(orders.userId, userId))
+      .where(ownerFilter)
       .orderBy(desc(orders.createdAt))
       .limit(limit)
       .offset(offset);
@@ -458,7 +524,7 @@ export class DatabaseStorage implements IStorage {
     const totalQuery = db
       .select({ value: count() })
       .from(orders)
-      .where(eq(orders.userId, userId));
+      .where(ownerFilter);
 
     const [ordersResult, totalResult] = await Promise.all([ordersQuery, totalQuery]);
     
@@ -468,6 +534,21 @@ export class DatabaseStorage implements IStorage {
     };
   }
   
+
+  async countPendingOrdersSince(params: { userId: string; eventId: string; since: Date }): Promise<number> {
+    const [row] = await db
+      .select({ value: count() })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.userId, params.userId),
+          eq(orders.eventId, params.eventId),
+          eq(orders.status, "pending"),
+          gte(orders.createdAt, params.since),
+        ),
+      );
+    return row.value;
+  }
 
   async createOrder(orderData: InsertOrder): Promise<Order> {
     const [order] = await db

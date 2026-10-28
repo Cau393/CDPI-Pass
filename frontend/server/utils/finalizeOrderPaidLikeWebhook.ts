@@ -3,6 +3,7 @@ import type { Order } from "@shared/schema";
 import { storage, type DuplicatePaidPolicy } from "../storage";
 import { asaasService, type ReceivedAsaasPayment } from "../services/asaasService";
 import { s3Service } from "../services/s3Service";
+import { myTicketsUrlFor } from "./myTicketsUrl";
 import { sendPurchaseConfirmationEmail } from "./sendPurchaseConfirmationEmail";
 import { refundAndNotify } from "./refundReceivedPayment";
 
@@ -118,6 +119,7 @@ async function afterPaid(order: Order, paymentMeta: PaymentMetaForFinalize): Pro
         qrCodeData: order.qrCodeData || "",
         qrCodeS3Url: order.qr_code_s3_url || "",
         confirmationKind: confirmationKindForPaymentMethod(order.paymentMethod),
+        myTicketsUrl: myTicketsUrlFor(order),
       });
     } catch (error) {
       console.error(`TICKET_EMAIL_FAILED order=${order.id}:`, error);
