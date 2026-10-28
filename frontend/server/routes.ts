@@ -114,7 +114,14 @@ import {
   signPasswordResetToken,
   signSessionToken,
 } from "./middleware/auth";
-import { authRateLimitMax, guestCheckoutRateLimitMax, lookupEmailRateLimitMax } from "./utils/authRateLimitMax";
+import {
+  authRateLimitMax,
+  cardAttemptEmailRateLimitMax,
+  cardAttemptIpRateLimitMax,
+  guestCheckoutRateLimitMax,
+  lookupEmailRateLimitMax,
+} from "./utils/authRateLimitMax";
+import { parseCardPayment } from "./utils/cardPaymentSchema";
 import {
   FOREIGN_PAID_UNAVAILABLE_CODE,
   FOREIGN_PAID_UNAVAILABLE_MESSAGE,
@@ -136,7 +143,7 @@ import { toPublicUser } from "./utils/publicUser";
 import { registrationFormsEqual } from "./utils/registrationFormEqual";
 import { decodeCsvBuffer } from "./utils/decodeCsvBuffer";
 import { normalizePhoneE164 } from "./utils/normalizePhoneE164";
-import { checkoutPaymentErrorResponse } from "./utils/asaasErrors";
+import { CardDeclinedError, checkoutPaymentErrorResponse } from "./utils/asaasErrors";
 import {
   cdpiApoiandoNpsAnswersSchema,
   cdpiEventNpsAnswersSchema,
@@ -248,6 +255,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     legacyHeaders: false,
     skip: (req: any) => Boolean(req.user),
     message: { code: "rate_limited", message: "Muitas tentativas. Tente novamente em alguns minutos." },
+  });
+
+  // ADR-017 Stage 3: card testing guard on POST /api/orders. Every card submit counts (also the ones
+  // rejected later), with or without a session; other payment methods are skipped. Mounted after
+  // authenticateTokenOrGuest so req.user is known.
+  const cardAttemptRateLimited = {
+    windowMs: 60 * 60 * 1000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req: any) => req.body?.paymentMethod !== "credit_card",
+    message: { code: "rate_limited", message: "Muitas tentativas. Tente novamente em alguns minutos." },
+  };
+  const cardAttemptIpLimiter = rateLimit({ ...cardAttemptRateLimited, max: cardAttemptIpRateLimitMax() });
+  const cardAttemptEmailLimiter = rateLimit({
+    ...cardAttemptRateLimited,
+    max: cardAttemptEmailRateLimitMax(),
+    keyGenerator: (req: any) =>
+      `card:${req.user?.email ?? String(req.body?.buyer?.email ?? "").trim().toLowerCase()}`,
   });
 
   // Auth routes
@@ -2481,13 +2506,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
   // Orders routes
-  app.post("/api/orders", authenticateTokenOrGuest, guestCheckoutLimiter, async (req: any, res) => {
+  app.post("/api/orders", authenticateTokenOrGuest, guestCheckoutLimiter, cardAttemptIpLimiter, cardAttemptEmailLimiter, async (req: any, res) => {
     try {
       const { eventId, paymentMethod, promoCode } = req.body ?? {};
 
-      // ADR-017: a request without a session is a guest checkout. Only guests solve the
-      // challenge in Stage 2; the logged-in card path is still the hosted Asaas link.
-      if (!req.user && !(await verifyTurnstile(req.body?.turnstileToken, req.ip))) {
+      // ADR-017: a guest solves the challenge, and so does every card submit (also with a session):
+      // the inline card form is the card-testing surface.
+      if (
+        (!req.user || paymentMethod === "credit_card") &&
+        !(await verifyTurnstile(req.body?.turnstileToken, req.ip))
+      ) {
         return res.status(403).json(TURNSTILE_FAILED_BODY);
       }
 
@@ -2543,15 +2571,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Foreigners pay by card only. A session is judged on its account; a guest on what they
       // typed (when foreign paid checkout is blocked the resolver answers 403 first).
-      const foreignCardOnly =
-        paymentMethod !== "credit_card" &&
-        (req.user
-          ? req.user.isForeigner === true
-          : req.body?.buyer?.isForeigner === true && !foreignPaidCheckoutBlocked({ isForeigner: true }));
-      if (foreignCardOnly) {
+      const foreignBuyer = req.user
+        ? req.user.isForeigner === true
+        : req.body?.buyer?.isForeigner === true && !foreignPaidCheckoutBlocked({ isForeigner: true });
+      if (paymentMethod !== "credit_card" && foreignBuyer) {
         return res.status(400).json({
           message: "Estrangeiros pagam apenas com cartão de crédito internacional, sem PIX, boleto ou parcelamento.",
         });
+      }
+
+      // Brazilian card: validated before the registration answers, the resolver and any write.
+      // A foreigner's card fields are ignored (hosted invoice), also when foreign paid checkout is
+      // off and the resolver answers 403 below. Never says which field failed.
+      const typedForeigner = req.user ? req.user.isForeigner === true : req.body?.buyer?.isForeigner === true;
+      const inlineCard = paymentMethod === "credit_card" && !typedForeigner;
+      const cardInput = inlineCard ? parseCardPayment(req.body) : null;
+      if (inlineCard && !cardInput?.ok) {
+        return res
+          .status(400)
+          .json({ code: "invalid_card", message: "Confira os dados do cartão e do titular." });
       }
 
       // Old bundles send no answers: the legacy questions fall back to the account's profile.
@@ -2634,8 +2672,93 @@ export async function registerRoutes(app: Express): Promise<Server> {
         placedAsGuest,
       });
 
+      // Set just before the card charge: from then on a failure is an unknown outcome.
+      let cardChargeStarted = false;
+
       // Create payment with Asaas
       try {
+        if (inlineCard && cardInput?.ok) {
+          const { card, cardHolder, installmentCount } = cardInput.value;
+          const dueDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+          const phoneDigits = contactPhone?.replace(/\D/g, '') || '';
+
+          // The QR goes in before the charge: a webhook can reach us before the Asaas answer, and
+          // its finalize sends the ticket e-mail, which needs the QR.
+          if (!isOnlineEvent(event)) {
+            const qrCodeData = await qrCodeService.generateQRCode({
+              orderId: order.id,
+              eventId: event.id,
+              userId: userId,
+            });
+            await storage.updateOrder(order.id, { qrCodeData });
+          }
+
+          cardChargeStarted = true;
+          const payment = await asaasService.createCardPayment({
+            customer: {
+              name: contactName,
+              email: buyer.email,
+              cpfCnpj: identity.cpf!.replace(/\D/g, ''),
+              phone: phoneDigits,
+            },
+            reuseCustomer: !placedAsGuest,
+            value: totalAmount,
+            dueDate,
+            installmentCount,
+            description: `Ingresso para ${event.title}`,
+            externalReference: order.id,
+            card,
+            holder: {
+              name: cardHolder.name,
+              email: buyer.email,
+              cpfCnpj: cardHolder.cpf,
+              postalCode: cardHolder.postalCode,
+              addressNumber: cardHolder.addressNumber,
+              phone: phoneDigits,
+            },
+            remoteIp: req.ip,
+          });
+
+          await storage.updateOrder(order.id, { asaasPaymentId: payment.id });
+
+          // Approved on the spot: same path as the webhook (idempotent, one ticket e-mail).
+          // AWAITING_RISK_ANALYSIS and the rest stay pending for the webhook / check-status.
+          if (payment.status === "CONFIRMED" || payment.status === "RECEIVED") {
+            const fresh = await storage.getOrder(order.id);
+            if (fresh) {
+              try {
+                const outcome = await finalizeOrderPaidLikeWebhook(fresh, {
+                  billingType: "CREDIT_CARD",
+                  value: payment.value,
+                  paymentId: payment.id,
+                  installment: payment.installment,
+                });
+                if (!outcome.ok && outcome.code === "duplicate_other_paid") {
+                  return res
+                    .status(409)
+                    .json({ message: "Você já possui inscrição confirmada para este evento." });
+                }
+              } catch {
+                // The webhook recovers it; the order id is the only thing worth logging.
+                console.error(`Inline card finalize failed (order ${order.id})`);
+              }
+            }
+          }
+
+          const finalOrder = await storage.getOrder(order.id);
+          return res.status(201).json({
+            order: finalOrder ? guestSafeOrder(withoutBuyerAnswers(finalOrder), placedAsGuest) : finalOrder,
+            // Key order matters: the request logger cuts the body at 80 characters.
+            ...(placedAsGuest ? { orderAccessToken: signOrderAccessToken(order.id) } : {}),
+            payment: {
+              id: payment.id,
+              status: payment.status,
+              value: payment.value,
+              installmentCount,
+            },
+          });
+        }
+
         const paymentData = isForeigner
           ? await asaasService.createForeignCardPayment({
               name: contactName,
@@ -2655,8 +2778,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             cpfCnpj: identity.cpf!.replace(/\D/g, ''),
             phone: contactPhone?.replace(/\D/g, '') || '',
           },
-          billingType: paymentMethod === "credit_card" ? "CREDIT_CARD" : 
-                      paymentMethod === "pix" ? "PIX" : "BOLETO",
+          billingType: paymentMethod === "pix" ? "PIX" : "BOLETO",
           value: totalAmount,
           dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
           description: `Ingresso para ${event.title}`,
@@ -2721,6 +2843,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         res.status(201).json(response);
       } catch (paymentError) {
+        // Card charge with an unknown outcome (network, timeout, 5xx): Asaas may have created it
+        // ("Timeout não significa que a cobrança não foi criada"). Keep the order pending, the
+        // webhook matches it by externalReference. Only a decline (nothing saved on Asaas) or a
+        // failure before the charge deletes it, like PIX/boleto.
+        if (cardChargeStarted && !(paymentError instanceof CardDeclinedError)) {
+          console.error(`Card payment outcome unknown (order ${order.id})`);
+          const failure = checkoutPaymentErrorResponse(paymentError);
+          return res.status(failure.status).json(failure.body);
+        }
         console.error(`Payment creation error (order ${order.id}):`, paymentError);
         // Delete the order if payment creation fails
         await storage.deleteOrder(order.id);
@@ -3144,7 +3275,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log("Asaas webhook received and validated:", eventType, payment?.id);
 
-      console.log("Full webhook payload:", JSON.stringify(req.body, null, 2));
+      // creditCardToken is a reusable charge token: never logged (brand and last 4 may stay).
+      console.log(
+        "Full webhook payload:",
+        JSON.stringify(req.body, (key, value) => (key === "creditCardToken" ? undefined : value), 2),
+      );
       
       // Handle different payment events
       if (eventType === "PAYMENT_CONFIRMED" || eventType === "PAYMENT_RECEIVED") {
@@ -3185,9 +3320,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
             await refundAndNotify(order, payment, "duplicate");
           }
         }
-      } else if ((eventType === "PAYMENT_OVERDUE" || eventType === "PAYMENT_DELETED") && payment?.id) {
+      } else if (
+        eventType === "PAYMENT_APPROVED_BY_RISK_ANALYSIS" &&
+        (payment?.status === "CONFIRMED" || payment?.status === "RECEIVED")
+      ) {
+        // Risk analysis approved the card charge. Finalize only when the payload already says
+        // paid: the docs do not say whether PAYMENT_CONFIRMED follows (same idempotent path).
+        const order = await findOrderForPaidAsaasPayment(payment);
+        if (order) {
+          await finalizeOrderPaidLikeWebhook(order, {
+            billingType: payment?.billingType || "unknown",
+            value: payment?.value ?? null,
+            paymentId: payment?.id ?? null,
+            installment: payment?.installment ?? null,
+          });
+        }
+      } else if (
+        (eventType === "PAYMENT_OVERDUE" ||
+          eventType === "PAYMENT_DELETED" ||
+          eventType === "PAYMENT_REPROVED_BY_RISK_ANALYSIS" ||
+          eventType === "PAYMENT_CREDIT_CARD_CAPTURE_REFUSED") &&
+        payment?.id
+      ) {
         // Only the charge the order currently holds may cancel it: an older charge of the
-        // same order, or one payment generated by a card link, never does.
+        // same order, or one payment generated by a card link, never does. Reproval and refused
+        // capture are card events; matching is by stored payment id only (inline pay_ ids), so a
+        // legacy link order is not cancelled by one failed attempt on its link.
         const order = await storage.getOrderByAsaasPaymentId(payment.id);
         
         if (order && order.status === "pending") {

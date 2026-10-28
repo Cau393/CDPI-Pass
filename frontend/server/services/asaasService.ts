@@ -1,4 +1,4 @@
-import { AsaasApiError } from "../utils/asaasErrors";
+import { AsaasApiError, CardDeclinedError } from "../utils/asaasErrors";
 import { brazilianNationalPhone } from "../utils/normalizePhoneE164";
 
 const DEFAULT_ASAAS_API_URL = "https://api.asaas.com/v3";
@@ -26,7 +26,7 @@ interface AsaasCustomer {
 
 interface AsaasPaymentRequest {
   customer: AsaasCustomer;
-  billingType: "BOLETO" | "CREDIT_CARD" | "PIX";
+  billingType: "BOLETO" | "PIX";
   value: number;
   dueDate: Date;
   description: string;
@@ -52,6 +52,36 @@ interface AsaasPaymentResponse {
     expirationDate: string;
   };
   bankSlipUrl?: string;
+}
+
+export interface CardPaymentParams {
+  customer: AsaasCustomer;
+  /** False for guest orders: the customer is always created from the typed contact. */
+  reuseCustomer: boolean;
+  /** Order total; with installments Asaas splits it. */
+  value: number;
+  dueDate: Date;
+  installmentCount: 1 | 2 | 3;
+  description: string;
+  externalReference: string;
+  card: { holderName: string; number: string; expiryMonth: string; expiryYear: string; ccv: string };
+  holder: {
+    name: string;
+    email: string;
+    cpfCnpj: string;
+    postalCode: string;
+    addressNumber: string;
+    phone: string;
+  };
+  remoteIp: string;
+}
+
+/** Only what the route needs: never the Asaas `creditCard` object (brand, last 4, token). */
+export interface CardPaymentResult {
+  id: string;
+  status: string;
+  value: number;
+  installment: string | null;
 }
 
 export class AsaasService {
@@ -117,38 +147,6 @@ export class AsaasService {
       // Create or get customer
       const customer = await this.createCustomer(paymentData.customer);
 
-      /**
-       * Cartão: apenas Link de Pagamento — evita criar uma cobrança avulsa que dispara
-       * e-mail automático de "cobrança" do Asaas. Ver PaymentLinkSaveRequestDTO:
-       * notificationEnabled: false desativa notificações para clientes cadastrados via o link.
-       */
-      if (paymentData.billingType === "CREDIT_CARD") {
-        const paymentLinkPayload = {
-          name: `Pedido ${paymentData.externalReference}`,
-          billingType: "CREDIT_CARD",
-          chargeType: "INSTALLMENT",
-          maxInstallmentCount: 3,
-          value: paymentData.value,
-          dueDateLimitDays: 1,
-          description: paymentData.description,
-          externalReference: paymentData.externalReference,
-          notificationEnabled: false,
-        };
-
-        const paymentLinkData = await this.makeRequest("/paymentLinks", "POST", paymentLinkPayload);
-
-        return {
-          id: paymentLinkData.id,
-          dateCreated: paymentLinkData.dateCreated,
-          customer: customer.id,
-          paymentLink: paymentLinkData.url,
-          value: paymentLinkData.value,
-          netValue: paymentLinkData.netValue ?? paymentLinkData.value,
-          billingType: "CREDIT_CARD",
-          status: "PENDING",
-        };
-      }
-
       const paymentPayload = {
         customer: customer.id,
         billingType: paymentData.billingType,
@@ -186,6 +184,62 @@ export class AsaasService {
       console.error("Error creating payment:", error);
       throw error;
     }
+  }
+
+  /**
+   * Inline card charge (ADR-017). This is the only place that builds the Asaas card
+   * request, and it never logs it: makeRequest logs method, path and the error
+   * (status and codes only). A 400 from POST /payments is a declined card (Asaas
+   * does not save the charge); any other failure is left to the caller as an
+   * unknown outcome.
+   */
+  async createCardPayment(params: CardPaymentParams): Promise<CardPaymentResult> {
+    const customer = params.reuseCustomer
+      ? await this.createCustomer(params.customer)
+      : await this.makeRequest("/customers", "POST", params.customer);
+
+    const body = {
+      customer: customer.id,
+      billingType: "CREDIT_CARD",
+      ...(params.installmentCount === 1
+        ? { value: params.value }
+        : { installmentCount: params.installmentCount, totalValue: params.value }),
+      dueDate: params.dueDate.toISOString().split("T")[0],
+      description: params.description,
+      externalReference: params.externalReference,
+      creditCard: {
+        holderName: params.card.holderName,
+        number: params.card.number,
+        expiryMonth: params.card.expiryMonth,
+        expiryYear: params.card.expiryYear,
+        ccv: params.card.ccv,
+      },
+      creditCardHolderInfo: {
+        name: params.holder.name,
+        email: params.holder.email,
+        cpfCnpj: params.holder.cpfCnpj,
+        postalCode: params.holder.postalCode,
+        addressNumber: params.holder.addressNumber,
+        phone: params.holder.phone,
+      },
+      remoteIp: params.remoteIp,
+    };
+
+    let payment: { id: string; status: string; value: number; installment?: string | null };
+    try {
+      payment = await this.makeRequest("/payments", "POST", body);
+    } catch (error) {
+      if (error instanceof AsaasApiError && error.status === 400) {
+        throw new CardDeclinedError(error.codes);
+      }
+      throw error;
+    }
+    return {
+      id: payment.id,
+      status: payment.status,
+      value: payment.value,
+      installment: payment.installment ?? null,
+    };
   }
 
   /**
