@@ -3,6 +3,7 @@ import type { Order } from "@shared/schema";
 import { storage } from "../storage";
 import { asaasService } from "../services/asaasService";
 import { buildCancellationEmailHtml } from "./cancellationEmailTemplate";
+import { ownerCanSeeOrder } from "./orderVisibility";
 
 export function buildOrderCancelSuccessMessage(handled: "pending" | "paid"): string {
   if (handled === "pending") {
@@ -39,13 +40,18 @@ function mapCancelFailure(
 
 function gateUserCancel(
   order: Order,
-  options: { actor: "admin" | "user"; userId?: string },
+  options: { actor: "admin" | "user"; userId?: string; userEmailVerified?: boolean },
 ): ExecuteOrderCancelResult | null {
   if (options.actor !== "user") {
     return null;
   }
   if (!options.userId || order.userId !== options.userId) {
     return { ok: false, code: "forbidden" };
+  }
+  // ADR-017: a guest order is hidden from its account until the e-mail is verified. Same
+  // answer as a missing order, so existence does not leak.
+  if (!ownerCanSeeOrder(order, { id: options.userId, emailVerified: options.userEmailVerified === true })) {
+    return { ok: false, code: "not_found" };
   }
   if (order.status === "paid") {
     return { ok: false, code: "invalid_status", status: order.status };
@@ -101,7 +107,7 @@ async function enqueuePaidCancellationEmail(order: Order): Promise<void> {
 
 export async function executeOrderCancel(
   orderId: string,
-  options: { actor: "admin" | "user"; userId?: string },
+  options: { actor: "admin" | "user"; userId?: string; userEmailVerified?: boolean },
 ): Promise<ExecuteOrderCancelResult> {
   const order = await storage.getOrder(orderId);
   if (!order) {

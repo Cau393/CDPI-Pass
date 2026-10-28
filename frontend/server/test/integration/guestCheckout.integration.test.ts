@@ -75,6 +75,8 @@ vi.mock("../../services/asaasService", () => ({
       throw new Error("a foreign guest must never reach Asaas");
     }),
     cancelPayment: vi.fn(async () => ({})),
+    // The webhook route checks the shared token with the real rule's shape.
+    validateWebhookSignature: (token: string | undefined) => token === WEBHOOK_TOKEN,
   },
 }));
 
@@ -84,6 +86,9 @@ vi.mock("../../services/s3Service", () => ({
     uploadQRCode: vi.fn(async () => "https://s3.test/qr.png"),
   },
 }));
+
+const AWS_ENV_NAMES = ["AWS_LAMBDA_ARN", "AWS_S3_BUCKET_NAME"] as const;
+const savedAwsEnv: Partial<Record<(typeof AWS_ENV_NAMES)[number], string | undefined>> = {};
 
 let server: Server;
 let baseUrl: string;
@@ -259,6 +264,11 @@ async function freeGuestSubscribe(eventId: string, typed: Buyer) {
 
 describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
   beforeAll(async () => {
+    // Never reach real AWS: with these unset the certificate route stops before the Lambda call.
+    for (const name of AWS_ENV_NAMES) {
+      savedAwsEnv[name] = process.env[name];
+      delete process.env[name];
+    }
     pool = new Pool({ connectionString: VERIFY_URL });
     const { registerRoutes } = await import("../../routes");
     const app = express();
@@ -295,6 +305,10 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
   });
 
   afterAll(async () => {
+    for (const name of AWS_ENV_NAMES) {
+      if (savedAwsEnv[name] === undefined) delete process.env[name];
+      else process.env[name] = savedAwsEnv[name];
+    }
     const { rows: byEmail } = await pool.query(`SELECT id FROM users WHERE email = ANY($1)`, [createdEmails]);
     const userIds = [...createdUserIds, ...byEmail.map((r) => r.id)];
     await pool.query(`DELETE FROM orders WHERE event_id = ANY($1) OR user_id = ANY($2)`, [createdEventIds, userIds]);
@@ -824,7 +838,7 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
       const generateAfter = await api("POST", "/api/certificates/generate", { token: account.token, body: certificateBody });
       expect(certificatesAfter.body.data.map((c: any) => c.eventId)).toEqual([eventId]);
       // Past the eligibility gate (it may still fail later on the unconfigured certificate service).
-      expect(String(generateAfter.body?.message ?? "")).not.toMatch(/elegível/i);
+      expect(generateAfter.status).not.toBe(400);
     });
   });
 

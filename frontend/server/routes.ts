@@ -61,12 +61,6 @@ import {
   participantAnswers,
   withoutBuyerAnswers,
 } from "@shared/eventRegistrationForm";
-import {
-  FOREIGN_PAID_UNAVAILABLE_CODE,
-  FOREIGN_PAID_UNAVAILABLE_MESSAGE,
-  foreignPaidCheckoutBlocked,
-} from "@shared/foreignCheckout";
-import { identityRequiredBody, missingIdentityFields } from "./utils/inscriptionIdentity";
 import { validateEmailSubjectTemplateInput } from "./utils/emailSubjectTemplate";
 import { mapCommercialSales } from "./utils/commercialSalesMapper";
 import {
@@ -110,8 +104,21 @@ import { asaasService } from "./services/asaasService";
 import { qrCodeService } from "./services/qrCodeService";
 import { s3Service } from "./services/s3Service";
 import { invokeGenerateCertificatePdf } from "./services/certificateLambdaService";
-import { authenticateToken, hasPassword, signSessionToken } from "./middleware/auth";
-import { authRateLimitMax, lookupEmailRateLimitMax } from "./utils/authRateLimitMax";
+import {
+  authenticateToken,
+  authenticateTokenOrGuest,
+  hasPassword,
+  orderIdFromAccessToken,
+  passwordResetUserFromToken,
+  signOrderAccessToken,
+  signSessionToken,
+} from "./middleware/auth";
+import { authRateLimitMax, guestCheckoutRateLimitMax, lookupEmailRateLimitMax } from "./utils/authRateLimitMax";
+import { verifyTurnstile } from "./utils/verifyTurnstile";
+import { resolveCheckoutBuyer } from "./utils/checkoutBuyer";
+import { ownerCanSeeOrder } from "./utils/orderVisibility";
+import { myTicketsUrlFor } from "./utils/myTicketsUrl";
+import { refreshOrderPayment } from "./utils/refreshOrderPayment";
 import { maskEmail } from "./utils/maskEmail";
 import { getJwtSecret } from "./utils/requiredSecret";
 import multer from 'multer';
@@ -179,6 +186,22 @@ function registrationAnswersFailure(res: Response, body: unknown, message: strin
   return res.status(409).json({ message: "Atualize a página para concluir a inscrição", code: "reload_required" });
 }
 
+/** ADR-017: answer for a guest request whose Turnstile challenge failed. */
+const TURNSTILE_FAILED_BODY = {
+  code: "turnstile_failed",
+  message: "Não foi possível confirmar que você não é um robô. Recarregue a página e tente novamente.",
+};
+
+/** ADR-017: a guest row has no password; these routes need one to confirm the action. */
+const PASSWORD_NOT_SET_BODY = {
+  code: "password_not_set",
+  message: "Esta conta ainda não tem senha. Use “Esqueci minha senha” para criar uma.",
+};
+
+/** Open charges one buyer may have for one event inside the window. */
+const MAX_PENDING_ORDERS = 3;
+const PENDING_ORDERS_WINDOW_MS = 30 * 60 * 1000;
+
 export async function registerRoutes(app: Express): Promise<Server> {
 
   // Apply rate limiting to all /api/auth routes. The default key is req.ip, the
@@ -202,7 +225,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     legacyHeaders: false,
     message: { message: 'Muitas tentativas. Tente novamente em 15 minutos.' },
   });
-  
+
+  // ADR-017: logged-out checkout creates rows and Asaas charges for strangers. Per real IP, after
+  // authenticateTokenOrGuest; a session request is skipped (it has an account to answer for).
+  const guestCheckoutLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: guestCheckoutRateLimitMax(),
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req: any) => Boolean(req.user),
+    message: { code: "rate_limited", message: "Muitas tentativas. Tente novamente em alguns minutos." },
+  });
+
   // Auth routes
   app.post("/api/auth/register", async (req, res) => {
     try {
@@ -226,6 +260,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Check if user already exists. Email stays the account key for both kinds.
       const existingUser = await storage.getUserByEmail(body.email);
       if (existingUser) {
+        // A guest row (ADR-017) has tickets but no password: the mailbox owner claims it
+        // through the e-mailed link, so whoever typed the address here cannot take it over.
+        if (!hasPassword(existingUser)) {
+          await emailService.sendPasswordResetEmail(existingUser, { purpose: "create" });
+          return res.status(409).json({
+            code: "guest_account_claim",
+            message: "Este e-mail já tem ingressos. Enviamos um link para você criar sua senha.",
+          });
+        }
         return res.status(400).json({ message: "Email já cadastrado" });
       }
 
@@ -334,7 +377,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // For security, always return a success message, even if the user doesn't exist.
         if (user) {
-            await emailService.sendPasswordResetEmail(user, { purpose: "reset" });
+            await emailService.sendPasswordResetEmail(user, { purpose: hasPassword(user) ? "reset" : "create" });
         }
 
         res.status(200).json({ message: "Se o e-mail estiver cadastrado, um link de redefinição foi enviado." });
@@ -390,24 +433,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
             return res.status(400).json({ message: "Nova senha deve ter pelo menos 6 caracteres" });
         }
 
-        const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; type: string };
-
-        if (decoded.type !== 'password-reset') {
-            return res.status(400).json({ message: "Token inválido." });
+        if (typeof token !== "string") {
+            return res.status(400).json({ message: "Link de redefinição inválido ou expirado." });
+        }
+        // Single use: the token carries the password version it was issued for, and the new
+        // hash below changes it. Expired and tampered tokens read as null too.
+        const resetUser = await passwordResetUserFromToken(token);
+        if (!resetUser) {
+            return res.status(400).json({ message: "Link de redefinição inválido ou expirado." });
         }
 
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         // Only the owner of the mailbox gets the link, so this also verifies the
         // e-mail. The new hash ends every older session (pv claim).
-        await storage.updateUser(decoded.userId, { password: hashedPassword, emailVerified: true });
+        await storage.updateUser(resetUser.id, { password: hashedPassword, emailVerified: true });
 
         res.status(200).json({ message: "Senha redefinida com sucesso." });
     } catch (error) {
         console.error("Reset password error:", error);
-        // Handle expired or invalid tokens specifically
-        if (error instanceof jwt.TokenExpiredError) {
-            return res.status(400).json({ message: "O link de redefinição expirou." });
-        }
         res.status(400).json({ message: "Link de redefinição inválido ou expirado." });
     }
   });
@@ -2417,10 +2460,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
   // Orders routes
-  app.post("/api/orders", authenticateToken, async (req: any, res) => {
+  app.post("/api/orders", authenticateTokenOrGuest, guestCheckoutLimiter, async (req: any, res) => {
     try {
-      const { eventId, paymentMethod, promoCode } = req.body;
-      const userId = req.user.id;
+      const { eventId, paymentMethod, promoCode } = req.body ?? {};
+
+      // ADR-017: a request without a session is a guest checkout. Only guests solve the
+      // challenge in Stage 2; the logged-in card path is still the hosted Asaas link.
+      if (!req.user && !(await verifyTurnstile(req.body?.turnstileToken, req.ip))) {
+        return res.status(403).json(TURNSTILE_FAILED_BODY);
+      }
 
       if (
         paymentMethod !== "pix" &&
@@ -2444,11 +2492,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .status(salesBlockedStatus(purchaseCheck.reason))
           .json({ message: salesBlockedMessage(purchaseCheck.reason) });
       }
-      if (foreignPaidCheckoutBlocked(req.user)) {
-        return res
-          .status(403)
-          .json({ code: FOREIGN_PAID_UNAVAILABLE_CODE, message: FOREIGN_PAID_UNAVAILABLE_MESSAGE });
-      }
 
       // Calculate total amount (event price + convenience fee)
       let finalPrice = parseFloat(event.price);
@@ -2469,46 +2512,95 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const totalAmount = computeOrderTotal(event, finalPrice);
 
-      const isForeigner = req.user.isForeigner === true;
+      // Old bundles send no answers: the legacy questions fall back to the account's profile.
+      // A guest has no profile (the row, if any, is not theirs to read), so their answers can be
+      // checked before the resolver writes anything.
+      const resolveAnswers = (profile: typeof req.user | null) =>
+        resolveRegistrationAnswers({
+          fields: event.registrationForm,
+          body: withLegacyProfileAnswers(event.registrationForm, req.body ?? {}, profile),
+        });
+      let registration = req.user ? null : resolveAnswers(null);
+      if (registration && !registration.ok) {
+        return registrationAnswersFailure(res, req.body, registration.message);
+      }
+
+      // Session: the account's own document. Guest: only what they typed (ADR-017). A paid event
+      // always needs the document (Asaas cpfCnpj); in-person also the address.
+      const resolved = await resolveCheckoutBuyer({
+        sessionUser: req.user,
+        buyer: req.body?.buyer,
+        event,
+        paid: true,
+      });
+      if (!resolved.ok) {
+        return res.status(resolved.status).json(resolved.body);
+      }
+      const { user: buyer, identity, placedAsGuest } = resolved;
+      const userId = buyer.id;
+      const isForeigner = identity.isForeigner;
       if (isForeigner && paymentMethod !== "credit_card") {
         return res.status(400).json({
           message: "Estrangeiros pagam apenas com cartão de crédito internacional, sem PIX, boleto ou parcelamento.",
         });
       }
-      // A paid event always needs the document (Asaas cpfCnpj); in-person also the address.
-      const missingIdentity = missingIdentityFields(event, req.user);
-      if (missingIdentity.length > 0) {
-        return res.status(400).json(identityRequiredBody(missingIdentity));
-      }
-      // Old bundles send no answers: the legacy questions fall back to the account's profile.
-      const registration = resolveRegistrationAnswers({
-        fields: event.registrationForm,
-        body: withLegacyProfileAnswers(event.registrationForm, req.body ?? {}, req.user),
-      });
+      registration ??= resolveAnswers(buyer);
       if (!registration.ok) {
         return registrationAnswersFailure(res, req.body, registration.message);
+      }
+
+      // Early answer for a holder who already has a confirmed ticket (a guest cannot know).
+      const alreadyRegistered = await storage.isAlreadyRegisteredForEvent({
+        eventId,
+        userId,
+        cpf: identity.cpf,
+        foreignDocument: identity.foreignDocument,
+        email: buyer.email ?? null,
+      });
+      if (alreadyRegistered) {
+        return res
+          .status(409)
+          .json({ message: "Você já possui inscrição confirmada para este evento." });
+      }
+
+      // Cap on open charges per buyer and event, before any Asaas call. Guest-made and
+      // session-made orders are counted apart, so a stranger typing an e-mail cannot use up
+      // the account owner's own cap.
+      const pendingOrders = await storage.countPendingOrdersSince({
+        userId,
+        eventId,
+        since: new Date(Date.now() - PENDING_ORDERS_WINDOW_MS),
+        placedAsGuest,
+      });
+      if (pendingOrders >= MAX_PENDING_ORDERS) {
+        return res.status(429).json({
+          code: "too_many_pending_orders",
+          message:
+            "Você já tem pagamentos pendentes para este evento. Conclua um deles ou tente de novo em 30 minutos.",
+        });
       }
 
       // Create order. Paid checkout stays pending; the label is stored now.
       const order = await storage.createOrder({
         userId,
         eventId,
-        cpf: isForeigner ? null : req.user.cpf,
-        foreignDocument: isForeigner ? req.user.foreignDocument : null,
+        cpf: identity.cpf,
+        foreignDocument: identity.foreignDocument,
         paymentMethod,
         amount: totalAmount.toString(),
         status: "pending",
         courtesyLinkId: promoLinkId,
         registrationAnswers: registration.answers,
+        placedAsGuest,
       });
 
       // Create payment with Asaas
       try {
         const paymentData = isForeigner
           ? await asaasService.createForeignCardPayment({
-              name: req.user.name,
-              email: req.user.email,
-              phone: req.user.phone?.replace(/\D/g, '') || '',
+              name: buyer.name,
+              email: buyer.email,
+              phone: buyer.phone?.replace(/\D/g, '') || '',
               userId,
               value: totalAmount,
               dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -2517,10 +2609,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             })
           : await asaasService.createPayment({
           customer: {
-            name: req.user.name,
-            email: req.user.email,
-            cpfCnpj: req.user.cpf!.replace(/\D/g, ''),
-            phone: req.user.phone?.replace(/\D/g, '') || '',
+            name: buyer.name,
+            email: buyer.email,
+            cpfCnpj: identity.cpf!.replace(/\D/g, ''),
+            phone: buyer.phone?.replace(/\D/g, '') || '',
           },
           billingType: paymentMethod === "credit_card" ? "CREDIT_CARD" : 
                       paymentMethod === "pix" ? "PIX" : "BOLETO",
@@ -2552,6 +2644,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Prepare response with payment details
         const response: any = {
           order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
+          // Key order matters: the request logger cuts the body at 80 characters, so the
+          // token must come right after the order id. Proof of purchase for check-status.
+          ...(placedAsGuest ? { orderAccessToken: signOrderAccessToken(order.id) } : {}),
           payment: {
             id: paymentData.id,
             link: paymentData.paymentLink,
@@ -2563,8 +2658,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         if (paymentMethod === "credit_card" && paymentData.paymentLink) {
           try {
-            await emailService.sendCardPaymentLinkEmail(req.user.email, {
-              userName: req.user.name,
+            await emailService.sendCardPaymentLinkEmail(buyer.email, {
+              userName: buyer.name,
               eventTitle: event.title,
               paymentUrl: paymentData.paymentLink,
               isOnline: isOnlineEvent(event),
@@ -2605,9 +2700,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * The event must actually be free in the DB. The client cannot make a paid
    * event free by calling this route.
    */
-  app.post("/api/events/:id/subscribe", authenticateToken, async (req: any, res) => {
+  app.post("/api/events/:id/subscribe", authenticateTokenOrGuest, guestCheckoutLimiter, async (req: any, res) => {
     try {
-      const userId = req.user.id;
+      // ADR-017: no session = guest checkout, which must pass the Turnstile challenge.
+      if (!req.user && !(await verifyTurnstile(req.body?.turnstileToken, req.ip))) {
+        return res.status(403).json(TURNSTILE_FAILED_BODY);
+      }
 
       const parsedId = z.string().uuid().safeParse(req.params.id);
       if (!parsedId.success) {
@@ -2628,14 +2726,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .json({ message: salesBlockedMessage(check.reason) });
       }
 
-      // In-person needs document + address; free online needs neither.
-      const missingIdentity = missingIdentityFields(event, req.user);
-      if (missingIdentity.length > 0) {
-        return res.status(400).json(identityRequiredBody(missingIdentity));
+      // A guest has no profile (the row, if any, is not theirs to read), so their answers are
+      // checked before the resolver writes anything. A session keeps today's order.
+      const resolveAnswers = (profile: typeof req.user | null) =>
+        resolveRegistrationAnswers({
+          fields: event.registrationForm,
+          body: withLegacyProfileAnswers(event.registrationForm, req.body ?? {}, profile),
+        });
+      let registration = req.user ? null : resolveAnswers(null);
+      if (registration && !registration.ok) {
+        return registrationAnswersFailure(res, req.body, registration.message);
       }
-      const isForeigner = req.user.isForeigner === true;
-      const cpf: string | null = isForeigner ? null : (req.user.cpf ?? null);
-      const foreignDocument: string | null = isForeigner ? (req.user.foreignDocument ?? null) : null;
+
+      // In-person needs document + address; free online needs neither.
+      const resolved = await resolveCheckoutBuyer({
+        sessionUser: req.user,
+        buyer: req.body?.buyer,
+        event,
+        paid: false,
+      });
+      if (!resolved.ok) {
+        return res.status(resolved.status).json(resolved.body);
+      }
+      const { user: buyer, identity, placedAsGuest } = resolved;
+      const userId = buyer.id;
+      const { cpf, foreignDocument } = identity;
 
       // Early answer for the common case; createFreeSubscription re-checks under a lock.
       const alreadyRegistered = await storage.isAlreadyRegisteredForEvent({
@@ -2643,7 +2758,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userId,
         cpf,
         foreignDocument,
-        email: req.user.email ?? null,
+        email: buyer.email ?? null,
       });
       if (alreadyRegistered) {
         return res
@@ -2652,10 +2767,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Old bundles send no answers: the legacy questions fall back to the account's profile.
-      const registration = resolveRegistrationAnswers({
-        fields: event.registrationForm,
-        body: withLegacyProfileAnswers(event.registrationForm, req.body ?? {}, req.user),
-      });
+      registration ??= resolveAnswers(buyer);
       if (!registration.ok) {
         return registrationAnswersFailure(res, req.body, registration.message);
       }
@@ -2664,7 +2776,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // The duplicate check and the insert are one locked step: concurrent
       // requests of the same holder cannot both pass the check.
       const created = await storage.createFreeSubscription({
-        holder: { userId, cpf, foreignDocument, email: req.user.email ?? null },
+        holder: { userId, cpf, foreignDocument, email: buyer.email ?? null },
         order: {
           userId,
           eventId,
@@ -2674,6 +2786,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           amount: "0.00",
           status: "paid",
           registrationAnswers: registration.answers,
+          placedAsGuest,
         },
       });
       if (!created.ok && created.reason === "event_full") {
@@ -2701,13 +2814,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       try {
         await sendPurchaseConfirmationEmail({
-          to: req.user.email,
-          userName: req.user.name,
+          to: buyer.email,
+          userName: buyer.name,
           event,
           orderId: order.id,
           qrCodeData,
           qrCodeS3Url: updatedOrder?.qr_code_s3_url || "",
           confirmationKind: "free",
+          myTicketsUrl: myTicketsUrlFor(order),
         });
       } catch (emailErr) {
         // The inscription itself succeeded; do not fail the request over e-mail.
@@ -2738,7 +2852,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // console.log("🔍 GET /api/orders - Page:", page, "UserId:", userId);
       const limit = 10;
 
-      const { orders, total } = await storage.getOrdersByUser(userId, page, limit);
+      // ADR-017: guest orders stay hidden until the account's e-mail is verified.
+      const { orders, total } = await storage.getOrdersByUser(userId, page, limit, {
+        includeGuestOrders: req.user.emailVerified === true,
+      });
 
       res.json({
         orders: orders.map(withOrderAccessLinks),
@@ -2755,10 +2872,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/orders/:id", authenticateToken, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const userId = req.user.id;
-      
+
       const order = await storage.getOrder(id);
-      if (!order || order.userId !== userId) {
+      if (!order || !ownerCanSeeOrder(order, req.user)) {
         return res.status(404).json({ message: "Pedido não encontrado" });
       }
 
@@ -2769,80 +2885,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Endpoint to manually check payment status
-  app.post("/api/orders/:id/check-status", authenticateToken, async (req: any, res) => {
+  /**
+   * Manually check payment status. Two callers: the logged-in owner (the "atualizar" button
+   * in Meus Ingressos) and a guest polling with the X-Order-Access token their checkout
+   * returned (ADR-017). The token path answers only the status, never the order row.
+   */
+  app.post("/api/orders/:id/check-status", authenticateTokenOrGuest, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const userId = req.user.id;
-      
+
+      const accessHeader = req.headers["x-order-access"];
+      if (accessHeader !== undefined) {
+        const tokenOrderId = typeof accessHeader === "string" ? orderIdFromAccessToken(accessHeader) : null;
+        const order = tokenOrderId === id ? await storage.getOrder(id) : undefined;
+        if (!order) {
+          return res.status(404).json({ message: "Pedido não encontrado" });
+        }
+        const refreshed = await refreshOrderPayment(order);
+        return res.json({ status: refreshed.order.status, paymentStatus: refreshed.paymentStatus });
+      }
+
+      if (!req.user) {
+        return res.status(401).json({ message: "Token de acesso necessário" });
+      }
+
       const order = await storage.getOrder(id);
-      if (!order || order.userId !== userId) {
+      if (!order || !ownerCanSeeOrder(order, req.user)) {
         return res.status(404).json({ message: "Pedido não encontrado" });
       }
 
-      if (!order.asaasPaymentId) {
-        return res.status(400).json({ message: "Pedido sem ID de pagamento" });
-      }
-
-      // Check payment status with Asaas
-      const payment = await asaasService.getPayment(
-        order.asaasPaymentId,
-        order.id
-      );
-      
-      console.log(`Manual check - Payment status for order ${id}:`, payment.status);
-
-      if ((payment.status === 'CONFIRMED' || payment.status === 'RECEIVED') && order.status !== 'paid') {
-        const result = await finalizeOrderPaidLikeWebhook(order, {
-          billingType: payment.billingType || "unknown",
-          value: payment.value ?? null,
-          paymentId: payment.id ?? null,
-          installment: payment.installment ?? null,
-        });
-
-        if (result.ok) {
-          const updatedOrder = await storage.getOrder(id);
+      const refreshed = await refreshOrderPayment(order);
+      switch (refreshed.kind) {
+        case "no_payment_id":
+          return res.status(400).json({ message: "Pedido sem ID de pagamento" });
+        case "confirmed":
           return res.json({
             message: "Pagamento confirmado!",
-            order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
+            order: withoutBuyerAnswers(refreshed.order),
           });
-        }
-
-        if (result.code === "duplicate_other_paid") {
-          const updatedOrder = await storage.getOrder(id);
+        case "duplicate_other_paid":
           return res.status(409).json({
             message:
               "Já existe ingresso confirmado para este evento. Este pagamento duplicado foi descartado; o estorno será processado quando possível.",
-            order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
+            order: withoutBuyerAnswers(refreshed.order),
           });
-        }
-
-        if (result.code === "already_paid") {
-          const updatedOrder = await storage.getOrder(id);
+        case "already_paid":
           return res.json({
             message: "Pagamento já estava confirmado.",
-            order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
+            order: withoutBuyerAnswers(refreshed.order),
           });
-        }
-
-        return res.status(400).json({
-          message: "Não foi possível confirmar o pagamento deste pedido.",
-          order: withoutBuyerAnswers(order),
-        });
-      } else if ((payment.status === 'OVERDUE' || payment.status === 'CANCELED') && order.status === 'pending') {
-        await storage.cancelPendingOrder(id);
-        const updatedOrder = await storage.getOrder(id);
-        return res.json({ 
-          message: "Pagamento cancelado", 
-          order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
-        });
+        case "confirm_failed":
+          return res.status(400).json({
+            message: "Não foi possível confirmar o pagamento deste pedido.",
+            order: withoutBuyerAnswers(refreshed.order),
+          });
+        case "cancelled":
+          return res.json({
+            message: "Pagamento cancelado",
+            order: withoutBuyerAnswers(refreshed.order),
+          });
+        default:
+          return res.json({
+            message: refreshed.paymentStatus
+              ? `Status do pagamento: ${refreshed.paymentStatus}`
+              : `Status do pedido: ${refreshed.order.status}`,
+            order: withoutBuyerAnswers(refreshed.order),
+            paymentStatus: refreshed.paymentStatus,
+          });
       }
-
-      res.json({ 
-        message: `Status do pagamento: ${payment.status}`, 
-        order: withoutBuyerAnswers(order),
-        paymentStatus: payment.status 
-      });
     } catch (error) {
       console.error("Check payment status error:", error);
       res.status(500).json({ message: "Erro ao verificar status do pagamento" });
@@ -2855,7 +2965,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const { id } = req.params;
         const userId = req.user.id;
 
-        const result = await executeOrderCancel(id, { actor: "user", userId });
+        const result = await executeOrderCancel(id, {
+          actor: "user",
+          userId,
+          userEmailVerified: req.user.emailVerified === true,
+        });
 
         if (!result.ok) {
           if (result.code === "not_found") {
@@ -3113,6 +3227,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
         
+        // A guest row (ADR-017) has no password to confirm with.
+        if (!hasPassword(req.user)) {
+          return res.status(400).json(PASSWORD_NOT_SET_BODY);
+        }
+
         // Verify password
         const isValidPassword = await bcrypt.compare(currentPassword, req.user.password);
         if (!isValidPassword) {
@@ -3230,6 +3349,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Nova senha deve ter pelo menos 6 caracteres" });
       }
 
+      if (!hasPassword(req.user)) {
+        return res.status(400).json(PASSWORD_NOT_SET_BODY);
+      }
+
       // Verify current password
       const isValidPassword = await bcrypt.compare(currentPassword, req.user.password);
       if (!isValidPassword) {
@@ -3259,6 +3382,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Require password confirmation for security
       if (!password) {
         return res.status(400).json({ message: "Senha é obrigatória para confirmar exclusão" });
+      }
+
+      if (!hasPassword(req.user)) {
+        return res.status(400).json(PASSWORD_NOT_SET_BODY);
       }
 
       // Verify password
@@ -3731,12 +3858,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     sql`trim(${events.certificateTemplateUrl}) <> ''`,
   );
 
+  // ADR-017: an attended order placed as a guest counts toward certificates only once the
+  // account's e-mail is verified (same rule as ownerCanSeeOrder, in SQL).
+  const visibleGuestOrdersFor = (user: { emailVerified: boolean | null }) =>
+    user.emailVerified === true ? sql`true` : eq(orders.placedAsGuest, false);
+
   app.get("/api/users/me/certificates", authenticateToken, async (req: any, res) => {
     try {
       const pageSize = 15;
       const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
       const offset = (page - 1) * pageSize;
       const userId = req.user.id as string;
+      const visibleGuestOrders = visibleGuestOrdersFor(req.user);
 
       const [{ c: total }] = await db
         .select({
@@ -3749,6 +3882,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             eq(orders.eventId, events.id),
             eq(orders.userId, userId),
             eq(orders.qrCodeUsed, true),
+            visibleGuestOrders,
           ),
         )
         .where(certificateTemplateReady);
@@ -3768,6 +3902,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             eq(orders.eventId, events.id),
             eq(orders.userId, userId),
             eq(orders.qrCodeUsed, true),
+            visibleGuestOrders,
           ),
         )
         .leftJoin(
@@ -3815,6 +3950,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/certificates/generate", authenticateToken, async (req: any, res) => {
     const userId = req.user.id as string;
+    const visibleGuestOrders = visibleGuestOrdersFor(req.user);
 
     const parsed = generateCertificateBodySchema.safeParse(req.body);
     if (!parsed.success) {
@@ -3861,6 +3997,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             eq(orders.eventId, events.id),
             eq(orders.userId, userId),
             eq(orders.qrCodeUsed, true),
+            visibleGuestOrders,
           ),
         )
         .where(and(eq(events.id, eventId), certificateTemplateReady))
