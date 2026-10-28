@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { CONTACT_EMAIL } from "@shared/contact";
-import { AsaasApiError, checkoutPaymentErrorResponse } from "../../utils/asaasErrors";
+import { AsaasApiError, CardDeclinedError, checkoutPaymentErrorResponse } from "../../utils/asaasErrors";
 
 // Body Asaas returned on 2026-10-06 for a passport customer in production.
 const FOREIGN_PAYER_DENIED = {
@@ -66,6 +66,28 @@ describe("checkoutPaymentErrorResponse", () => {
     expect(checkoutPaymentErrorResponse(new Error("QR upload failed"))).toEqual({
       status: 500,
       body: { message: "Erro ao processar pagamento. Tente novamente." },
+    });
+  });
+
+  it("answers 402 card_declined for a declined card, never relaying Asaas text", () => {
+    const declined = new CardDeclinedError(["invalid_creditCard"]);
+    expect(declined).toBeInstanceOf(AsaasApiError);
+    expect(declined.status).toBe(400);
+    expect(declined.name).toBe("CardDeclinedError");
+    expect(declined.codes).toEqual(["invalid_creditCard"]);
+    expect(checkoutPaymentErrorResponse(declined)).toEqual({
+      status: 402,
+      body: {
+        code: "card_declined",
+        message: "Pagamento não aprovado. Confira os dados do cartão ou use outro cartão.",
+      },
+    });
+  });
+
+  it("still answers 502 for a plain AsaasApiError 400 (not a decline)", () => {
+    expect(checkoutPaymentErrorResponse(new AsaasApiError(400, INVALID_DOCUMENT))).toMatchObject({
+      status: 502,
+      body: { code: "payment_provider_error" },
     });
   });
 });

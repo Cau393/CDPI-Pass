@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { authRateLimitMax, guestCheckoutRateLimitMax, lookupEmailRateLimitMax } from "../../utils/authRateLimitMax";
+import {
+  authRateLimitMax,
+  cardAttemptEmailRateLimitMax,
+  cardAttemptIpRateLimitMax,
+  guestCheckoutRateLimitMax,
+  lookupEmailRateLimitMax,
+} from "../../utils/authRateLimitMax";
 
 describe("authRateLimitMax (#15)", () => {
   it("is 100 by default", () => {
@@ -51,5 +57,43 @@ describe("guestCheckoutRateLimitMax (ADR-017)", () => {
   it("ignores a value that is not a positive integer", () => {
     expect(guestCheckoutRateLimitMax({ NODE_ENV: "test", GUEST_CHECKOUT_RATE_LIMIT_MAX: "lots" })).toBe(30);
     expect(guestCheckoutRateLimitMax({ NODE_ENV: "test", GUEST_CHECKOUT_RATE_LIMIT_MAX: "0" })).toBe(30);
+  });
+});
+
+describe("cardAttemptEmailRateLimitMax (ADR-017 Stage 3)", () => {
+  it("is 5 by default", () => {
+    expect(cardAttemptEmailRateLimitMax({ NODE_ENV: "development" })).toBe(5);
+  });
+
+  it("takes the test override outside production", () => {
+    expect(cardAttemptEmailRateLimitMax({ NODE_ENV: "test", CARD_ATTEMPT_EMAIL_RATE_LIMIT_MAX: "100000" })).toBe(100000);
+  });
+
+  it("ignores the override in production", () => {
+    expect(cardAttemptEmailRateLimitMax({ NODE_ENV: "production", CARD_ATTEMPT_EMAIL_RATE_LIMIT_MAX: "100000" })).toBe(5);
+  });
+
+  it("ignores a value that is not a positive integer", () => {
+    expect(cardAttemptEmailRateLimitMax({ NODE_ENV: "test", CARD_ATTEMPT_EMAIL_RATE_LIMIT_MAX: "lots" })).toBe(5);
+    expect(cardAttemptEmailRateLimitMax({ NODE_ENV: "test", CARD_ATTEMPT_EMAIL_RATE_LIMIT_MAX: "0" })).toBe(5);
+  });
+});
+
+describe("cardAttemptIpRateLimitMax (ADR-017 Stage 3)", () => {
+  it("is 10 by default", () => {
+    expect(cardAttemptIpRateLimitMax({ NODE_ENV: "development" })).toBe(10);
+  });
+
+  it("takes the test override outside production", () => {
+    expect(cardAttemptIpRateLimitMax({ NODE_ENV: "test", CARD_ATTEMPT_IP_RATE_LIMIT_MAX: "100000" })).toBe(100000);
+  });
+
+  it("ignores the override in production", () => {
+    expect(cardAttemptIpRateLimitMax({ NODE_ENV: "production", CARD_ATTEMPT_IP_RATE_LIMIT_MAX: "100000" })).toBe(10);
+  });
+
+  it("ignores a value that is not a positive integer", () => {
+    expect(cardAttemptIpRateLimitMax({ NODE_ENV: "test", CARD_ATTEMPT_IP_RATE_LIMIT_MAX: "lots" })).toBe(10);
+    expect(cardAttemptIpRateLimitMax({ NODE_ENV: "test", CARD_ATTEMPT_IP_RATE_LIMIT_MAX: "0" })).toBe(10);
   });
 });

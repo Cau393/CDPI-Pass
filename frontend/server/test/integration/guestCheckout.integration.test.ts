@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => ({
   sendTicketEmail: vi.fn(async (..._args: unknown[]) => true),
   sendOnlineEventEmail: vi.fn(async (..._args: unknown[]) => true),
   createPayment: vi.fn(),
+  createCardPayment: vi.fn(),
   getPayment: vi.fn(),
   /** What the mocked Asaas answers to getPayment. */
   paymentStatus: { value: "PENDING" },
@@ -78,6 +79,7 @@ vi.mock("../../services/emailService", () => ({
 vi.mock("../../services/asaasService", () => ({
   asaasService: {
     createPayment: (...args: unknown[]) => mocks.createPayment(...args),
+    createCardPayment: (...args: unknown[]) => mocks.createCardPayment(...args),
     getPayment: (...args: unknown[]) => mocks.getPayment(...args),
     createForeignCardPayment: vi.fn(async () => {
       throw new Error("a foreign guest must never reach Asaas");
@@ -297,6 +299,7 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
     mocks.sendTicketEmail.mockClear();
     mocks.sendOnlineEventEmail.mockClear();
     mocks.paymentStatus.value = "PENDING";
+    mocks.createCardPayment.mockReset();
     mocks.createPayment.mockReset();
     mocks.createPayment.mockImplementation(async (payload: any) => ({
       id: `pay_${randomUUID()}`,
@@ -491,6 +494,7 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
       expect(await userRows(typed.email)).toHaveLength(0);
       expect(await orderCount(eventId)).toBe(0);
       expect(mocks.createPayment).not.toHaveBeenCalled();
+      expect(mocks.createCardPayment).not.toHaveBeenCalled();
     });
 
     it("with foreign paid checkout on, a guest passport + pix → 400 foreign-card-only and no row is written", async () => {
