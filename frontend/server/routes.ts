@@ -2672,6 +2672,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         placedAsGuest,
       });
 
+      // Id of the card charge once Asaas answered: from then on the order is never deleted.
+      let cardChargeId: string | null = null;
+
       // Create payment with Asaas
       try {
         if (inlineCard && cardInput?.ok) {
@@ -2715,6 +2718,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             remoteIp: req.ip,
           });
 
+          cardChargeId = payment.id;
           await storage.updateOrder(order.id, { asaasPaymentId: payment.id });
 
           // Approved on the spot: same path as the webhook (idempotent, one ticket e-mail).
@@ -2843,6 +2847,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // it ("Timeout não significa que a cobrança não foi criada"). Keep the order pending, the
         // webhook matches it by externalReference. A decline, or any failure before the charge
         // request (customer, QR), deletes it, like PIX/boleto.
+        if (cardChargeId) {
+          // The charge exists: the order stays (pending, or paid by finalize) so the webhook finds it.
+          console.error(`Card order step failed after the charge (order ${order.id}, payment ${cardChargeId})`);
+          const failure = checkoutPaymentErrorResponse(new CardChargeOutcomeUnknownError(paymentError));
+          return res.status(failure.status).json(failure.body);
+        }
         if (paymentError instanceof CardChargeOutcomeUnknownError) {
           console.error(`Card payment outcome unknown (order ${order.id})`);
           const failure = checkoutPaymentErrorResponse(paymentError);

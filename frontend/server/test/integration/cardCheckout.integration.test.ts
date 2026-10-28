@@ -867,6 +867,40 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
       expect(await orderCount(eventId)).toBe(0);
     });
 
+    it("an error after the charge (asaasPaymentId write) keeps the order; the webhook then pays it, with one e-mail", async () => {
+      const logged = spyOnConsole();
+      const { storage } = await import("../../storage");
+      const original = storage.updateOrder.bind(storage);
+      let failed = false;
+      vi.spyOn(storage, "updateOrder").mockImplementation(async (id: string, data: any) => {
+        if (!failed && data && "asaasPaymentId" in data) {
+          failed = true;
+          throw new Error("db hiccup after charge");
+        }
+        return original(id, data);
+      });
+      const eventId = await createEvent();
+      const typed = buyer();
+
+      const res = await submitCard(eventId, { typed });
+
+      expect(failed).toBe(true);
+      expect(res.status).toBeGreaterThanOrEqual(500);
+      expect(asaasCharges()).toHaveLength(1);
+      expect(await orderCount(eventId)).toBe(1);
+      const { rows } = await pool.query(`SELECT * FROM orders WHERE event_id = $1`, [eventId]);
+      expect(rows[0].status).toBe("pending");
+      expect(leaksIn(logged.join("\n"))).toEqual([]);
+
+      const status = await deliverWebhook(
+        cardEvent("PAYMENT_CONFIRMED", "CONFIRMED", rows[0].id, "pay_after_charge_1", Number(rows[0].amount)),
+      );
+
+      expect(status).toBe(200);
+      expect((await orderRow(rows[0].id)).status).toBe("paid");
+      expect(confirmationsTo(typed.email)).toHaveLength(1);
+    });
+
     it("sends an E.164 guest phone to Asaas in the national form", async () => {
       const eventId = await createEvent();
 
