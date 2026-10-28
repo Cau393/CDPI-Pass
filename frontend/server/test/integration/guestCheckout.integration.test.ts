@@ -50,6 +50,14 @@ const mocks = vi.hoisted(() => ({
   getPayment: vi.fn(),
   /** What the mocked Asaas answers to getPayment. */
   paymentStatus: { value: "PENDING" },
+  /** Stand-in for the compile-time FOREIGN_PAID_CHECKOUT_ENABLED flag; off, like production. */
+  foreignPaidEnabled: { value: false },
+}));
+
+vi.mock("@shared/foreignCheckout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@shared/foreignCheckout")>()),
+  foreignPaidCheckoutBlocked: (account: { isForeigner?: boolean | null } | null | undefined) =>
+    !mocks.foreignPaidEnabled.value && account?.isForeigner === true,
 }));
 
 vi.mock("../../utils/verifyTurnstile", () => ({
@@ -475,6 +483,38 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
       expect(await userRows(typed.email)).toHaveLength(0);
       expect(await orderCount(eventId)).toBe(0);
       expect(mocks.createPayment).not.toHaveBeenCalled();
+    });
+
+    it("with foreign paid checkout on, a guest passport + pix → 400 foreign-card-only and no row is written", async () => {
+      mocks.foreignPaidEnabled.value = true;
+      try {
+        const eventId = await createEvent({ modality: "presencial", isFree: false });
+        const typed = buyer({ isForeigner: true, foreignDocument: makePassport(), address: ADDRESS });
+
+        const res = await api("POST", "/api/orders", {
+          body: { eventId, paymentMethod: "pix", buyer: typed, turnstileToken: "ok" },
+        });
+
+        expect(res.status, JSON.stringify(res.body)).toBe(400);
+        expect(res.body.message).toMatch(/Estrangeiros pagam apenas com cartão/);
+        expect(await userRows(typed.email)).toHaveLength(0);
+        expect(await orderCount(eventId)).toBe(0);
+        expect(mocks.createPayment).not.toHaveBeenCalled();
+      } finally {
+        mocks.foreignPaidEnabled.value = false;
+      }
+    });
+
+    it("an invalid promo code on a guest request → 400 and no row is written", async () => {
+      const eventId = await createEvent({ modality: "presencial", isFree: false });
+      const typed = buyer({ cpf: makeCpf(), address: ADDRESS });
+
+      const res = await api("POST", "/api/orders", {
+        body: { eventId, paymentMethod: "pix", promoCode: "NAO-EXISTE", buyer: typed, turnstileToken: "ok" },
+      });
+
+      expect(res.status).toBe(400);
+      expect(await userRows(typed.email)).toHaveLength(0);
     });
 
     it("a duplicate paid holder (another user's paid order already carries the CPF) → 409 and no Asaas call", async () => {

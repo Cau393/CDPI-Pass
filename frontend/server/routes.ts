@@ -114,6 +114,11 @@ import {
   signSessionToken,
 } from "./middleware/auth";
 import { authRateLimitMax, guestCheckoutRateLimitMax, lookupEmailRateLimitMax } from "./utils/authRateLimitMax";
+import {
+  FOREIGN_PAID_UNAVAILABLE_CODE,
+  FOREIGN_PAID_UNAVAILABLE_MESSAGE,
+  foreignPaidCheckoutBlocked,
+} from "@shared/foreignCheckout";
 import { verifyTurnstile } from "./utils/verifyTurnstile";
 import { resolveCheckoutBuyer } from "./utils/checkoutBuyer";
 import { ownerCanSeeOrder } from "./utils/orderVisibility";
@@ -2493,6 +2498,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .json({ message: salesBlockedMessage(purchaseCheck.reason) });
       }
 
+      // A session keeps its old check order; a guest's checks that need no row all run before
+      // the resolver, which is the first thing that writes for a stranger (ADR-017).
+      if (req.user && foreignPaidCheckoutBlocked(req.user)) {
+        return res
+          .status(403)
+          .json({ code: FOREIGN_PAID_UNAVAILABLE_CODE, message: FOREIGN_PAID_UNAVAILABLE_MESSAGE });
+      }
+
       // Calculate total amount (event price + convenience fee)
       let finalPrice = parseFloat(event.price);
       let promoLinkId: string | null = null;
@@ -2511,6 +2524,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const totalAmount = computeOrderTotal(event, finalPrice);
+
+      // Foreigners pay by card only. A session is judged on its account; a guest on what they
+      // typed (when foreign paid checkout is blocked the resolver answers 403 first).
+      const foreignCardOnly =
+        paymentMethod !== "credit_card" &&
+        (req.user
+          ? req.user.isForeigner === true
+          : req.body?.buyer?.isForeigner === true && !foreignPaidCheckoutBlocked({ isForeigner: true }));
+      if (foreignCardOnly) {
+        return res.status(400).json({
+          message: "Estrangeiros pagam apenas com cartão de crédito internacional, sem PIX, boleto ou parcelamento.",
+        });
+      }
 
       // Old bundles send no answers: the legacy questions fall back to the account's profile.
       // A guest has no profile (the row, if any, is not theirs to read), so their answers can be
@@ -2539,11 +2565,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { user: buyer, identity, placedAsGuest } = resolved;
       const userId = buyer.id;
       const isForeigner = identity.isForeigner;
-      if (isForeigner && paymentMethod !== "credit_card") {
-        return res.status(400).json({
-          message: "Estrangeiros pagam apenas com cartão de crédito internacional, sem PIX, boleto ou parcelamento.",
-        });
-      }
       registration ??= resolveAnswers(buyer);
       if (!registration.ok) {
         return registrationAnswersFailure(res, req.body, registration.message);
