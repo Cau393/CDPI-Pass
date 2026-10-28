@@ -2646,6 +2646,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
               description: `Ingresso para ${event.title}`,
               orderExternalReference: order.id,
+              reuseCustomer: !placedAsGuest,
             })
           : await asaasService.createPayment({
           customer: {

@@ -82,6 +82,42 @@ describe("AsaasService requests", () => {
     expect(payment.paymentLink).toBe("https://sandbox.asaas.com/i/pay_1");
   });
 
+  it("a guest never reuses a customer: no lookup, a new customer with the typed name and phone", async () => {
+    const calls: Array<{ url: string; method: string; body?: any }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        if (String(url).includes("/customers?")) return jsonResponse(200, { data: [{ id: "cus_account" }] });
+        if (String(url).endsWith("/customers")) return jsonResponse(200, { id: "cus_new" });
+        return jsonResponse(200, { id: "pay_1", invoiceUrl: "https://sandbox.asaas.com/i/pay_1", value: 105 });
+      }),
+    );
+
+    await new AsaasService().createForeignCardPayment({ ...FOREIGN_PAYMENT, reuseCustomer: false });
+
+    expect(calls.some((c) => c.url.includes("/customers?"))).toBe(false);
+    const created = calls.find((c) => c.url.endsWith("/customers") && c.method === "POST")!;
+    expect(created.body).toMatchObject({ name: FOREIGN_PAYMENT.name, phone: FOREIGN_PAYMENT.phone });
+    expect(calls.find((c) => c.url.endsWith("/payments"))!.body.customer).toBe("cus_new");
+  });
+
+  it("a session request reuses the customer found by externalReference", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push(`${init?.method ?? "GET"} ${String(url)}`);
+        if (String(url).includes("/customers?")) return jsonResponse(200, { data: [{ id: "cus_account" }] });
+        return jsonResponse(200, { id: "pay_1", invoiceUrl: "https://sandbox.asaas.com/i/pay_1", value: 105 });
+      }),
+    );
+
+    await new AsaasService().createForeignCardPayment({ ...FOREIGN_PAYMENT, reuseCustomer: true });
+
+    expect(calls.some((c) => c.startsWith("POST") && c.endsWith("/customers"))).toBe(false);
+  });
+
   it("never logs the raw Asaas response", async () => {
     vi.stubGlobal(
       "fetch",

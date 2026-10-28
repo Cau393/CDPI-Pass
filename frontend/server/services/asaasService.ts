@@ -205,12 +205,17 @@ export class AsaasService {
     dueDate: Date;
     description: string;
     orderExternalReference: string;
+    /** False for a guest (ADR-017): the customer is always created from the typed contact. */
+    reuseCustomer?: boolean;
   }): Promise<AsaasPaymentResponse> {
-    const listed = await this.makeRequest(
-      `/customers?externalReference=${encodeURIComponent(params.userId)}&limit=1`,
-    );
+    const listed =
+      params.reuseCustomer === false
+        ? null
+        : await this.makeRequest(
+            `/customers?externalReference=${encodeURIComponent(params.userId)}&limit=1`,
+          );
     const customer =
-      listed?.data?.length > 0
+      listed && listed.data?.length > 0
         ? listed.data[0]
         : await this.makeRequest("/customers", "POST", {
             name: params.name,

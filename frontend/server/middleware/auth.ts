@@ -80,13 +80,19 @@ export function signEmailVerificationToken(userId: string): string {
   return jwt.sign({ userId, type: "email-verification" }, JWT_SECRET, { expiresIn: "30d" });
 }
 
+/** Short fingerprint of the account e-mail a reset link was mailed to. */
+function emailVersion(email: string | null | undefined): string {
+  return createHash("sha256").update((email ?? "").trim().toLowerCase()).digest("hex").slice(0, 16);
+}
+
 /**
  * Reset (or create-password) link. `pv` ties it to the current hash, so using it
- * once, or any other password change, invalidates it.
+ * once, or any other password change, invalidates it. `ev` ties it to the e-mail it
+ * was mailed to: a link sent to an old address is dead once the row moves to a new one.
  */
-export function signPasswordResetToken(user: Pick<User, "id" | "password">): string {
+export function signPasswordResetToken(user: Pick<User, "id" | "password" | "email">): string {
   return jwt.sign(
-    { userId: user.id, type: "password-reset", pv: passwordVersion(user.password) },
+    { userId: user.id, type: "password-reset", pv: passwordVersion(user.password), ev: emailVersion(user.email) },
     JWT_SECRET,
     { expiresIn: PASSWORD_RESET_EXPIRES_IN },
   );
@@ -106,6 +112,7 @@ export async function passwordResetUserFromToken(token: string): Promise<User | 
   const user = await storage.getUser(claims.userId);
   if (!user) return null;
   if (claims.pv !== passwordVersion(user.password)) return null;
+  if (typeof claims.ev !== "string" || claims.ev !== emailVersion(user.email)) return null;
   return user;
 }
 

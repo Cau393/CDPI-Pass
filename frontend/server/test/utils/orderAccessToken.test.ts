@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 // ADR-017 Stage 2: the proof of purchase a guest holds while polling check-status.
 // It shares the signing secret with every other token, so it must never open a session
 // and no other token may stand in for it.
-const users = new Map<string, { id: string; password: string | null }>();
+const users = new Map<string, { id: string; password: string | null; email: string }>();
 vi.mock("../../storage", () => ({
   storage: { getUser: vi.fn(async (id: string) => users.get(id)) },
 }));
@@ -23,7 +23,7 @@ const {
 
 beforeEach(() => {
   users.clear();
-  users.set("u1", { id: "u1", password: "$2a$10$hash-one" });
+  users.set("u1", { id: "u1", password: "$2a$10$hash-one", email: "a@example.test" });
 });
 
 describe("signOrderAccessToken / orderIdFromAccessToken", () => {
@@ -64,5 +64,27 @@ describe("signOrderAccessToken / orderIdFromAccessToken", () => {
 
   it("never opens a session", async () => {
     await expect(sessionUserFromToken(signOrderAccessToken("order-1"))).resolves.toBeNull();
+  });
+});
+
+describe("password-reset token bound to the e-mail", () => {
+  it("is refused after the row's e-mail changes, and accepted while it is the same (case-insensitive)", async () => {
+    const { passwordResetUserFromToken } = await import("../../middleware/auth");
+    const token = signPasswordResetToken(users.get("u1")!);
+
+    users.get("u1")!.email = "  A@Example.test ";
+    expect(await passwordResetUserFromToken(token)).toMatchObject({ id: "u1" });
+
+    users.get("u1")!.email = "b@example.test";
+    expect(await passwordResetUserFromToken(token)).toBeNull();
+  });
+
+  it("is refused when it carries no e-mail claim", async () => {
+    const { passwordResetUserFromToken, passwordVersion } = await import("../../middleware/auth");
+    const legacy = jwt.sign(
+      { userId: "u1", type: "password-reset", pv: passwordVersion(users.get("u1")!.password) },
+      JWT_SECRET,
+    );
+    expect(await passwordResetUserFromToken(legacy)).toBeNull();
   });
 });

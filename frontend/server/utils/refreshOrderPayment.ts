@@ -6,6 +6,9 @@ import { finalizeOrderPaidLikeWebhook } from "./finalizeOrderPaidLikeWebhook";
 /** An order is asked about in Asaas at most once per window, however many pollers it has. */
 export const REFRESH_WINDOW_MS = 15_000;
 
+/** After an Asaas failure the order is asked about again this long after the attempt. */
+const FAILURE_RETRY_MS = 3_000;
+
 const lastCheckMs = new Map<string, number>();
 
 /** Drops entries whose window has passed, so the map only holds orders polled lately. */
@@ -53,8 +56,11 @@ export async function refreshOrderPayment(order: Order): Promise<RefreshOrderPay
   try {
     payment = await asaasService.getPayment(order.asaasPaymentId, order.id);
   } catch (error) {
-    // Nothing was learned: free the slot so the next poll can ask again.
-    lastCheckMs.delete(order.id);
+    // Nothing was learned: retry in about 3 s, not at once (a failing Asaas must not be
+    // hammered) and not after the whole window. Only our own claim is shortened.
+    if (lastCheckMs.get(order.id) === now) {
+      lastCheckMs.set(order.id, now - REFRESH_WINDOW_MS + FAILURE_RETRY_MS);
+    }
     throw error;
   }
   console.log(`Manual check - Payment status for order ${order.id}:`, payment.status);

@@ -156,7 +156,7 @@ async function signUpAndLogIn(password = "senha-antiga"): Promise<TestUser & { p
  */
 async function resetToken(userId: string): Promise<string> {
   const { signPasswordResetToken } = await import("../../middleware/auth");
-  const { rows } = await pool.query(`SELECT id, password FROM users WHERE id = $1`, [userId]);
+  const { rows } = await pool.query(`SELECT id, password, email FROM users WHERE id = $1`, [userId]);
   return signPasswordResetToken(rows[0]);
 }
 

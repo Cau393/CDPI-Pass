@@ -588,7 +588,7 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
         "a password-reset token",
         async (user) => {
           const { signPasswordResetToken } = await import("../../middleware/auth");
-          return { token: signPasswordResetToken({ id: user.id, password: "x" }) };
+          return { token: signPasswordResetToken({ id: user.id, password: "x", email: user.email }) };
         },
       ],
       [
@@ -1034,6 +1034,23 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
       const sub = await freeGuestSubscribe(freeEvent, buyer());
       expect(sub.status).toBe(201);
       expect(sub.body.order).not.toHaveProperty("userId");
+    });
+
+    it("C2: a reset link issued before an e-mail change is refused afterwards and the new address stays unverified", async () => {
+      const { signPasswordResetToken } = await import("../../middleware/auth");
+      const reg = await registerSquatter(guestEmail(), "attack123");
+      await pool.query(`UPDATE users SET email_verified = true WHERE id = $1`, [reg.user.id]);
+      const own = (await pool.query(`SELECT email FROM users WHERE id=$1`, [reg.user.id])).rows[0].email;
+      mocks.sendPasswordResetEmail.mockClear();
+      const fp = await api("POST", "/api/auth/forgot-password", { body: { email: own } });
+      expect(fp.status).toBe(200);
+      const oldLink = signPasswordResetToken(mocks.sendPasswordResetEmail.mock.calls[0][0] as { id: string; password: string; email: string });
+      const victimEmail = guestEmail();
+      const change = await api("PUT", "/api/profile", { token: reg.token, body: { email: victimEmail, currentPassword: "attack123" } });
+      expect(change.status).toBe(200);
+      const reset = await api("POST", "/api/auth/reset-password", { body: { token: oldLink, newPassword: "attack456" } });
+      expect(reset.status).toBe(400);
+      expect((await userRows(victimEmail))[0].email_verified).toBe(false);
     });
 
     it("check-status by token always carries both keys", async () => {
