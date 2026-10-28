@@ -105,7 +105,7 @@ describe("resolveCheckoutBuyer: session user", () => {
       store,
     );
 
-    expect(result).toMatchObject({ ok: true, user: { id: session.id }, placedAsGuest: false });
+    expect(result).toMatchObject({ ok: true, user: { id: session.id }, placedAsGuest: false, contact: null });
     expect(store.getUserByEmail).not.toHaveBeenCalled();
     expect(writes(store)).toBe(0);
   });
@@ -240,6 +240,19 @@ describe("resolveCheckoutBuyer: new e-mail", () => {
 
     expect(result).toEqual({ ok: false, status: 409, body: IDENTITY_CONFLICT });
     expect(writes(store)).toBe(0);
+  });
+});
+
+describe("resolveCheckoutBuyer: typed contact", () => {
+  it("returns what the guest typed even when the row on that e-mail holds another name and phone", async () => {
+    rows.push(makeUser({ email: "maria@example.test", name: "Conta Existente", phone: "5511999999999" }));
+
+    const result = await resolveCheckoutBuyer(
+      { sessionUser: undefined, buyer: { ...brBuyer, name: "Outra Pessoa", phone: "(21) 97777-6666" }, event: presencialPaid, paid: true },
+      fakeStorage(),
+    );
+
+    expect(result).toMatchObject({ ok: true, placedAsGuest: true, contact: { name: "Outra Pessoa", phone: "5521977776666" } });
   });
 });
 

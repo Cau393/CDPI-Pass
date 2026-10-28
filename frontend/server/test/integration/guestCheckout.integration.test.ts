@@ -326,6 +326,14 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
+  async function registerSquatter(email: string, password: string) {
+    const reg = await api("POST", "/api/auth/register", {
+      body: { name: "Squatter Person", email, phone: "5511988887777", password },
+    });
+    expect(reg.status, JSON.stringify(reg.body)).toBe(201);
+    return reg.body as { token: string; user: { id: string } };
+  }
+
   describe("free subscribe", () => {
     it("a free online guest → 201, a password-less lowercased row, a guest order, a confirmation e-mail", async () => {
       const eventId = await createEvent({ modality: "online", isFree: true });
@@ -810,14 +818,17 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
   });
 
   describe("Meus Ingressos visibility", () => {
-    it("a guest order on an unverified password account is hidden until the e-mail is verified", async () => {
-      const { signEmailVerificationToken } = await import("../../middleware/auth");
+    it("a guest order on an unverified password account stays hidden through the ticket-mail link; only a password reset from the mailbox shows it", async () => {
+      const { signEmailVerificationToken, signPasswordResetToken } = await import("../../middleware/auth");
       const eventId = await createEvent({
         modality: "online",
         isFree: true,
         certificateTemplateUrl: "https://s3.test/template.pdf",
       });
-      const account = await createPasswordUser({ verified: false });
+      // The squatter: anyone can register any e-mail and hold a live session on it.
+      const squatEmail = guestEmail();
+      const squat = await registerSquatter(squatEmail, "squatpass1");
+      const account = { id: squat.user.id, token: squat.token, email: squatEmail };
       const sub = await freeGuestSubscribe(eventId, buyer({ email: account.email }));
       expect(sub.status, JSON.stringify(sub.body)).toBe(201);
       const [order] = await ordersOf(account.id, eventId);
@@ -866,19 +877,175 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
       const stillThere = await pool.query(`SELECT status FROM orders WHERE id = $1`, [order.id]);
       expect(stillThere.rows[0].status).toBe("paid");
 
+      // The victim clicks the link from their ticket e-mail: no verification, a reset is mailed.
+      mocks.sendPasswordResetEmail.mockClear();
       const verify = await api("GET", `/api/auth/verify-email?token=${signEmailVerificationToken(account.id)}`);
-      const listAfter = await api("GET", "/api/orders", { token: account.token });
-      const detailAfter = await api("GET", `/api/orders/${order.id}`, { token: account.token });
+      expect(verify.status).toBe(409);
+      expect(verify.body).toEqual({
+        code: "password_reset_required",
+        message: "Para ver seus ingressos, crie uma nova senha pelo link que enviamos para o seu e-mail.",
+      });
+      expect(mocks.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+      expect(mocks.sendPasswordResetEmail).toHaveBeenLastCalledWith(expect.objectContaining({ email: account.email }), { purpose: "reset" });
+      expect((await userRows(account.email))[0].email_verified).toBe(false);
+      const stillHidden = await api("GET", "/api/orders", { token: account.token });
+      expect(stillHidden.body.orders.map((o: any) => o.id)).not.toContain(order.id);
 
-      expect(verify.status).toBe(200);
+      // The mailbox owner completes the reset with the mailed link.
+      const mailedUser = mocks.sendPasswordResetEmail.mock.calls[0][0] as { id: string; password: string };
+      const reset = await api("POST", "/api/auth/reset-password", {
+        body: { token: signPasswordResetToken(mailedUser), newPassword: "mailboxpass1" },
+      });
+      expect(reset.status, JSON.stringify(reset.body)).toBe(200);
+      const oldSession = await api("GET", "/api/orders", { token: account.token });
+      expect(oldSession.status).toBe(401);
+      const login = await api("POST", "/api/auth/login", { body: { email: account.email, password: "mailboxpass1" } });
+      expect(login.status).toBe(200);
+      const fresh = login.body.token as string;
+
+      const listAfter = await api("GET", "/api/orders", { token: fresh });
+      const detailAfter = await api("GET", `/api/orders/${order.id}`, { token: fresh });
       expect(listAfter.body.orders.map((o: any) => o.id)).toContain(order.id);
       expect(detailAfter.status).toBe(200);
       expect(listAfter.body.totalPages).toBe(1);
-      const certificatesAfter = await api("GET", "/api/users/me/certificates", { token: account.token });
-      const generateAfter = await api("POST", "/api/certificates/generate", { token: account.token, body: certificateBody });
+      const certificatesAfter = await api("GET", "/api/users/me/certificates", { token: fresh });
+      const generateAfter = await api("POST", "/api/certificates/generate", { token: fresh, body: certificateBody });
       expect(certificatesAfter.body.data.map((c: any) => c.eventId)).toEqual([eventId]);
       // Past the eligibility gate (it may still fail later on the unconfigured certificate service).
       expect(generateAfter.status).not.toBe(400);
+    });
+
+    it("the ticket-mail link still verifies an unverified row that has no password", async () => {
+      const { signEmailVerificationToken } = await import("../../middleware/auth");
+      const eventId = await createEvent({ modality: "online", isFree: true });
+      const typed = buyer();
+      const sub = await freeGuestSubscribe(eventId, typed);
+      expect(sub.status).toBe(201);
+      const row = (await userRows(typed.email))[0];
+      const verify = await api("GET", `/api/auth/verify-email?token=${signEmailVerificationToken(row.id)}`);
+      expect(verify.status).toBe(200);
+      expect((await userRows(typed.email))[0].email_verified).toBe(true);
+    });
+  });
+
+  describe("final review: mailbox proof before guest orders show", () => {
+    it("C2: an unverified account cannot move its row to another e-mail (400 email_not_verified)", async () => {
+      const victimEmail = guestEmail();
+      const squat = await registerSquatter(victimEmail, "squatpass1");
+      const ownEmail = guestEmail();
+      const change = await api("PUT", "/api/profile", {
+        token: squat.token,
+        body: { email: ownEmail, currentPassword: "squatpass1" },
+      });
+      expect(change.status).toBe(400);
+      expect(change.body.code).toBe("email_not_verified");
+      expect(change.body.message).toBe(
+        "Confirme seu e-mail atual antes de alterá-lo: use “Esqueci minha senha” para receber o link.",
+      );
+      expect((await userRows(victimEmail))[0].id).toBe(squat.user.id);
+      expect(await userRows(ownEmail)).toHaveLength(0);
+    });
+
+    it("C2: a verified account that changes its e-mail is unverified afterwards and does not see the new address's guest order", async () => {
+      const eventId = await createEvent({ modality: "online", isFree: true });
+      const reg = await registerSquatter(guestEmail(), "attack123");
+      await pool.query(`UPDATE users SET email_verified = true WHERE id = $1`, [reg.user.id]);
+      const victimEmail = guestEmail();
+      const change = await api("PUT", "/api/profile", {
+        token: reg.token,
+        body: { email: victimEmail, currentPassword: "attack123" },
+      });
+      expect(change.status, JSON.stringify(change.body)).toBe(200);
+      expect((await userRows(victimEmail))[0].email_verified).toBe(false);
+      const sub = await freeGuestSubscribe(eventId, buyer({ email: victimEmail }));
+      expect(sub.status).toBe(201);
+      const list = await api("GET", "/api/orders", { token: reg.token });
+      expect(list.body.orders.map((o: any) => o.id)).not.toContain(sub.body.order.id);
+    });
+
+    it("C3: an unverified account that owns a guest order is not deleted; its password is cleared and the order survives", async () => {
+      const eventId = await createEvent({ modality: "presencial", isFree: false });
+      const victimEmail = guestEmail();
+      const squat = await registerSquatter(victimEmail, "squatpass1");
+      const { res } = await placeGuestPixOrder(eventId, { email: victimEmail });
+      const orderId = res.body.order.id;
+      await pool.query(`UPDATE orders SET status = 'paid' WHERE id = $1`, [orderId]);
+      const del = await api("DELETE", "/api/profile", { token: squat.token, body: { password: "squatpass1" } });
+      expect(del.status).toBe(200);
+      expect(del.body).toEqual({ message: "Conta excluída com sucesso" });
+      const { rows } = await pool.query(`SELECT id, status FROM orders WHERE id = $1`, [orderId]);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].status).toBe("paid");
+      const [row] = await userRows(victimEmail);
+      expect(row.id).toBe(squat.user.id);
+      expect(row.password).toBeNull();
+      const after = await api("GET", "/api/orders", { token: squat.token });
+      expect(after.status).toBe(401);
+    });
+
+    it("C3: an unverified account with no guest order is deleted as before", async () => {
+      const squat = await registerSquatter(guestEmail(), "squatpass1");
+      const del = await api("DELETE", "/api/profile", { token: squat.token, body: { password: "squatpass1" } });
+      expect(del.status).toBe(200);
+      const { rows } = await pool.query(`SELECT id FROM users WHERE id = $1`, [squat.user.id]);
+      expect(rows).toHaveLength(0);
+    });
+
+    it("I1: the admin reset link is accepted once and refused the second time", async () => {
+      const admin = await createPasswordUser({ verified: true });
+      await pool.query(`UPDATE users SET is_admin = true WHERE id = $1`, [admin.id]);
+      const target = await createPasswordUser({ verified: true });
+      const gen = await api("POST", "/api/admin/generate-reset-link", { token: admin.token, body: { email: target.email } });
+      expect(gen.status, JSON.stringify(gen.body)).toBe(200);
+      const token = new URL(gen.body.resetUrl).searchParams.get("token")!;
+      const first = await api("POST", "/api/auth/reset-password", { body: { token, newPassword: "abcdef1" } });
+      expect(first.status, JSON.stringify(first.body)).toBe(200);
+      const second = await api("POST", "/api/auth/reset-password", { body: { token, newPassword: "abcdef2" } });
+      expect(second.status).toBe(400);
+    });
+
+    it("I2: a guest typing an existing account's e-mail sends the typed name and phone to Asaas, not the account's", async () => {
+      const eventId = await createEvent({ modality: "presencial", isFree: false });
+      const account = await createPasswordUser({ verified: true });
+      const typedCpf = makeCpf();
+      const r = await api("POST", "/api/orders", {
+        body: {
+          eventId,
+          paymentMethod: "boleto",
+          buyer: buyer({ email: account.email, name: "Guest Real Name", phone: "(21) 97777-6666", cpf: typedCpf, address: ADDRESS }),
+          turnstileToken: "ok",
+        },
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      const customer = mocks.createPayment.mock.calls.at(-1)![0].customer;
+      expect(customer.name).not.toBe("Conta Existente");
+      expect(customer.name.toLowerCase()).toBe("guest real name");
+      expect(customer.phone).not.toBe("5511999999999");
+      expect(customer.phone).toContain("977776666");
+      expect(customer.email).toBe(account.email);
+      expect(customer.cpfCnpj).toBe(digitsOf(typedCpf));
+    });
+
+    it("M1: the guest 201 order carries no userId (paid and free)", async () => {
+      const paidEvent = await createEvent({ modality: "presencial", isFree: false });
+      const { res } = await placeGuestPixOrder(paidEvent);
+      expect(res.body.order).not.toHaveProperty("userId");
+      const freeEvent = await createEvent({ modality: "online", isFree: true });
+      const sub = await freeGuestSubscribe(freeEvent, buyer());
+      expect(sub.status).toBe(201);
+      expect(sub.body.order).not.toHaveProperty("userId");
+    });
+
+    it("check-status by token always carries both keys", async () => {
+      const eventId = await createEvent({ modality: "presencial", isFree: false });
+      const { res } = await placeGuestPixOrder(eventId);
+      await pool.query(`UPDATE orders SET status = 'paid' WHERE id = $1`, [res.body.order.id]);
+      const check = await api("POST", `/api/orders/${res.body.order.id}/check-status`, {
+        headers: { "X-Order-Access": res.body.orderAccessToken },
+      });
+      expect(check.status).toBe(200);
+      expect(Object.keys(check.body).sort()).toEqual(["paymentStatus", "status"]);
+      expect(check.body.paymentStatus).toBeNull();
     });
   });
 

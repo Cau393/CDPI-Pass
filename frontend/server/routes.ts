@@ -111,6 +111,7 @@ import {
   orderIdFromAccessToken,
   passwordResetUserFromToken,
   signOrderAccessToken,
+  signPasswordResetToken,
   signSessionToken,
 } from "./middleware/auth";
 import { authRateLimitMax, guestCheckoutRateLimitMax, lookupEmailRateLimitMax } from "./utils/authRateLimitMax";
@@ -185,6 +186,13 @@ async function courtesyCapBlocksActivation(eventId: string): Promise<boolean> {
  * still on the pre-ADR-016 bundle (new bundles always send it): the person
  * cannot fix it, so ask for a reload (409) instead of an unexplainable 400.
  */
+/** A guest holds an order-access token, not the account: the order body never names the user row. */
+function guestSafeOrder<T extends { userId?: unknown }>(order: T, placedAsGuest: boolean): Omit<T, "userId"> | T {
+  if (!placedAsGuest) return order;
+  const { userId: _userId, ...rest } = order;
+  return rest;
+}
+
 function registrationAnswersFailure(res: Response, body: unknown, message: string) {
   const sentAnswers = typeof body === "object" && body !== null && "answers" in body;
   if (sentAnswers) return res.status(400).json({ message });
@@ -355,6 +363,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ message: "Token inválido" });
         }
         
+        // A password holder who has not proved the mailbox does not become verified by a link:
+        // anyone can register any e-mail. The mailbox owner sets a new password instead, which
+        // ends every other session (pv) and verifies the row.
+        const linked = await storage.getUser(decoded.userId);
+        if (linked && hasPassword(linked) && linked.emailVerified !== true) {
+          await emailService.sendPasswordResetEmail(linked, { purpose: "reset" });
+          return res.status(409).json({
+            code: "password_reset_required",
+            message: "Para ver seus ingressos, crie uma nova senha pelo link que enviamos para o seu e-mail.",
+          });
+        }
+
         const success = await storage.verifyUserEmail(decoded.userId);
         
         if (success) {
@@ -480,11 +500,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // 3. Manually create the password reset token
     // This token is identical to the one your /reset-password endpoint expects
-    const token = jwt.sign(
-      { userId: userToReset.id, type: 'password-reset' },
-      JWT_SECRET,
-      { expiresIn: '1h' } // 1 hour expiration is standard
-    );
+    const token = signPasswordResetToken(userToReset);
 
     // 4. Construct the full URL
     // Make sure to use your *frontend* domain here
@@ -2565,6 +2581,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { user: buyer, identity, placedAsGuest } = resolved;
       const userId = buyer.id;
       const isForeigner = identity.isForeigner;
+      // A guest's Asaas contact is what they typed, never what an existing row holds.
+      const contactName = resolved.contact?.name ?? buyer.name;
+      const contactPhone = resolved.contact?.phone ?? buyer.phone;
       registration ??= resolveAnswers(buyer);
       if (!registration.ok) {
         return registrationAnswersFailure(res, req.body, registration.message);
@@ -2619,9 +2638,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const paymentData = isForeigner
           ? await asaasService.createForeignCardPayment({
-              name: buyer.name,
+              name: contactName,
               email: buyer.email,
-              phone: buyer.phone?.replace(/\D/g, '') || '',
+              phone: contactPhone?.replace(/\D/g, '') || '',
               userId,
               value: totalAmount,
               dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -2630,10 +2649,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             })
           : await asaasService.createPayment({
           customer: {
-            name: buyer.name,
+            name: contactName,
             email: buyer.email,
             cpfCnpj: identity.cpf!.replace(/\D/g, ''),
-            phone: buyer.phone?.replace(/\D/g, '') || '',
+            phone: contactPhone?.replace(/\D/g, '') || '',
           },
           billingType: paymentMethod === "credit_card" ? "CREDIT_CARD" : 
                       paymentMethod === "pix" ? "PIX" : "BOLETO",
@@ -2664,7 +2683,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Prepare response with payment details
         const response: any = {
-          order: updatedOrder ? withoutBuyerAnswers(updatedOrder) : updatedOrder,
+          order: updatedOrder ? guestSafeOrder(withoutBuyerAnswers(updatedOrder), placedAsGuest) : updatedOrder,
           // Key order matters: the request logger cuts the body at 80 characters, so the
           // token must come right after the order id. Proof of purchase for check-status.
           ...(placedAsGuest ? { orderAccessToken: signOrderAccessToken(order.id) } : {}),
@@ -2856,7 +2875,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       return res.status(201).json({
         message: "Inscrição confirmada!",
-        order: withoutBuyerAnswers(updatedOrder ?? order),
+        order: guestSafeOrder(withoutBuyerAnswers(updatedOrder ?? order), placedAsGuest),
         qrCode: qrCodeData || undefined,
         whatsappGroupUrl: links?.whatsappGroupUrl ?? null,
       });
@@ -2923,7 +2942,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(404).json({ message: "Pedido não encontrado" });
         }
         const refreshed = await refreshOrderPayment(order);
-        return res.json({ status: refreshed.order.status, paymentStatus: refreshed.paymentStatus });
+        return res.json({ status: refreshed.order.status, paymentStatus: refreshed.paymentStatus ?? null });
       }
 
       if (!req.user) {
@@ -3276,6 +3295,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         typeof updates.email === "string" &&
         updates.email !== normalizedCurrentEmail
       ) {
+        // A new address has not been proved yet; an unproved current one cannot be moved.
+        if (req.user.emailVerified !== true) {
+          return res.status(400).json({
+            code: "email_not_verified",
+            message: "Confirme seu e-mail atual antes de alterá-lo: use “Esqueci minha senha” para receber o link.",
+          });
+        }
+        updates.emailVerified = false;
         const existing = await storage.getUserByEmail(updates.email);
         if (existing && existing.id !== userId) {
           return res.status(400).json({ message: "Email já cadastrado" });
@@ -3413,6 +3440,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const isValidPassword = await bcrypt.compare(password, req.user.password);
       if (!isValidPassword) {
         return res.status(401).json({ message: "Senha incorreta" });
+      }
+
+      // An account whose e-mail was never proved may sit on a stranger's guest orders (ADR-017):
+      // keep the row and its orders, end every session by clearing the password, and answer
+      // as for a real delete so nothing shows that orders exist.
+      if (req.user.emailVerified !== true && (await storage.userHasGuestOrder(userId))) {
+        await storage.updateUser(userId, { password: null });
+        return res.json({ message: "Conta excluída com sucesso" });
       }
 
       // Delete user account and all related data

@@ -49,7 +49,14 @@ export async function refreshOrderPayment(order: Order): Promise<RefreshOrderPay
   }
   lastCheckMs.set(order.id, now);
 
-  const payment = await asaasService.getPayment(order.asaasPaymentId, order.id);
+  let payment: Awaited<ReturnType<typeof asaasService.getPayment>>;
+  try {
+    payment = await asaasService.getPayment(order.asaasPaymentId, order.id);
+  } catch (error) {
+    // Nothing was learned: free the slot so the next poll can ask again.
+    lastCheckMs.delete(order.id);
+    throw error;
+  }
   console.log(`Manual check - Payment status for order ${order.id}:`, payment.status);
 
   if (payment.status === "CONFIRMED" || payment.status === "RECEIVED") {

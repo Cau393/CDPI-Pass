@@ -24,7 +24,14 @@ export type CheckoutBuyerFailure = {
 };
 
 export type CheckoutBuyerResult =
-  | { ok: true; user: User; identity: CheckoutIdentity; placedAsGuest: boolean }
+  | {
+      ok: true;
+      user: User;
+      identity: CheckoutIdentity;
+      placedAsGuest: boolean;
+      /** What a guest typed (name, E.164 phone); null for a session user. The row may hold someone else's. */
+      contact: { name: string; phone: string } | null;
+    }
   | CheckoutBuyerFailure;
 
 export type CheckoutBuyerStorage = Pick<
@@ -92,12 +99,14 @@ export async function resolveCheckoutBuyer(
         address: sessionUser.address,
       },
       placedAsGuest: false,
+      contact: null,
     };
   }
 
   const parsed = parseGuestBuyer(input.buyer);
   if (!parsed.ok) return { ok: false, status: 400, body: { code: "invalid_buyer", message: parsed.message } };
   const { buyer } = parsed;
+  const contact = { name: buyer.name, phone: buyer.phone };
   const typed = buyer.document;
   if (paid && typed && foreignPaidCheckoutBlocked({ isForeigner: typed.isForeigner })) {
     return foreignPaidFailure();
@@ -137,7 +146,7 @@ export async function resolveCheckoutBuyer(
           document: typed,
           address: buyer.address,
         });
-        if (result.created) return { ok: true, user: result.user, identity, placedAsGuest: true };
+        if (result.created) return { ok: true, user: result.user, identity, placedAsGuest: true, contact };
         // Lost the e-mail race: the winner is checked like any existing row.
         existing = result.user;
         continue;
@@ -163,10 +172,10 @@ export async function resolveCheckoutBuyer(
           { guestOnly: true },
         );
         if (!result.ok) return identityConflict();
-        return { ok: true, user: result.user, identity, placedAsGuest: true };
+        return { ok: true, user: result.user, identity, placedAsGuest: true, contact };
       }
     }
-    return { ok: true, user: existing, identity, placedAsGuest: true };
+    return { ok: true, user: existing, identity, placedAsGuest: true, contact };
   }
   return identityConflict();
 }

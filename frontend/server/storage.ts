@@ -121,6 +121,8 @@ export interface IStorage {
   ): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }>;
   /** Pending orders a user opened for an event since `since` (guest checkout cap, ADR-017; guest and session orders are counted apart). */
   countPendingOrdersSince(params: { userId: string; eventId: string; since: Date; placedAsGuest: boolean }): Promise<number>;
+  /** True when the user owns at least one order placed through guest checkout (ADR-017). */
+  userHasGuestOrder(userId: string): Promise<boolean>;
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
   /** pending -> paid in one statement; false when the order was no longer pending. */
@@ -550,6 +552,15 @@ export class DatabaseStorage implements IStorage {
         ),
       );
     return row.value;
+  }
+
+  async userHasGuestOrder(userId: string): Promise<boolean> {
+    const [row] = await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(and(eq(orders.userId, userId), eq(orders.placedAsGuest, true)))
+      .limit(1);
+    return Boolean(row);
   }
 
   async createOrder(orderData: InsertOrder): Promise<Order> {
