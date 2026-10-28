@@ -868,7 +868,10 @@ describe.skipIf(!enabled)("inline card checkout (real routes + real asaasService
     });
 
     it("an error after the charge (asaasPaymentId write) keeps the order; the webhook then pays it, with one e-mail", async () => {
-      const logged = spyOnConsole();
+      const logged: string[] = [];
+      for (const method of ["log", "info", "warn", "error", "debug"] as const) {
+        vi.spyOn(console, method).mockImplementation((...args: unknown[]) => void logged.push(args.map(String).join(" ")));
+      }
       const { storage } = await import("../../storage");
       const original = storage.updateOrder.bind(storage);
       let failed = false;
