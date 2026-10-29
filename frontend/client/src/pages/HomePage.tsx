@@ -130,9 +130,11 @@ export default function HomePage() {
     return parseFloat(String(ev.price));
   };
 
+  // A session token is stored and useAuth is still loading: the buyer may be logged in already (N2).
+  const authResolving = isAuthResolving(authLoading);
+
   const handlePrimaryCta = (event: Event) => {
-    // A session is still being resolved: no guest dialog for a possibly logged-in buyer (N2).
-    if (isAuthResolving(authLoading)) return;
+    if (authResolving) return;
     if (isFreeEvent(event)) {
       subscribe(event);
       return;
@@ -270,16 +272,17 @@ export default function HomePage() {
                           className="h-10 shrink-0 bg-green-500 px-4 text-sm text-white hover:bg-green-600"
                           data-testid="button-buy-main"
                           disabled={
+                            authResolving ||
                             paidEventIds.has(mainEvent.id) ||
                             isEventSoldOut(mainEvent) ||
                             mainEvent.salesClosed === true ||
                             (isFreeEvent(mainEvent) && isSubscribePending)
                           }
                         >
-                          {isSubscribePending && isFreeEvent(mainEvent) && (
+                          {(authResolving || (isSubscribePending && isFreeEvent(mainEvent))) && (
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                           )}
-                          {eventAcquisitionCtaLabel({
+                          {authResolving ? "Carregando..." : eventAcquisitionCtaLabel({
                             isFree: isFreeEvent(mainEvent),
                             confirmed: paidEventIds.has(mainEvent.id),
                             soldOut: isEventSoldOut(mainEvent),
@@ -525,7 +528,7 @@ export default function HomePage() {
           }}
           onSuccess={() => {
             // A guest has no profile: the modal's own success screen said it all.
-            if (!isAuthenticated) {
+            if (!isAuthenticated && !authResolving) {
               setIsPaymentModalOpen(false);
               setSelectedEvent(null);
               return;

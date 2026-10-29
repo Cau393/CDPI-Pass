@@ -1156,6 +1156,38 @@ describe("PaymentModal — inline card, Turnstile, statuses and polling", () => 
       expect(screen.getByTestId("text-payment-poll-status")).toHaveTextContent(/recebe o ingresso por e-mail/);
     });
 
+    it("R2: a card POST in flight across an auth change locks the card but never stores the old guest token", async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const base = serve({ orders: [], checkStatus: [{ status: 200, body: { status: "paid", paymentStatus: "CONFIRMED" } }] });
+      const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === "/api/orders") {
+          await gate;
+          return json(202, unconfirmedBody);
+        }
+        return base(input, init);
+      });
+      vi.stubGlobal("fetch", f);
+      const { user } = setup({ buyer: guest });
+      await fillCard(user);
+      await pay(user);
+      await waitFor(() => expect(cardChargeLockFor(event.id)).not.toBeNull());
+
+      act(() => dropGuestAccessTokens());
+      await act(async () => {
+        release();
+      });
+      await screen.findByTestId("text-payment-unconfirmed");
+
+      const lock = cardChargeLockFor(event.id)!;
+      expect(lock.orderId).toBe(ORDER_ID);
+      expect(lock.accessToken).toBeNull();
+      expect(lock.guestTokenDropped).toBe(true);
+      await tick();
+      await tick();
+      expect(statusCalls(f as unknown as FetchMock)).toHaveLength(0);
+    });
+
     it("a 201 under risk analysis survives close and reopen, resumes session polling, and a polled cancel releases it", async () => {
       authState.user = account;
       const f = serve({

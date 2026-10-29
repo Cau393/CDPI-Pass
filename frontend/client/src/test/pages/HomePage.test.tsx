@@ -239,6 +239,8 @@ describe("HomePage — main event cover image", () => {
       const user = userEvent.setup();
       vi.stubGlobal("fetch", mockApi({ ...baseEvent, price: "100.00", isFree: false }));
       const view = renderPage();
+      expect(await screen.findByTestId("button-buy-main")).toBeDisabled();
+      expect(screen.getByTestId("button-buy-main")).toHaveTextContent("Carregando");
       await user.click(await screen.findByTestId("button-buy-main"));
       expect(screen.queryByTestId("input-guest-name")).not.toBeInTheDocument();
       expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
@@ -250,11 +252,33 @@ describe("HomePage — main event cover image", () => {
       expect(screen.queryByTestId("input-guest-name")).not.toBeInTheDocument();
     });
 
+    it("token resolved: the CTA is enabled and the logged-in free path subscribes in place", async () => {
+      authState.isAuthenticated = true;
+      authState.isLoading = false;
+      localStorage.setItem("token", "t");
+      const fetchMock = mockApi(baseEvent);
+      vi.stubGlobal("fetch", fetchMock);
+      const user = userEvent.setup();
+      renderPage();
+      const cta = await screen.findByTestId("button-buy-main");
+      expect(cta).toBeEnabled();
+      await user.click(cta);
+      expect(screen.queryByTestId("input-guest-name")).not.toBeInTheDocument();
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(
+            ([i, init]) => String(i) === `/api/events/${EVENT_ID}/subscribe` && (init as RequestInit)?.method === "POST",
+          ),
+        ).toBe(true),
+      );
+    });
+
     it("no token + loading: the guest dialog still opens", async () => {
       authState.isLoading = true;
       vi.stubGlobal("fetch", mockApi({ ...baseEvent, price: "100.00", isFree: false }));
       const user = userEvent.setup();
       renderPage();
+      expect(await screen.findByTestId("button-buy-main")).toBeEnabled();
       await user.click(await screen.findByTestId("button-buy-main"));
       expect(await screen.findByTestId("input-guest-name")).toBeInTheDocument();
     });

@@ -348,7 +348,6 @@ describe("useFreeSubscribe — guest (no session)", () => {
   });
 });
 
-
 describe("useFreeSubscribe — N2: auth still resolving", () => {
   function Harness() {
     const { subscribe, registrationDialog } = useFreeSubscribe();
@@ -382,6 +381,19 @@ describe("useFreeSubscribe — N2: auth still resolving", () => {
     await userEvent.setup().click(screen.getByText("abrir"));
     expect(screen.queryByTestId("input-guest-email")).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("token resolved (not loading): the logged-in path subscribes in place, no dialog", async () => {
+    localStorage.setItem("token", "t");
+    authState.isLoading = false;
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ message: "ok" }), { status: 201, headers: { "Content-Type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    mount();
+    await userEvent.setup().click(screen.getByText("abrir"));
+    expect(screen.queryByTestId("input-guest-email")).not.toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
   });
 
   it("no token + loading: the guest dialog opens", async () => {

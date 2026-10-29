@@ -17,7 +17,7 @@ import { identityRequiredMissing, refreshAfterStaleRegistration, RELOAD_PAGE_MES
 import { CardPaymentForm, type CardPaymentFormHandle } from "@/components/CardPaymentForm";
 import { CheckoutSuccess } from "@/components/CheckoutSuccess";
 import { TurnstileWidget, isTurnstileConfigured, type TurnstileHandle } from "@/components/TurnstileWidget";
-import { cardChargeLockFor, lockCardCharge, releaseCardCharge, subscribeGuestTokenDrop } from "@/lib/cardChargeLock";
+import { cardChargeLockFor, lockCardCharge, guestTokenEpoch, releaseCardCharge, subscribeGuestTokenDrop } from "@/lib/cardChargeLock";
 
 interface EventForModal {
   id: string;
@@ -233,7 +233,7 @@ export default function PaymentModal({
     };
   }, [isOpen, poll]);
 
-  const handleOrder = (method: string, data: any) => {
+  const handleOrder = (method: string, data: any, authChanged = false) => {
     const payUrl = data?.payment?.link ?? data?.payment?.paymentLink;
     if (method === "credit_card" && payUrl) {
       globalThis.open(payUrl, "_blank", "noopener,noreferrer");
@@ -242,7 +242,7 @@ export default function PaymentModal({
     update({
       paymentData: data,
       orderAmount: order?.amount ?? null,
-      ...(order?.status === "pending" ? watchOrder(order.id, data?.orderAccessToken) : {}),
+      ...(order?.status === "pending" ? watchOrder(order.id, authChanged ? null : data?.orderAccessToken) : {}),
     });
     toast({
       title: "Pedido criado!",
@@ -250,17 +250,20 @@ export default function PaymentModal({
     });
   };
 
-  const handleCardOrder = (status: number, data: any) => {
+  const handleCardOrder = (status: number, data: any, authChanged = false) => {
     const order = data?.order;
     if (status !== 202 && (PAID_PAYMENT_STATUSES.has(data?.payment?.status) || order?.status === "paid")) {
       markPaid(order?.amount);
       return;
     }
     // 202 (outcome unknown, order kept) or 201 pending (risk analysis): never charge again from here.
-    lockCardCharge(event.id, {
-      orderId: typeof order?.id === "string" ? order.id : null,
-      accessToken: typeof data?.orderAccessToken === "string" ? data.orderAccessToken : null,
-    });
+    const orderId = typeof order?.id === "string" ? order.id : null;
+    lockCardCharge(
+      event.id,
+      authChanged
+        ? { orderId, accessToken: null, guestTokenDropped: true }
+        : { orderId, accessToken: typeof data?.orderAccessToken === "string" ? data.orderAccessToken : null },
+    );
     update({
       cardLocked: true,
       orderAmount: order?.amount ?? null,
@@ -268,7 +271,9 @@ export default function PaymentModal({
         status === 202
           ? { kind: "unconfirmed", message: typeof data?.message === "string" && data.message ? data.message : UNCONFIRMED_MESSAGE }
           : { kind: "review" },
-      ...watchOrder(order?.id, data?.orderAccessToken),
+      ...(authChanged
+        ? orderId ? { pollNotice: EMAIL_LATER_MESSAGE } : {}
+        : watchOrder(order?.id, data?.orderAccessToken)),
     });
   };
 
@@ -327,6 +332,8 @@ export default function PaymentModal({
     if (cardAlert?.kind === "error") update({ cardAlert: null });
     // From here the charge may happen: locked even if the modal unmounts before the answer.
     if (card) lockCardCharge(event.id);
+    // An auth change while the POST is in flight must not let the answer re-store the old guest token.
+    const epochAtSend = guestTokenEpoch();
     let result: { response: Response; data: any } | { error: unknown };
     try {
       const response = await apiRequest("POST", "/api/orders", {
@@ -349,9 +356,10 @@ export default function PaymentModal({
     turnstileRef.current?.reset();
     if (card) cardFormRef.current?.clearCvv();
     setSubmitting(false);
+    const authChanged = guestTokenEpoch() !== epochAtSend;
     if ("error" in result) handleOrderError(result.error, card);
-    else if (card) handleCardOrder(result.response.status, result.data);
-    else handleOrder(method, result.data);
+    else if (card) handleCardOrder(result.response.status, result.data, authChanged);
+    else handleOrder(method, result.data, authChanged);
   };
 
   const finish = () => {

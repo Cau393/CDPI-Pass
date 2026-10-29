@@ -908,7 +908,10 @@ describe("EventDetailsPage — guest purchase (logged out)", () => {
       authState.isLoading = true;
       const user = userEvent.setup();
       renderPage();
-      await user.click(await screen.findByTestId("button-event-cta"));
+      const cta = await screen.findByTestId("button-event-cta");
+      expect(cta).toBeDisabled();
+      expect(cta).toHaveTextContent("Carregando");
+      await user.click(cta);
       expect(screen.queryByTestId("input-guest-email")).not.toBeInTheDocument();
       expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
     });
@@ -923,10 +926,25 @@ describe("EventDetailsPage — guest purchase (logged out)", () => {
       expect(screen.queryByTestId("input-guest-email")).not.toBeInTheDocument();
     });
 
+    it("token resolved: the CTA is enabled and a logged-in click opens no guest dialog", async () => {
+      localStorage.setItem("token", "t");
+      authState.isLoading = false;
+      authState.isAuthenticated = true;
+      authState.user = { cpf: "123.456.789-09", foreignDocument: null, isForeigner: false, address: "Rua A, 100, São Paulo" };
+      const user = userEvent.setup();
+      renderPage();
+      const cta = await screen.findByTestId("button-event-cta");
+      expect(cta).toBeEnabled();
+      await user.click(cta);
+      expect(screen.queryByTestId("input-guest-email")).not.toBeInTheDocument();
+      expect(await screen.findByTestId("payment-modal")).toBeInTheDocument();
+    });
+
     it("no token + loading: the guest dialog still opens", async () => {
       authState.isLoading = true;
       const user = userEvent.setup();
       renderPage();
+      expect(await screen.findByTestId("button-event-cta")).toBeEnabled();
       await user.click(await screen.findByTestId("button-event-cta"));
       expect(await screen.findByTestId("input-guest-email")).toBeInTheDocument();
     });

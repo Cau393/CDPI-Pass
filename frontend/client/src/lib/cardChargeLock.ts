@@ -35,6 +35,12 @@ export function resetCardChargeLocks(): void {
 }
 
 const dropListeners = new Set<() => void>();
+let epoch = 0;
+
+/** Moves on every auth change. An in-flight order response compares it to the one taken at send time. */
+export function guestTokenEpoch(): number {
+  return epoch;
+}
 
 /** A mounted modal hears the drop and stops polling with the token it holds in state. */
 export function subscribeGuestTokenDrop(listener: () => void): () => void {
@@ -49,9 +55,16 @@ export function subscribeGuestTokenDrop(listener: () => void): () => void {
  * token, so nobody else polls that order. The locks stay: the card submit remains locked (R37).
  */
 export function dropGuestAccessTokens(): void {
+  epoch += 1;
   for (const [eventId, lock] of Array.from(locks)) {
     if (lock.accessToken == null) continue;
     locks.set(eventId, { orderId: lock.orderId, accessToken: null, guestTokenDropped: true });
   }
-  dropListeners.forEach((listener) => listener());
+  dropListeners.forEach((listener) => {
+    try {
+      listener();
+    } catch {
+      // One failing listener must not keep the others from dropping their token.
+    }
+  });
 }

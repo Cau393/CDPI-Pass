@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   cardChargeLockFor,
   dropGuestAccessTokens,
+  guestTokenEpoch,
   lockCardCharge,
   resetCardChargeLocks,
   subscribeGuestTokenDrop,
@@ -37,5 +38,23 @@ describe("cardChargeLock — dropGuestAccessTokens (R2)", () => {
     off();
     dropGuestAccessTokens();
     expect(heard).toHaveBeenCalledTimes(1);
+  });
+
+  it("one throwing listener does not stop the others", () => {
+    const heard = vi.fn();
+    const offBad = subscribeGuestTokenDrop(() => {
+      throw new Error("boom");
+    });
+    const offGood = subscribeGuestTokenDrop(heard);
+    expect(() => dropGuestAccessTokens()).not.toThrow();
+    expect(heard).toHaveBeenCalledTimes(1);
+    offBad();
+    offGood();
+  });
+
+  it("each drop moves the auth epoch", () => {
+    const before = guestTokenEpoch();
+    dropGuestAccessTokens();
+    expect(guestTokenEpoch()).toBe(before + 1);
   });
 });

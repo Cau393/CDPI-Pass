@@ -177,7 +177,7 @@ export default function EventDetailsPage() {
   };
 
   const handleRedeemCourtesy = () => {
-    if (!courtesyCode || courtesyBlocked) return;
+    if (!courtesyCode || courtesyBlocked || authResolving) return;
     if (!isAuthenticated) {
       toast({
         title: "Login necessário",
@@ -198,10 +198,12 @@ export default function EventDetailsPage() {
     } | null>(null);
 
   // ✅ Updated handleBuyTicket to accept event + promo
+  // A session token is stored and useAuth is still loading: the buyer may be logged in already (N2).
+  const authResolving = isAuthResolving(authLoading);
+
   const handleBuyTicket = (selected: Event, code: string | null) => {
     if (!event) return;
-    // A session is still being resolved: no guest dialog for a possibly logged-in buyer (N2).
-    if (isAuthResolving(authLoading)) return;
+    if (authResolving) return;
     if (isFreeEvent(event)) return;
     if (foreignPaidCheckoutBlocked(user)) {
       toast({
@@ -410,20 +412,24 @@ export default function EventDetailsPage() {
                 }}
                 className="bg-primary hover:bg-secondary text-white px-8 py-6 text-lg"
                 disabled={
-                  showCourtesyOffer
+                  authResolving ||
+                  (showCourtesyOffer
                     ? soldOut || hasPaidForEvent || courtesyBlocked
                     : soldOut ||
                       hasPaidForEvent ||
                       salesClosed ||
                       isSubscribePending ||
-                      foreignPaidBlocked
+                      foreignPaidBlocked)
                 }
+                aria-busy={authResolving || undefined}
                 data-testid="button-event-cta"
               >
-                {isSubscribePending && !showCourtesyOffer && (
+                {(authResolving || (isSubscribePending && !showCourtesyOffer)) && (
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                 )}
-                {showCourtesyOffer
+                {authResolving
+                  ? "Carregando..."
+                  : showCourtesyOffer
                   ? courtesyRedeemCtaLabel({
                       isFree,
                       confirmed: hasPaidForEvent,
@@ -490,7 +496,7 @@ export default function EventDetailsPage() {
           }}
           onSuccess={() => {
             // A guest has no profile: the modal's own success screen said it all.
-            if (!isAuthenticated) {
+            if (!isAuthenticated && !authResolving) {
               setIsPaymentModalOpen(false);
               return;
             }
