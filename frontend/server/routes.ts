@@ -121,7 +121,7 @@ import {
   guestCheckoutRateLimitMax,
   lookupEmailRateLimitMax,
 } from "./utils/authRateLimitMax";
-import { parseCardPayment } from "./utils/cardPaymentSchema";
+import { parseCardPayment } from "@shared/cardPayment";
 import {
   FOREIGN_PAID_UNAVAILABLE_CODE,
   FOREIGN_PAID_UNAVAILABLE_MESSAGE,
@@ -132,7 +132,7 @@ import { resolveCheckoutBuyer } from "./utils/checkoutBuyer";
 import { ownerCanSeeOrder } from "./utils/orderVisibility";
 import { myTicketsUrlFor } from "./utils/myTicketsUrl";
 import { refreshOrderPayment } from "./utils/refreshOrderPayment";
-import { maskEmail } from "./utils/maskEmail";
+import { maskEmail } from "@shared/maskEmail";
 import { getJwtSecret } from "./utils/requiredSecret";
 import multer from 'multer';
 import csv from 'csv-parser';

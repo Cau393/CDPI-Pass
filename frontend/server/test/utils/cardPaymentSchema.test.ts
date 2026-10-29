@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseCardPayment } from "../../utils/cardPaymentSchema";
+import { parseCardPayment } from "@shared/cardPayment";
 
 const NEXT_YEAR = new Date().getUTCFullYear() + 1;
 /** A 2-digit year a few years ahead, so the expected 4-digit form follows the clock. */
