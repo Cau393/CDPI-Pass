@@ -35,6 +35,7 @@ Priority key: **P1** exploitable now or silent data loss · **P2** broken featur
 | 25 | P3 | Dev/test-only toolchain advisories (full `pnpm audit`, not `--prod`): `vite` 5.4.21 dev server (1 HIGH), `vitest`/`tinypool` (2 CRITICAL), `undici` via jsdom (2 HIGH), `shell-quote` via drizzle-kit → gel (1 CRITICAL) | open; none ships in the prod runtime (`vite build` runs on EC2, not the dev server); upgrade after 2026-10-21 |
 | 26 | P3 | pm2 on EC2 was installed with `npm install -g pm2`, the last npm use (owner wants pnpm only) | open; after 2026-10-21: `pnpm add -g pm2`, then `pm2 update` so the running daemon moves to the new binary, then `npm rm -g pm2` |
 | 27 | P3 | `follow-redirects` 1.16.0 (CVE-2026-111755, CVE-2026-111756, HIGH) on the SendGrid e-mail path; Security Scans red from 2026-10-21 | resolved 2026-10-21 (PR #24, deployed `e73304b`); not reachable before the fix |
+| 28 | P2 | Asaas refund and chargeback events are ignored: a refunded order stays `paid` with a valid ticket (pre-existing for link/PIX/boleto; more likely with the inline card) | open (owner 2026-10-29: own stage after deploy B; manual cancel until then) |
 
 ---
 
@@ -490,6 +491,14 @@ Published 2026-10-20 (GHSA-8r9p-f939-6h3c, GHSA-q3jh-wrc6-jgq8), fixed in 1.16.1
 **Residual resolved (2026-10-21, sanitize-html/dist PR):** `frontend/dist` is untracked (`git rm --cached`, 23 files, the tracked root `.gitignore` has `frontend/dist/`; not a new `frontend/.gitignore`, which the root file ignores and which would overwrite the local ignored one on pull). The deploy no longer puts a stale build back: it restores `frontend/dist` and `ecosystem.config.cjs` in separate tolerant commands, pulls, then copies the rollback snapshot (the live build) into `frontend/dist/` so the app keeps serving it until the new build replaces it.
 - **Transition deploy:** `dist` is still tracked on the box and modified by the last build, so `git checkout -- frontend/dist` is needed once or the pull refuses; the pull then deletes the formerly tracked files and the `cp -R` restores the live ones. Later deploys: the checkout is a no-op.
 - **Proof:** a local simulation (bare origin plus an EC2 clone at `e73304b` with a modified `index.js`/`index.html` and an untracked asset) running the lines extracted from `deploy.yml`: new script exit 0, `index.html`/`index.js` keep the live content, the untracked asset survives, `git status --porcelain frontend/dist` and `git ls-files frontend/dist` are empty; a second run also succeeds. The old lines on the same state leave the stale tracked `index.html` in place until the build. 11 of 11 assertions passed. `pnpm run build` still writes `dist/index.js`, `dist/run-email-worker.js` and `dist/public/index.html`, and git sees nothing under `frontend/dist`.
+
+### 28. Refund and chargeback events are ignored (found 2026-10-29, ADR-017 Stage 5 rehearsal)
+
+`PAYMENT_REFUNDED`, `PAYMENT_CHARGEBACK_REQUESTED`, `PAYMENT_CHARGEBACK_DISPUTE` and `PAYMENT_AWAITING_CHARGEBACK_REVERSAL` reach `POST /api/webhooks/asaas`, are validated and logged, and change nothing. In the sandbox a refund (`POST /v3/payments/{id}/refund`) left the order `paid`, the ticket valid and `current_attendees` unchanged; check-status still answered "paid". Chargeback cannot be simulated in the sandbox (no endpoint), so it needs a synthetic signed webhook. The routes handle only CONFIRMED / RECEIVED / APPROVED_BY_RISK / OVERDUE / DELETED / REPROVED / CAPTURE_REFUSED. Pre-existing for link, PIX and boleto; more likely with the inline card, where chargebacks exist.
+
+**Fix (own stage after deploy B; owner decision 2026-10-29)**: cancel the order and release the seat and the ticket on refund and chargeback events, with tests built from a signed synthetic webhook. Until then the owner cancels refunded tickets by hand. Event names: https://docs.asaas.com/docs/payment-events
+
+**Follow-ups bundled with this stage**: R1 (a stale `pollNotice` carries into the next order's view in the same modal session) and T3-M2 (extract `useOrderPolling` from `PaymentModal.tsx`); the deferred minors in the SDD `progress.md` "Stage 5" section (H1: `onSuccess` `!authResolving` branches have no direct test; H2-M2: installment N's id stored when its webhook arrives first on a NULL-id order; ProfilePage 409 toast untested). Also parked: admin has no force-cancel while Asaas refuses a delete (runbook in [[60-Decisions/ADR-017-guest-checkout-inline-card]] deploy notes).
 
 ---
 

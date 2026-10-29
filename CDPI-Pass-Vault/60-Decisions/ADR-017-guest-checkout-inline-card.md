@@ -430,7 +430,7 @@ Range `ecad8c7..8b01377`. Client checkout for guests and logged-in buyers, plus 
     modal session (`PaymentModal.tsx:230-234`, `:252-260`). Cosmetic, no money path. Fix with the `useOrderPolling` extraction.
   - R2: the guest token held in the in-memory lock survives a same-tab login without a reload; another person logging in
     on that device sees the first buyer's order status only and stays card-locked until reload (`PaymentModal.tsx:111`).
-    Follow-up: clear `cardChargeLock` on an auth change.
+    Resolved in Stage 5 (H1) with a different fix: the auth change drops the guest token and keeps the card locked until reload (clearing the lock would reopen a double charge; see Stage 5).
 - **T3-M2:** extract a `useOrderPolling` hook (`PaymentModal.tsx` is now 748 lines); no behaviour change.
 - **N2:** the event page, home page and `useFreeSubscribe` treat `!isAuthenticated` as a guest while `useAuth` is still
   loading with a stored token; the server ignores `buyer` for a session, so no wrong-account order. Fix: keep the CTA
@@ -464,6 +464,144 @@ Range `ecad8c7..8b01377`. Client checkout for guests and logged-in buyers, plus 
   on the fix; 11 mutations of the lock and in-flight guards were each caught by a test.
 - Not yet run: a real Turnstile site key, the sandbox Asaas card, the CSP in enforcing mode (Stage 5).
 
+### Stage 5: sandbox rehearsal and hardening (2026-10-29)
+Range `8fb31cf..910b29b` (branch `feat/guest-checkout-client`). A rehearsal of the inline card on **staging with the Asaas
+sandbox**, then two hardening tasks (H1 client, H2 webhook) and one final fix wave. Process: the SDD ledger `progress.md`
+("## Stage 5"), `stage5-r1-report.md`, `stage5-h1-report.md`, `stage5-h2-report.md`, `final-review-s5.md` and
+`stage5-final-fix-report.md`, under `.superpowers/sdd/for-the-website-now-wiggly-willow/` in the `guest-s4` worktree.
+
+**Rehearsal setup (owner go 2026-10-29)**
+- Staging Neon branch (not prod) plus the Asaas **sandbox** key. A guard in the start script refused any host other than
+  `api-sandbox.asaas.com` (and `challenges.cloudflare.com` for the widget); seed users end in `@example.invalid`.
+- Turnstile **test keys** (always-pass, always-fail, forced-interactive; secrets for pass, fail and spent token):
+  https://developers.cloudflare.com/turnstile/troubleshooting/testing/ . A test sitekey emits a dummy token.
+- One temporary webhook (`cdpi-sbx-webhook-test`, 19 events incl. risk, chargeback, refund) pointed at the owner's ngrok
+  tunnel and a logging proxy. Deleted after the run (the only other webhook, "Workshop ingressos", was not touched).
+- **Staging schema:** `pnpm db:diff` showed exactly the 2 additive statements (`users.password` DROP NOT NULL;
+  `orders.placed_as_guest` boolean default false not null); applied those two; `db:diff` after = **0 statements**.
+  Prod was not touched.
+
+**The 10 checklist answers (R1; evidence in `s5-results.jsonl`, webhook bodies in `s5-deliveries.jsonl`)**
+| # | Question | Answer |
+|---|---|---|
+| 1 | `value` with `installmentCount` + `totalValue` | `totalValue` is the TOTAL. 95.00 x 3 became three payments 31.68 + 31.66 + 31.66 (sum 95.00). The POST 201 `payment.value` is one installment (31.66). `orders.amount` = 95.00. Listing by `externalReference` returns all 3. |
+| 2 | GET status after risk reproval | Not reproducible: the sandbox never entered risk analysis (10, 1500, 5000, 20000 all CONFIRMED at once). |
+| 3 | `PAYMENT_CONFIRMED` after `PAYMENT_APPROVED_BY_RISK_ANALYSIS`? | Not reproducible, same reason. Approved cards produced `PAYMENT_CREATED` then `PAYMENT_CONFIRMED` (no RECEIVED for card). |
+| 4 | 3-D Secure | Our sandbox account answers CONFIRMED directly; no `threeDSecureChallengeUrl`. Unknown for prod. |
+| 5 | Holder phone format | The sandbox accepts any string (9 formats and even `123` returned CONFIRMED). It cannot prove the prod format; keep the national digits the app sends. |
+| 6 | Refund / chargeback | Refund (`POST /v3/payments/{id}/refund`) gives `REFUNDED` and a `PAYMENT_REFUNDED` webhook; the app logs it and does nothing (order stays `paid`, ticket stays). No chargeback simulation exists (three candidate endpoints 404). |
+| 7 | Asaas' own notifications on inline card charges | Enabled: the app-created customer has `notificationDisabled: false` and e-mail notification rows on. Prod would e-mail the buyer. Owner decision below. |
+| 8 | Deleted / reproved card payment on GET | Confirmed or refunded card payments cannot be deleted (400 "only pending or overdue"). A deleted PENDING payment reads `status PENDING, deleted: true`; check-status leaves the order pending and the `PAYMENT_DELETED` webhook cancels it. |
+| 9 | List by `externalReference` finds the card charge | Yes (1 for 1x, 3 for 3x). A charge whose response was dropped became `paid` through check-status with the webhook proxy down. |
+| 10 | Unknown outcome in a real browser | A dropped card response gives 202 and the amber "Aguardando confirmação" notice. With a declined PAN the order stays pending and the reopened modal is locked and disabled. With an approved PAN check-status reconciles to paid within seconds (see F4 below). |
+
+Docs the report cites: https://docs.asaas.com/docs/testando-pagamento-com-cart%C3%A3o-de-cr%C3%A9dito (test cards; silent on 3DS,
+risk, chargeback and refund simulation), https://docs.asaas.com/docs/payment-events (event names),
+https://docs.asaas.com/reference/create-new-customer (customer notifications).
+
+**Extra flows observed (sandbox, staging)**
+- Approve 1x with a session: 201, order paid, QR stored, ticket e-mail queued; webhooks `PAYMENT_CREATED` + `PAYMENT_CONFIRMED` (200).
+- Decline then retry: 402 `card_declined`, no order row left; the retry with the approved card gave 201 paid.
+- Guest card, logged out: 201, `placed_as_guest` true, `orderAccessToken` returned, check-status with `X-Order-Access` gave paid; the
+  user row has no password. A real browser guest card also paid (widget iframe from `challenges.cloudflare.com`, no console errors).
+- Passport buyer: guest, session card and session PIX all 403 `foreign_paid_unavailable` with the bilingual message.
+- PIX and boleto via `POST /v3/sandbox/payment/{id}/confirm`: pending to paid (webhook `PAYMENT_RECEIVED`).
+- Turnstile always-fail secret: 403 `turnstile_failed` with the message shown in the card form; 403 with no token too.
+- Widget loads on the event page card tab. The prod nginx CSP is Report-Only and already keeps `https://challenges.cloudflare.com` in
+  script-src and frame-src; nothing was blocked.
+- The card limiters work: about 10 submits from one IP in minutes gave 429.
+
+**Rehearsal findings and owner decisions (2026-10-29)**
+- F1 / M8, Asaas e-mails the buyer its own receipts: **kept** (no `notificationDisabled` change).
+- F2, refund and chargeback events ignored: pre-existing for link/PIX/boleto, more likely with inline card. **Own stage after deploy B**;
+  until then the owner cancels refunded tickets by hand. Security-Backlog #28.
+- F3, risk analysis, 3DS and chargeback cannot be proven in the sandbox: the fake-Asaas e2e is the proof; watch prod logs after deploy B.
+- F4, a webhook-paid unknown-outcome order kept `asaas_payment_id` NULL in 2 of 3 runs (the webhook matched by `externalReference`
+  before the 202 path stored the id), and a reopened modal after the reconcile showed an empty card form with a disabled button: H2 below.
+- F5, the README test card `4444 4444 4444 4444` fails the app's Luhn check (400 `invalid_card`): use `4539578763621486`.
+
+**Code changes**
+- **H1, client (`82fced5`, fix round `79bfbf2`).**
+  - R2: on an auth change (login or logout in the same tab) the guest order token is dropped from the card-charge lock, and **the
+    card stays locked until reload**. The earlier follow-up "clear `cardChargeLock` on an auth change" is rejected: clearing it
+    would let the buyer who just logged in pay a second card after an unknown outcome. An in-flight card answer never re-stores
+    the old token (auth epoch counter).
+  - N2: the event page, home page and `useFreeSubscribe` no longer open the guest dialog while the session resolves; the CTA is
+    visibly disabled ("Carregando..."), and the courtesy button and `onSuccess` do not treat a resolving session as logged out.
+  - Side effect (accepted): the auth-change drop also stops guest PIX/boleto polls that hold a token, so a guest who logs in mid-PIX
+    loses polling until reload (privacy-safe).
+- **H2, webhook (`efdd4d0`, `68a6c96`, `fbdb9d0`).** When the webhook pays an order whose `asaas_payment_id` is NULL it stores the id,
+  inside the claim UPDATE with `COALESCE(asaas_payment_id, <id>)`, so a concurrent check-status write is never overwritten and a stored
+  id never changes. The PAYMENT_ID_MISMATCH warn runs only after the claim, from the committed paid row. A duplicate webhook after the
+  NULL-id claim is a no-op (ticket e-mail once).
+- **F4a is by design, not a bug:** closing and reopening the modal starts over; the empty form and disabled button wait for a fresh
+  Turnstile token (only Turnstile gates the reopened submit). Regression tests were added; no code change.
+- **Final fix wave (`910b29b`).**
+  - I1: user (and admin) cancel of a pending order with a direct `pay_` id (card, PIX, boleto) now cancels locally **only when Asaas
+    confirms the deletion** (`deleted: true`, 404, or a refused delete with `GET` reading `deleted: true`). Otherwise **409** with
+    "Não foi possível cancelar agora; tente novamente em alguns minutos." and the order stays pending. Before, the local cancel
+    ran even when the delete failed and the card could still be charged. Link ids and NULL ids cancel locally as before.
+  - M1: no PAYMENT_ID_MISMATCH warn for installment payments (their ids differ by design).
+  - M3: cancel-type webhooks (`REPROVED`, `DELETED`, `OVERDUE`, `CAPTURE_REFUSED`) fall back to `externalReference` only for a
+    **pending order whose stored id is NULL**; a different stored id and a paid order are untouched.
+
+**Rulings from the ledger (each with its cost if wrong)**
+- H1 (R2): drop the guest token, keep the card locked until reload. Cost if wrong: a different person logging in on a shared device
+  sees the card locked until reload (the status is no longer disclosed).
+- H1 ran in its own worktree and was fast-forwarded after review, so the rehearsal server stayed stable. Cost if wrong: one extra worktree.
+- H1 fix round 1 also took M1 (CTA visibly disabled), M2, M4 and M5. Cost if wrong: a larger fix diff.
+- F3: risk, 3DS and chargeback stay proven by the fake-Asaas e2e plus prod logs. Cost if wrong: a risk-reproval path misbehaves in prod
+  (orders stay pending; the webhook still cancels).
+- H2 fix round 1 also took M1, M3, M4 and M5 (same files). Cost if wrong: a larger fix diff.
+- I1 fix (a): for any `pay_` id, cancel locally only when Asaas confirms; the root cause is generic, and hiding the button for card orders
+  (b) would remove cancel for charges Asaas can still delete. Cost if wrong: a PIX/boleto buyer sees a 409 during an Asaas outage
+  instead of a local cancel.
+- The final fix wave takes I1 + M1 + M3; M2 (rule wording), M4 (the R2 line above) and M5 (owner test step) went to this docs pass.
+- Parked, real and low: **no admin force-cancel** while Asaas keeps refusing the delete (order stuck pending with 409); a refused delete
+  normally means the charge is confirmed or received (runbook in the deploy notes). Cost if wrong: support time.
+- Parked, real and narrow: the M3 fallback also fires for `PAYMENT_OVERDUE` / `PAYMENT_DELETED`, so a stale cancel from an older attempt
+  could cancel a NULL-id order whose newer unknown-outcome attempt is in flight; a later `PAYMENT_CONFIRMED` lands in `REFUND_NEEDED`
+  (logged safety net). Cost if wrong: one manual refund.
+- Parked, cosmetic: ProfilePage 409 toast untested (the message helper is tested); `asaasService.cancelPayment` logs the Asaas error
+  status/codes only (pre-existing). Cost if wrong: none to money.
+
+**Accepted risks and follow-ups (Stage 5)**
+- Not provable in the sandbox: risk analysis, 3DS, chargeback. Covered by the fake-Asaas e2e; watch prod logs after deploy B.
+- The holder phone format is accepted loosely by the sandbox; the national digits form stays.
+- Refund and chargeback events stay ignored until their own stage (Security-Backlog #28).
+- Follow-ups: R1 (stale `pollNotice`) and T3-M2 (`useOrderPolling` extraction) stay with Security-Backlog #28's list; the deferred minors
+  in `progress.md` Stage 5 (H1: `onSuccess` `!authResolving` branches without a direct test, epoch bump in a post-commit effect;
+  H2-M2: installment N's id stored when its webhook arrives first on a NULL-id order).
+- Cleanup left 30 confirmed sandbox card payments that Asaas refuses to delete (harmless, no money).
+
+**Deploy notes (deploy B)** (the owner gates; nothing below was run on prod)
+Gates (a) to (d), in order:
+- [ ] (a) **Schema on prod**, the 2 additive statements (`users.password` DROP NOT NULL; `orders.placed_as_guest` boolean default false
+      not null): `pnpm db:diff` against prod first, expect exactly those two, apply them, `pnpm db:diff` again = 0 statements. Before the code.
+- [ ] (b) **Turnstile keys together:** `VITE_TURNSTILE_SITE_KEY` (build) and `TURNSTILE_SECRET_KEY` (server) set at the same time, with the
+      Cloudflare widget "Hostname Management" = the prod hostnames.
+- [ ] (c) **Merge/deploy:** PR into `hotfix-frontend-update` (a push there is the prod deploy); the owner merges and pushes. Stages 2 to 5 go together.
+- [ ] (d) **Human test with a real site key** on the live site, Asaas **prod** account only after the owner says clear (no prod charge before):
+      guest free; guest card approved; card declined then retry; passport buyer gets `foreign_paid_unavailable`. Plus the M5 step: after an unknown
+      outcome reconciled to paid, close and reopen the modal and confirm the pay button enables once the Turnstile widget solves.
+- Test cards for the sandbox/human test: approve `4539578763621486` (the README's `4444...` fails our Luhn check), decline `5184019740373151`, expiry any future date, CVV 123.
+- Staging rows kept (synthetic, reusable): event `SBX S5 Evento pago (cartao)` (R$ 90 + 5 fee, presencial, 2026-12-12) with 15 paid orders,
+  1 cancelled PIX and 1 pending guest card order; unused accounts `sbx-s5-spare2@`, `sbx-s5-tsfail@` and `sbx-s5-foreign@example.invalid`
+  (passport, for the foreign-block check). One order per user per event: delete that event's orders or create a new event to reuse them.
+  Ids are in the rehearsal's `s5-results.jsonl` seed record.
+- **Runbook, a cancel answers 409:** Asaas refused the delete. Open the payment in the Asaas panel. If it is confirmed or received, `POST
+  /api/orders/:id/check-status` (or wait for the webhook) marks the order paid. **Never cancel it by hand in the DB.**
+- A stale cancel event can cancel a NULL-id order that a newer attempt is still charging; the later `PAYMENT_CONFIRMED` is then logged as
+  `REFUND_NEEDED`: grep prod logs for it after deploy B and refund by hand.
+- After deploy B, watch the prod logs for risk analysis, 3DS and `PAYMENT_ID_MISMATCH` lines (not provable in the sandbox).
+- The ADR status stays as it is until the owner reports deploy B done.
+
+**Verification (head `910b29b`, controller)**
+- Gates on 910b29b: `pnpm check` exit 0; `test:backend` 605 passed | 276 skipped; `test:frontend` 575 passed | 4 skipped; integration
+  (PG17 :55434) 272 passed | 4 skipped; `test:e2e` 125 passed | 9 skipped | 0 failed (1.9 min; the 9 skips are the foreign-paid tests,
+  flag false).
+- Red-first: H1 8 failed + 3 unresolved before, 6 after the first fix; H2 F4b 3 failed, M1 1 failed; final wave 4 unit + 4 integration failed.
+
 ## Alternatives considered
 - **Keep the code, only for guests:** that keeps the step the owner wants gone, and a guest has no account to
   verify.
@@ -483,10 +621,10 @@ Range `ecad8c7..8b01377`. Client checkout for guests and logged-in buyers, plus 
   - A pre-deploy token (no `pv`) outlives a reset for up to 7 days.
 - **Rollback of deploy A:** code only. Old code would 403 the accounts created without a code, and those
   accounts would need to be set verified, as on 2026-10-13.
-- Follow-ups: stages 2–6 in the plan; ADR-002 (card inline) and ADR-016 (guest dialog) are updated with stage 5.
+- Follow-ups: stages 2–6 in the plan; ADR-002 (card inline) and ADR-016 (guest dialog) carry a note from Stage 5; refund/chargeback handling is Security-Backlog #28.
 
 ## Related
 - [[60-Decisions/ADR-016-event-registration-forms-and-minimal-signup]]
 - [[60-Decisions/ADR-002-asaas-payments]]
-- [[70-Operations/Security-Backlog]] (#16)
+- [[70-Operations/Security-Backlog]] (#16, #28)
 - [[20-Backend/Workers-and-Middleware]]

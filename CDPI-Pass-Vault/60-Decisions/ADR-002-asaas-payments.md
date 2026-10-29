@@ -14,3 +14,7 @@ Asaas (Brazilian gateway) for PIX, Boleto and Credit Card. Server creates custom
 - Payment state machine kept minimal: `pending → paid | cancelled`.
 - Sandbox/prod switched by `ASAAS_API_URL` + key.
 - Admin escape hatch exists for external payments: `mark-paid-external`.
+
+## Update 2026-10-29 (ADR-017, superseded in part)
+- The credit card is now also charged **inline through the API** (`POST /payments` with `creditCard` + `creditCardHolderInfo`, Turnstile on every submit; SAQ-D accepted). The Asaas card link (hosted page) remains where it was: foreigners and the other paths. See [[60-Decisions/ADR-017-guest-checkout-inline-card]].
+- The webhook now stores `asaas_payment_id` when the order has none (never overwrites). Refund and chargeback events are still ignored ([[70-Operations/Security-Backlog]] #28).
