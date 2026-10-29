@@ -81,7 +81,7 @@ async function deliver(body: unknown, token: string | null = WEBHOOK_TOKEN) {
 }
 
 /** A paid in-person event + a Brazilian buyer + one pending order holding `asaasId`. */
-async function pendingOrder(paymentMethod: "pix" | "credit_card", asaasId: string) {
+async function pendingOrder(paymentMethod: "pix" | "credit_card", asaasId: string | null, placedAsGuest = false) {
   const eventId = randomUUID();
   await pool.query(
     `INSERT INTO events (id, title, description, date, location, price, is_active, nps_type, is_free, modality, registration_form, current_attendees)
@@ -100,9 +100,9 @@ async function pendingOrder(paymentMethod: "pix" | "credit_card", asaasId: strin
   createdUserIds.push(userId);
   const orderId = randomUUID();
   await pool.query(
-    `INSERT INTO orders (id, user_id, event_id, status, amount, payment_method, asaas_payment_id, cpf, qr_code_data)
-     VALUES ($1,$2,$3,'pending','632.00',$4,$5,$6,'qr-data')`,
-    [orderId, userId, eventId, paymentMethod, asaasId, cpf],
+    `INSERT INTO orders (id, user_id, event_id, status, amount, payment_method, asaas_payment_id, cpf, qr_code_data, placed_as_guest)
+     VALUES ($1,$2,$3,'pending','632.00',$4,$5,$6,'qr-data',$7)`,
+    [orderId, userId, eventId, paymentMethod, asaasId, cpf, placedAsGuest],
   );
   return { eventId, orderId, email, userId, cpf };
 }
@@ -195,6 +195,50 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
     // A PIX charge has no payment link to switch off.
     expect(asaasCalls.filter((c) => c.startsWith("PUT /paymentLinks/"))).toEqual([]);
+  });
+
+  describe("the webhook stores the Asaas payment id of an order that has none (card answer lost, unknown outcome)", () => {
+    const storedId = async (orderId: string) =>
+      (await pool.query(`SELECT asaas_payment_id FROM orders WHERE id = $1`, [orderId])).rows[0].asaas_payment_id as string | null;
+    const confirmed = (orderId: string, id: string) => ({
+      event: "PAYMENT_CONFIRMED",
+      payment: { id, billingType: "CREDIT_CARD", status: "CONFIRMED", value: 637, externalReference: orderId, paymentLink: null },
+    });
+
+    it.each([false, true])("NULL id (placedAsGuest=%s): paid and the payment id stored in the same write", async (guest) => {
+      const { eventId, orderId } = await pendingOrder("credit_card", null, guest);
+      const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+      expect(await deliver(confirmed(orderId, paymentId))).toBe(200);
+      expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+      expect(await storedId(orderId)).toBe(paymentId);
+    });
+
+    it("an equal stored id stays as it is", async () => {
+      const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+      const { eventId, orderId } = await pendingOrder("credit_card", paymentId);
+      expect(await deliver(confirmed(orderId, paymentId))).toBe(200);
+      expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+      expect(await storedId(orderId)).toBe(paymentId);
+    });
+
+    it("a different stored id is never overwritten, and the mismatch is warned without the ids", async () => {
+      const kept = `pay_${randomUUID().slice(0, 12)}`;
+      const other = `pay_${randomUUID().slice(0, 12)}`;
+      const { eventId, orderId } = await pendingOrder("credit_card", kept);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(await deliver(confirmed(orderId, other))).toBe(200);
+        expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+        expect(await storedId(orderId)).toBe(kept);
+        const lines = warn.mock.calls.map((c) => c.join(" ")).filter((l) => l.includes("PAYMENT_ID_MISMATCH"));
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toContain(orderId);
+        expect(lines[0]).not.toContain(kept);
+        expect(lines[0]).not.toContain(other);
+      } finally {
+        warn.mockRestore();
+      }
+    });
   });
 
   it("card bought through the payment link: a new payment with only `paymentLink` finds the order", async () => {

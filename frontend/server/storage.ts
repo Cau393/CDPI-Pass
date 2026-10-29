@@ -131,7 +131,12 @@ export interface IStorage {
    * duplicate check, conditional pending→paid or pending→cancelled, seat and courtesy
    * usage. A throw rolls everything back, so the webhook can answer 500 and be retried.
    */
-  claimPaidOrder(orderId: string, duplicatePolicy: DuplicatePaidPolicy): Promise<ClaimPaidOrderResult>;
+  claimPaidOrder(
+    orderId: string,
+    duplicatePolicy: DuplicatePaidPolicy,
+    /** Asaas payment that paid it: stored in the same write when the order has no payment id yet, never replacing one. */
+    paymentId?: string | null,
+  ): Promise<ClaimPaidOrderResult>;
   /** Expired charge: pending→cancelled only, so a paid order is never cancelled from a stale read. */
   cancelPendingOrder(orderId: string): Promise<boolean>;
   getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined>;
@@ -592,7 +597,11 @@ export class DatabaseStorage implements IStorage {
     return order;
   }
 
-  async claimPaidOrder(orderId: string, duplicatePolicy: DuplicatePaidPolicy): Promise<ClaimPaidOrderResult> {
+  async claimPaidOrder(
+    orderId: string,
+    duplicatePolicy: DuplicatePaidPolicy,
+    paymentId?: string | null,
+  ): Promise<ClaimPaidOrderResult> {
     return db.transaction(async (tx) => {
       const [current] = await tx.select().from(orders).where(eq(orders.id, orderId));
       if (!current) return { outcome: "not_pending", status: null };
@@ -615,7 +624,8 @@ export class DatabaseStorage implements IStorage {
 
       const [paid] = await tx
         .update(orders)
-        .set({ status: "paid", updatedAt: new Date() })
+        // A lost card answer leaves the order without an id; the webhook that pays it fills it in.
+        .set({ status: "paid", updatedAt: new Date(), ...(paymentId && !order.asaasPaymentId ? { asaasPaymentId: paymentId } : {}) })
         .where(and(eq(orders.id, orderId), eq(orders.status, "pending")))
         .returning();
       if (!paid) return { outcome: "not_pending", status: null };

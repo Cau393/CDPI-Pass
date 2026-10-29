@@ -55,7 +55,12 @@ export async function finalizeOrderPaidLikeWebhook(
     return { ok: false, code: "not_pending", status: order.status };
   }
 
-  const claim = await storage.claimPaidOrder(order.id, options.duplicatePolicy ?? "refund_then_discard");
+  // A card payment link keeps its own id on the order; only a pay_ id that differs is a real mismatch.
+  if (paymentMeta.paymentId && order.asaasPaymentId?.startsWith("pay_") && order.asaasPaymentId !== paymentMeta.paymentId) {
+    console.warn(`PAYMENT_ID_MISMATCH order=${order.id}: paid by another Asaas payment than the one stored; kept the stored id`);
+  }
+
+  const claim = await storage.claimPaidOrder(order.id, options.duplicatePolicy ?? "refund_then_discard", paymentMeta.paymentId);
   switch (claim.outcome) {
     case "already_paid":
       return { ok: false, code: "already_paid" };
