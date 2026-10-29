@@ -246,7 +246,8 @@ test.describe("guest checkout and accounts", () => {
     // e-mail is queued (none existed before the click).
     let ticketLink: string | null = null;
     await expect.poll(async () => (ticketLink = await latestEmailLink(u.email, "/verify-email")), { timeout: 20_000 }).not.toBeNull();
-    expect(await latestEmailLink(u.email, "/reset-password")).toBeNull();
+    // A boolean, so a failure never prints the link and its token.
+    expect(await latestEmailLink(u.email, "/reset-password") === null, "no reset e-mail before the link click").toBe(true);
     const [verifyResponse] = await Promise.all([
       page.waitForResponse((r) => r.url().includes("/api/auth/verify-email")),
       page.goto(new URL(ticketLink!).pathname + new URL(ticketLink!).search),
