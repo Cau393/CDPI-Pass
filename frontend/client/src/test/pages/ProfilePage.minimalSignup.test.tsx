@@ -143,3 +143,26 @@ describe("ProfilePage — account from the four-field signup (ADR-016 Phase 4)",
     expect(profilePutBody()).toMatchObject({ occupation: "Farmacêutico" });
   });
 });
+
+describe("ProfilePage — e-mail change on an unverified account", () => {
+  it("shows the server message and an 'Esqueci minha senha' link to /forgot-password", async () => {
+    const message = "Confirme seu e-mail atual antes de alterá-lo: use “Esqueci minha senha” para receber o link.";
+    apiRequest.mockImplementation(async (method: string, url: string) => {
+      if (method === "PUT" && url === "/api/profile") {
+        throw new Error(`400: ${JSON.stringify({ code: "email_not_verified", message })}`);
+      }
+      return String(url).startsWith("/api/orders") ? jsonResponse({ orders: [], totalPages: 1 }) : jsonResponse({});
+    });
+    const user = await openProfileTab();
+
+    await user.clear(screen.getByTestId("input-profile-email"));
+    await user.type(screen.getByTestId("input-profile-email"), "novo@example.com");
+    await user.type(screen.getByTestId("input-profile-password"), "senha1234");
+    await user.click(screen.getByRole("button", { name: "Salvar Alterações" }));
+
+    expect(await screen.findByTestId("text-email-not-verified")).toHaveTextContent(message);
+    const link = screen.getByRole("link", { name: "Esqueci minha senha" });
+    expect(link).toHaveAttribute("href", "/forgot-password");
+    expect(screen.queryByText(/^400:/)).not.toBeInTheDocument();
+  });
+});

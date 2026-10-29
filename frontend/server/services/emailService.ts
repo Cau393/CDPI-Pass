@@ -232,10 +232,12 @@ ${EMAIL_CONTACT_LINE}`;
    * "reset" is the classic forgot-password mail; "create" goes to an account that has
    * no password yet (a guest buyer, ADR-017) and asks them to create one. The link is
    * single-use: it carries the password fingerprint (see signPasswordResetToken).
+   * "link" is the same reset, but triggered by opening a ticket link rather than asked
+   * for by the person, so it must not say "Você solicitou".
    */
   async sendPasswordResetEmail(
     user: Pick<User, "id" | "email" | "password">,
-    options: { purpose?: "reset" | "create" } = {},
+    options: { purpose?: "reset" | "create" | "link" } = {},
   ): Promise<boolean> {
     const resetLink = `${APP_BASE_URL}/reset-password?token=${signPasswordResetToken(user)}`;
     const creating = options.purpose === "create";
@@ -243,7 +245,9 @@ ${EMAIL_CONTACT_LINE}`;
     const heading = creating ? "Crie sua senha" : "Redefinição de Senha";
     const intro = creating
       ? "Você já tem ingressos no CDPI Pass. Clique no link abaixo para criar sua senha e acessar sua conta:"
-      : "Você solicitou a redefinição de sua senha. Clique no link abaixo para criar uma nova:";
+      : options.purpose === "link"
+        ? "O link do ingresso foi aberto e, para ver seus ingressos, é preciso criar uma nova senha. Clique no link abaixo para criá-la:"
+        : "Você solicitou a redefinição de sua senha. Clique no link abaixo para criar uma nova:";
     const button = creating ? "Criar senha" : "Redefinir Senha";
     const subject = creating ? "Crie sua senha no CDPI Pass" : "Redefinição de Senha - CDPI Pass";
 

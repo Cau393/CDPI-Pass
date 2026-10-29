@@ -24,6 +24,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { parseApiError } from "@/lib/eventForm";
 import { downloadDataUrl } from "@/lib/downloadDataUrl";
 import { Download, Eye, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, Shield, AlertTriangle, RefreshCw, ChevronLeft, ChevronRight, Award } from "lucide-react";
 import { CertificatesTab } from "@/components/CertificatesTab";
@@ -82,6 +83,8 @@ export default function ProfilePage() {
   const [showFinalConfirmation, setShowFinalConfirmation] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
   const [profilePassword, setProfilePassword] = useState("");
+  // Server message when an e-mail change is refused because the current one is unverified.
+  const [emailNotVerifiedMessage, setEmailNotVerifiedMessage] = useState<string | null>(null);
   const [hasChangedSensitiveFields, setHasChangedSensitiveFields] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [qrPreview, setQrPreview] = useState<
@@ -149,11 +152,15 @@ export default function ProfilePage() {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
       setProfilePassword("");
       setHasChangedSensitiveFields(false);
+      setEmailNotVerifiedMessage(null);
     },
     onError: (error: Error) => {
+      const parsed = parseApiError(error);
+      const notVerified = parsed.status === 400 && parsed.code === "email_not_verified";
+      setEmailNotVerifiedMessage(notVerified ? (parsed.message ?? "Confirme seu e-mail atual antes de alterá-lo.") : null);
       toast({
         title: "Erro ao atualizar perfil",
-        description: error.message,
+        description: parsed.message ?? error.message,
         variant: "destructive",
       });
       setProfilePassword("");
@@ -690,6 +697,21 @@ const handleCancelOrder = (orderId: string) => {
                           }}
                           data-testid="input-profile-email"
                         />
+                        {emailNotVerifiedMessage && (
+                          <p className="mt-2 text-sm text-red-700" role="alert" data-testid="text-email-not-verified">
+                            {emailNotVerifiedMessage}{" "}
+                            <a
+                              href="/forgot-password"
+                              className="font-medium underline"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setLocation("/forgot-password");
+                              }}
+                            >
+                              Esqueci minha senha
+                            </a>
+                          </p>
+                        )}
                       </div>
                       <div>
                         <Label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">

@@ -890,7 +890,7 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
         message: "Para ver seus ingressos, crie uma nova senha pelo link que enviamos para o seu e-mail.",
       });
       expect(mocks.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
-      expect(mocks.sendPasswordResetEmail).toHaveBeenLastCalledWith(expect.objectContaining({ email: account.email }), { purpose: "reset" });
+      expect(mocks.sendPasswordResetEmail).toHaveBeenLastCalledWith(expect.objectContaining({ email: account.email }), { purpose: "link" });
       expect((await userRows(account.email))[0].email_verified).toBe(false);
       const stillHidden = await api("GET", "/api/orders", { token: account.token });
       expect(stillHidden.body.orders.map((o: any) => o.id)).not.toContain(order.id);
@@ -928,7 +928,17 @@ describe.skipIf(!enabled)("guest checkout (real routes + real DB)", () => {
       const row = (await userRows(typed.email))[0];
       const verify = await api("GET", `/api/auth/verify-email?token=${signEmailVerificationToken(row.id)}`);
       expect(verify.status).toBe(200);
+      expect(verify.body.passwordSet).toBe(false);
       expect((await userRows(typed.email))[0].email_verified).toBe(true);
+    });
+
+    it("reports passwordSet true when the verified row holds a password", async () => {
+      const { signEmailVerificationToken } = await import("../../middleware/auth");
+      const reg = await registerSquatter(guestEmail(), "holder123");
+      await pool.query(`UPDATE users SET email_verified = true WHERE id = $1`, [reg.user.id]);
+      const verify = await api("GET", `/api/auth/verify-email?token=${signEmailVerificationToken(reg.user.id)}`);
+      expect(verify.status).toBe(200);
+      expect(verify.body.passwordSet).toBe(true);
     });
   });
 

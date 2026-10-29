@@ -398,7 +398,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // ends every other session (pv) and verifies the row.
         const linked = await storage.getUser(decoded.userId);
         if (linked && hasPassword(linked) && linked.emailVerified !== true) {
-          await emailService.sendPasswordResetEmail(linked, { purpose: "reset" });
+          await emailService.sendPasswordResetEmail(linked, { purpose: "link" });
           return res.status(409).json({
             code: "password_reset_required",
             message: "Para ver seus ingressos, crie uma nova senha pelo link que enviamos para o seu e-mail.",
@@ -408,7 +408,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const success = await storage.verifyUserEmail(decoded.userId);
         
         if (success) {
-          res.json({ message: "Email verificado com sucesso! Você já pode fazer login." });
+          // passwordSet lets the page offer "Crie sua senha" to a password-less (guest) row.
+          res.json({
+            message: "Email verificado com sucesso! Você já pode fazer login.",
+            passwordSet: linked ? hasPassword(linked) : false,
+          });
         } else {
           res.status(404).json({ message: "Usuário não encontrado" });
         }
