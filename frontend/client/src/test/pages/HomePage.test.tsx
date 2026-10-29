@@ -21,7 +21,9 @@ vi.mock("../../hooks/use-toast", () => ({
 }));
 
 vi.mock("../../components/PaymentModal", () => ({
-  default: () => <div data-testid="payment-modal" />,
+  default: (props: { buyer?: unknown }) => (
+    <div data-testid="payment-modal" data-buyer={JSON.stringify(props.buyer ?? null)} />
+  ),
 }));
 
 import HomePage from "../../pages/HomePage";
@@ -192,6 +194,25 @@ describe("HomePage — main event cover image", () => {
       "Comprar Ingresso",
     );
     expect(screen.getByText("+ taxa de conveniência")).toBeInTheDocument();
+  });
+
+  it("opens the guest dialog, not /login, for a logged-out paid purchase and hands the buyer to the modal", async () => {
+    vi.stubGlobal("fetch", mockApi({ ...baseEvent, price: "100.00", isFree: false }));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-buy-main"));
+    await user.type(await screen.findByTestId("input-guest-name"), "Camila Souza");
+    await user.type(screen.getByTestId("input-guest-email"), "camila@example.com");
+    await user.click(screen.getByTestId("input-guest-phone"));
+    await user.keyboard("{End}");
+    await user.type(screen.getByTestId("input-guest-phone"), "11987654321");
+    await user.type(screen.getByLabelText("CPF"), "52998224725");
+    await user.click(screen.getByTestId("button-confirm-registration"));
+
+    const modal = await screen.findByTestId("payment-modal");
+    expect(JSON.parse(modal.getAttribute("data-buyer")!)).toMatchObject({ email: "camila@example.com" });
+    expect(setLocation).not.toHaveBeenCalledWith(expect.stringContaining("/login"));
   });
 
   it("subscribes in place for a free event and never opens the payment modal", async () => {

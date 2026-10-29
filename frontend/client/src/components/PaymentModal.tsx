@@ -12,7 +12,8 @@ import type { Event } from "@shared/schema";
 import type { SystemField } from "@shared/eventRegistrationForm";
 import { publicEventLocationLabel } from "@shared/eventModality";
 import { isFreeEvent } from "@/lib/eventCta";
-import { parseApiErrorMessage } from "@/lib/eventForm";
+import { parseApiError, parseApiErrorMessage } from "@/lib/eventForm";
+import type { GuestBuyer } from "@/lib/guestBuyer";
 import { identityRequiredMissing, refreshAfterStaleRegistration, RELOAD_PAGE_MESSAGE } from "@/lib/eventRegistration";
 
 interface EventForModal {
@@ -35,6 +36,10 @@ interface PaymentModalProps {
   /** The order needs a document/address the account lacks: reopen the registration dialog. */
   /** `freshEvent` is the event refetched after the refusal, when it could be. */
   onIdentityRequired: (missing: SystemField[], message: string, freshEvent?: Event) => void;
+  /** Guest only: who is buying, sent with the order. */
+  buyer?: GuestBuyer;
+  /** A 409 identity_conflict (guest): the page reopens the registration dialog with `message`. */
+  onIdentityConflict?: (message: string) => void;
   onSuccess: () => void;
 }
 
@@ -46,6 +51,8 @@ export default function PaymentModal({
   displayPrice,
   answers,
   onIdentityRequired,
+  buyer,
+  onIdentityConflict,
   onSuccess,
 }: PaymentModalProps) {
   const { toast } = useToast();
@@ -65,6 +72,7 @@ export default function PaymentModal({
         paymentMethod,
         promoCode: promoCode, // <-- This is the crucial addition
         answers,
+        ...(buyer ? { buyer } : {}),
       });
       return response.json();
     },
@@ -87,6 +95,11 @@ export default function PaymentModal({
       },
       onError: (error: Error) => {
         const refreshed = refreshAfterStaleRegistration(error, event.id);
+        const parsed = parseApiError(error);
+        if (parsed.code === "identity_conflict" && onIdentityConflict) {
+          onIdentityConflict(parseApiErrorMessage(error));
+          return;
+        }
         const missing = identityRequiredMissing(error);
         if (missing) {
           // Reopen the dialog with the refetched event, not the captured one.

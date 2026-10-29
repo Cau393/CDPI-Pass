@@ -16,7 +16,11 @@ import { cn } from "@/lib/utils";
 import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
 import SiteFooter from "@/components/SiteFooter";
 import { useFreeSubscribe } from "@/hooks/useFreeSubscribe";
-import { EventRegistrationDialog } from "@/components/EventRegistrationDialog";
+import {
+  EventRegistrationDialog,
+  type RegistrationConfirmation,
+} from "@/components/EventRegistrationDialog";
+import type { GuestBuyer } from "@/lib/guestBuyer";
 import { needsRegistrationDialog } from "@/lib/eventRegistration";
 import type { SystemField } from "@shared/eventRegistrationForm";
 import { FOREIGN_PAID_UNAVAILABLE_MESSAGE, foreignPaidCheckoutBlocked } from "@shared/foreignCheckout";
@@ -30,7 +34,6 @@ import {
   eventPriceLabel,
   isEventSoldOut,
   isFreeEvent,
-  loginRequiredDescription,
 } from "@/lib/eventCta";
 
 // ✅ Extend Event to include promoCode
@@ -52,8 +55,12 @@ export default function EventDetailsPage() {
   const [registrationPrompt, setRegistrationPrompt] = useState<{
     missing?: SystemField[];
     message?: string;
+    /** The order was refused with a 409 identity_conflict (guest). */
+    conflict?: boolean;
   } | null>(null);
   const [checkoutAnswers, setCheckoutAnswers] = useState<Record<string, string>>({});
+  // Guest checkout: who is buying, kept so a reopened dialog is prefilled.
+  const [guestBuyer, setGuestBuyer] = useState<GuestBuyer | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -191,17 +198,6 @@ export default function EventDetailsPage() {
 
   // ✅ Updated handleBuyTicket to accept event + promo
   const handleBuyTicket = (selected: Event, code: string | null) => {
-    if (!isAuthenticated) {
-      toast({
-        title: "Login necessário",
-        description: loginRequiredDescription(false),
-        variant: "destructive",
-      });
-      const next = `${window.location.pathname}${window.location.search}`;
-      setLocation(`/login?next=${encodeURIComponent(next)}`);
-      return;
-    }
-
     if (!event) return;
     if (isFreeEvent(event)) return;
     if (foreignPaidCheckoutBlocked(user)) {
@@ -215,16 +211,18 @@ export default function EventDetailsPage() {
 
     // Store the event and promo in state
     setSelectedEvent({ ...selected, promoCode: code });
-    if (needsRegistrationDialog(event, user)) {
+    // A guest always sees the dialog: it is where they type who they are.
+    if (!isAuthenticated || needsRegistrationDialog(event, user)) {
       setRegistrationPrompt({});
       return;
     }
     openCheckout({});
   };
 
-  const openCheckout = (answers: Record<string, string>) => {
+  const openCheckout = (answers: Record<string, string>, buyer: GuestBuyer | null = null) => {
     if (!event) return;
     setCheckoutAnswers(answers);
+    setGuestBuyer(buyer);
     setModalData({
       event: event,
       promoCode: promoCode,
@@ -476,11 +474,16 @@ export default function EventDetailsPage() {
           promoCode={modalData.promoCode}
           displayPrice={modalData.price}           
           answers={checkoutAnswers}
+          buyer={guestBuyer ?? undefined}
           isOpen={isPaymentModalOpen}
           onClose={() => setIsPaymentModalOpen(false)}
           onIdentityRequired={(missing, message) => {
             setIsPaymentModalOpen(false);
             setRegistrationPrompt({ missing, message });
+          }}
+          onIdentityConflict={(message) => {
+            setIsPaymentModalOpen(false);
+            setRegistrationPrompt({ message, conflict: true });
           }}
           onSuccess={() => {
             toast({
@@ -498,11 +501,14 @@ export default function EventDetailsPage() {
         event={event}
         missing={registrationPrompt?.missing}
         error={registrationPrompt?.message}
+        identityConflict={registrationPrompt?.conflict === true}
+        buyer={guestBuyer}
+        initialAnswers={checkoutAnswers}
         confirmLabel="Continuar para pagamento"
         onCancel={() => setRegistrationPrompt(null)}
-        onConfirm={(answers) => {
+        onConfirm={({ answers, buyer }: RegistrationConfirmation) => {
           setRegistrationPrompt(null);
-          openCheckout(answers);
+          openCheckout(answers, buyer ?? null);
         }}
       />
       {registrationDialog}

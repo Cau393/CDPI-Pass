@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 const SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
 
@@ -44,7 +44,15 @@ function loadTurnstile(): Promise<TurnstileApi> {
       script.async = true;
       script.defer = true;
       script.dataset.turnstile = "true";
-      script.onload = () => (window.turnstile ? resolve(window.turnstile) : reject(new Error("turnstile missing")));
+      script.onload = () => {
+        if (window.turnstile) {
+          resolve(window.turnstile);
+        } else {
+          scriptPromise = null;
+          script.remove();
+          reject(new Error("turnstile missing"));
+        }
+      };
       script.onerror = () => {
         scriptPromise = null; // allow a retry on the next mount
         script.remove();
@@ -76,6 +84,7 @@ export const TurnstileWidget = forwardRef<TurnstileHandle, TurnstileWidgetProps>
   const widgetIdRef = useRef<string | null>(null);
   const onTokenRef = useRef(onToken);
   onTokenRef.current = onToken;
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useImperativeHandle(ref, () => ({
     reset() {
@@ -87,6 +96,7 @@ export const TurnstileWidget = forwardRef<TurnstileHandle, TurnstileWidgetProps>
   useEffect(() => {
     if (!key) return;
     let cancelled = false;
+    setLoadFailed(false);
     loadTurnstile()
       .then((api) => {
         if (cancelled || !containerRef.current) return;
@@ -97,7 +107,11 @@ export const TurnstileWidget = forwardRef<TurnstileHandle, TurnstileWidgetProps>
           "error-callback": () => onTokenRef.current(null),
         });
       })
-      .catch(() => onTokenRef.current(null));
+      .catch(() => {
+        if (cancelled) return;
+        setLoadFailed(true);
+        onTokenRef.current(null);
+      });
     return () => {
       cancelled = true;
       const id = widgetIdRef.current;
@@ -107,5 +121,14 @@ export const TurnstileWidget = forwardRef<TurnstileHandle, TurnstileWidgetProps>
   }, [key]);
 
   if (!key) return null;
-  return <div ref={containerRef} className={className} data-testid="turnstile-widget" />;
+  return (
+    <>
+      <div ref={containerRef} className={className} data-testid="turnstile-widget" />
+      {loadFailed ? (
+        <p role="alert" className="text-sm font-medium text-destructive">
+          Não foi possível carregar a verificação de segurança. Recarregue a página.
+        </p>
+      ) : null}
+    </>
+  );
 });

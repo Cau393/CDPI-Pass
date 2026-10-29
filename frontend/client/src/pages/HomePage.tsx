@@ -13,7 +13,11 @@ import EventCoverImage from "@/components/EventCoverImage";
 import SiteFooter from "@/components/SiteFooter";
 import { eventDescriptionPlainText } from "@/lib/eventDescriptionHtml";
 import { useFreeSubscribe } from "@/hooks/useFreeSubscribe";
-import { EventRegistrationDialog } from "@/components/EventRegistrationDialog";
+import {
+  EventRegistrationDialog,
+  type RegistrationConfirmation,
+} from "@/components/EventRegistrationDialog";
+import type { GuestBuyer } from "@/lib/guestBuyer";
 import { needsRegistrationDialog } from "@/lib/eventRegistration";
 import { FOREIGN_PAID_UNAVAILABLE_MESSAGE, foreignPaidCheckoutBlocked } from "@shared/foreignCheckout";
 import type { SystemField } from "@shared/eventRegistrationForm";
@@ -23,7 +27,6 @@ import {
   eventPriceLabel,
   isEventSoldOut,
   isFreeEvent,
-  loginRequiredDescription,
 } from "@/lib/eventCta";
 
 const MAIN_EVENT_DESCRIPTION_MAX_LENGTH = 90;
@@ -68,8 +71,12 @@ export default function HomePage() {
     event: Event;
     missing?: SystemField[];
     message?: string;
+    /** The order was refused with a 409 identity_conflict (guest). */
+    conflict?: boolean;
   } | null>(null);
   const [checkoutAnswers, setCheckoutAnswers] = useState<Record<string, string>>({});
+  // Guest checkout: who is buying, kept so a reopened dialog is prefilled.
+  const [guestBuyer, setGuestBuyer] = useState<GuestBuyer | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -123,23 +130,11 @@ export default function HomePage() {
   };
 
   const handlePrimaryCta = (event: Event) => {
-    const qs = promoCode ? `?promo=${encodeURIComponent(promoCode)}` : "";
-    const next = `/event/${event.id}${qs}`;
-
     if (isFreeEvent(event)) {
-      subscribe(event, next);
+      subscribe(event);
       return;
     }
 
-    if (!isAuthenticated) {
-      toast({
-        title: "Login necessário",
-        description: loginRequiredDescription(false),
-        variant: "destructive",
-      });
-      setLocation(`/login?next=${encodeURIComponent(next)}`);
-      return;
-    }
     if (foreignPaidCheckoutBlocked(user)) {
       toast({
         title: "Compra indisponível",
@@ -148,15 +143,21 @@ export default function HomePage() {
       });
       return;
     }
-    if (needsRegistrationDialog(event, user)) {
+    // A guest always sees the dialog: it is where they type who they are.
+    if (!isAuthenticated || needsRegistrationDialog(event, user)) {
       setRegistrationPrompt({ event });
       return;
     }
     openCheckout(event, {});
   };
 
-  const openCheckout = (event: Event, answers: Record<string, string>) => {
+  const openCheckout = (
+    event: Event,
+    answers: Record<string, string>,
+    buyer: GuestBuyer | null = null,
+  ) => {
     setCheckoutAnswers(answers);
+    setGuestBuyer(buyer);
     setSelectedEvent(event);
     setIsPaymentModalOpen(true);
   };
@@ -502,6 +503,7 @@ export default function HomePage() {
           promoCode={promoCode}
           displayPrice={displayPriceForEvent(selectedEvent)}
           answers={checkoutAnswers}
+          buyer={guestBuyer ?? undefined}
           isOpen={isPaymentModalOpen}
           onClose={() => {
             setIsPaymentModalOpen(false);
@@ -511,6 +513,12 @@ export default function HomePage() {
             setIsPaymentModalOpen(false);
             setSelectedEvent(null);
             setRegistrationPrompt({ event: freshEvent ?? selectedEvent, missing, message });
+          }}
+          onIdentityConflict={(message) => {
+            const conflicted = selectedEvent;
+            setIsPaymentModalOpen(false);
+            setSelectedEvent(null);
+            setRegistrationPrompt({ event: conflicted, message, conflict: true });
           }}
           onSuccess={() => {
             toast({
@@ -527,12 +535,15 @@ export default function HomePage() {
         event={registrationPrompt?.event ?? null}
         missing={registrationPrompt?.missing}
         error={registrationPrompt?.message}
+        identityConflict={registrationPrompt?.conflict === true}
+        buyer={guestBuyer}
+        initialAnswers={checkoutAnswers}
         confirmLabel="Continuar para pagamento"
         onCancel={() => setRegistrationPrompt(null)}
-        onConfirm={(answers) => {
+        onConfirm={({ answers, buyer }: RegistrationConfirmation) => {
           if (!registrationPrompt) return;
           setRegistrationPrompt(null);
-          openCheckout(registrationPrompt.event, answers);
+          openCheckout(registrationPrompt.event, answers, buyer ?? null);
         }}
       />
       {registrationDialog}

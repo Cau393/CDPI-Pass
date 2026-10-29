@@ -1,6 +1,6 @@
 import { createRef } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, act } from "@testing-library/react";
+import { render, act, screen } from "@testing-library/react";
 
 type Opts = {
   sitekey: string;
@@ -94,5 +94,35 @@ describe("TurnstileWidget", () => {
   it("reports configured when a key exists", async () => {
     const mod = await load("site-key");
     expect(mod.isTurnstileConfigured()).toBe(true);
+  });
+
+  it("shows an inline alert and reports a null token when render throws", async () => {
+    turnstile.render.mockImplementation(() => {
+      throw new Error("boom");
+    });
+    const { TurnstileWidget } = await load("site-key");
+    const onToken = vi.fn();
+    render(<TurnstileWidget onToken={onToken} />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(
+      "Não foi possível carregar a verificação de segurança. Recarregue a página.",
+    );
+    expect(onToken).toHaveBeenCalledWith(null);
+  });
+
+  it("shows the alert when the script fails to load and retries on a later mount", async () => {
+    delete (window as unknown as { turnstile?: unknown }).turnstile;
+    const { TurnstileWidget } = await load("site-key");
+    const first = render(<TurnstileWidget onToken={vi.fn()} />);
+    const script = await vi.waitFor(() => {
+      const el = document.head.querySelector("script[data-turnstile]");
+      expect(el).not.toBeNull();
+      return el as HTMLScriptElement;
+    });
+    act(() => script.onerror?.(new Event("error")));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    first.unmount();
+    render(<TurnstileWidget onToken={vi.fn()} />);
+    await vi.waitFor(() => expect(document.head.querySelector("script[data-turnstile]")).not.toBeNull());
   });
 });

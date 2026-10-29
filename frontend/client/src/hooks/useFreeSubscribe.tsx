@@ -5,15 +5,20 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { isOnlineEvent } from "@shared/eventModality";
-import { loginRequiredDescription } from "@/lib/eventCta";
-import { parseApiErrorMessage } from "@/lib/eventForm";
+import { parseApiError, parseApiErrorMessage } from "@/lib/eventForm";
 import {
   identityRequiredMissing,
   needsRegistrationDialog,
   refreshAfterStaleRegistration,
   RELOAD_PAGE_MESSAGE,
 } from "@/lib/eventRegistration";
-import { EventRegistrationDialog } from "@/components/EventRegistrationDialog";
+import {
+  EventRegistrationDialog,
+  type RegistrationConfirmation,
+} from "@/components/EventRegistrationDialog";
+import { CheckoutSuccess } from "@/components/CheckoutSuccess";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import type { GuestBuyer } from "@/lib/guestBuyer";
 import type { Event } from "@shared/schema";
 import type { SystemField } from "@shared/eventRegistrationForm";
 
@@ -27,6 +32,10 @@ type SubscribeResponse = {
  * The server re-checks that the event really is free and that sales are open.
  * Render `registrationDialog`: it asks the event's questions (and a missing
  * document/address) before subscribing.
+ *
+ * Logged out (ADR-017): `subscribe` opens the same dialog in guest mode (name,
+ * e-mail, phone, Turnstile) and posts the buyer with the subscription; success
+ * shows `CheckoutSuccess` in place and never navigates to /profile.
  */
 export function useFreeSubscribe() {
   const { isAuthenticated, user } = useAuth();
@@ -34,20 +43,39 @@ export function useFreeSubscribe() {
   const [, setLocation] = useLocation();
   const [prompt, setPrompt] = useState<{ event: Event; missing?: SystemField[] } | null>(null);
   const [promptError, setPromptError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
+  // Kept across a rejected attempt so the reopened dialog is prefilled (R35).
+  const [lastBuyer, setLastBuyer] = useState<GuestBuyer | null>(null);
+  const [lastAnswers, setLastAnswers] = useState<Record<string, string>>({});
+  const [guestDone, setGuestDone] = useState<{ email: string } | null>(null);
+
+  type SubscribeInput = {
+    event: Event;
+    answers: Record<string, string>;
+    buyer?: GuestBuyer;
+    turnstileToken?: string;
+  };
 
   const subscribeMutation = useMutation({
-    mutationFn: async (input: { event: Event; answers: Record<string, string> }) => {
-      const res = await apiRequest(
-        "POST",
-        `/api/events/${input.event.id}/subscribe`,
-        { answers: input.answers },
-      );
+    mutationFn: async (input: SubscribeInput) => {
+      const body: Record<string, unknown> = { answers: input.answers };
+      if (input.buyer) body.buyer = input.buyer;
+      if (input.turnstileToken) body.turnstileToken = input.turnstileToken;
+      const res = await apiRequest("POST", `/api/events/${input.event.id}/subscribe`, body);
       return res.json() as Promise<SubscribeResponse>;
     },
     onSuccess: async (data, input) => {
       const event = input.event;
       setPrompt(null);
       setPromptError(null);
+      setConflict(false);
+      if (input.buyer) {
+        // Guest: confirm on screen. No session, so no profile to go to.
+        setGuestDone({ email: input.buyer.email });
+        setLastBuyer(null);
+        setLastAnswers({});
+        return;
+      }
       toast({
         title: "Inscrição confirmada!",
         description: isOnlineEvent(event)
@@ -72,6 +100,11 @@ export function useFreeSubscribe() {
       setLocation("/profile");
     },
     onError: (error: Error, input) => {
+      if (input.buyer) {
+        setLastBuyer(input.buyer);
+        setLastAnswers(input.answers);
+      }
+      setConflict(parseApiError(error).code === "identity_conflict");
       // The form may have changed since this event was cached. Refetch in the
       // background (the mutation settles now) and swap the fresh event into the
       // open dialog when it arrives.
@@ -99,27 +132,21 @@ export function useFreeSubscribe() {
     },
   });
 
-  const subscribe = (event: Event, loginNext?: string) => {
-    if (!isAuthenticated) {
-      toast({
-        title: "Login necessário",
-        description: loginRequiredDescription(true),
-        variant: "destructive",
-      });
-      const next =
-        loginNext ?? `${window.location.pathname}${window.location.search}`;
-      setLocation(`/login?next=${encodeURIComponent(next)}`);
-      return;
-    }
-    if (needsRegistrationDialog(event, user)) {
+  const subscribe = (event: Event) => {
+    // A guest always sees the dialog: it is where they type who they are.
+    if (!isAuthenticated || needsRegistrationDialog(event, user)) {
       setPromptError(null);
+      setConflict(false);
       setPrompt({ event });
       return;
     }
     subscribeMutation.mutate({ event, answers: {} });
   };
 
+  const closeGuestSuccess = () => setGuestDone(null);
+
   const registrationDialog = (
+    <>
     <EventRegistrationDialog
       open={prompt != null}
       event={prompt?.event ?? null}
@@ -127,15 +154,38 @@ export function useFreeSubscribe() {
       confirmLabel="Confirmar inscrição"
       pending={subscribeMutation.isPending}
       error={promptError}
+      turnstile={!isAuthenticated}
+      identityConflict={conflict}
+      buyer={lastBuyer}
+      initialAnswers={lastAnswers}
       onCancel={() => {
         setPrompt(null);
         setPromptError(null);
+        setConflict(false);
+        setLastBuyer(null);
+        setLastAnswers({});
       }}
-      onConfirm={(answers) => {
+      onConfirm={({ answers, buyer, turnstileToken }: RegistrationConfirmation) => {
         if (!prompt) return;
-        subscribeMutation.mutate({ event: prompt.event, answers });
+        subscribeMutation.mutate({ event: prompt.event, answers, buyer, turnstileToken });
       }}
     />
+    <Dialog open={guestDone != null} onOpenChange={(next) => !next && closeGuestSuccess()}>
+      <DialogContent className="max-w-md">
+        <DialogTitle className="sr-only">Inscrição confirmada</DialogTitle>
+        <DialogDescription className="sr-only">Sua inscrição foi confirmada.</DialogDescription>
+        {guestDone ? (
+          <CheckoutSuccess
+            variant="free"
+            guest
+            email={guestDone.email}
+            onContinue={closeGuestSuccess}
+            onClose={closeGuestSuccess}
+          />
+        ) : null}
+      </DialogContent>
+    </Dialog>
+    </>
   );
 
   return {

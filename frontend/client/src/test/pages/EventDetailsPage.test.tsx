@@ -31,10 +31,19 @@ vi.mock("../../components/PaymentModal", () => ({
   default: (props: {
     isOpen: boolean;
     answers: Record<string, string>;
+    buyer?: unknown;
     onIdentityRequired: (missing: string[], message: string) => void;
+    onIdentityConflict?: (message: string) => void;
   }) =>
     props.isOpen ? (
-      <div data-testid="payment-modal" data-answers={JSON.stringify(props.answers)}>
+      <div
+        data-testid="payment-modal"
+        data-answers={JSON.stringify(props.answers)}
+        data-buyer={JSON.stringify(props.buyer ?? null)}
+      >
+        <button type="button" onClick={() => props.onIdentityConflict?.("Estes dados não conferem.")}>
+          simular identity_conflict
+        </button>
         <button
           type="button"
           onClick={() =>
@@ -854,5 +863,82 @@ describe("EventDetailsPage — registration questions", () => {
 
     expect(await screen.findByLabelText("Endereço")).toHaveValue("Rua A, 100, São Paulo");
     expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
+  });
+});
+
+
+describe("EventDetailsPage — guest purchase (logged out)", () => {
+  const GUEST_PATH = `/event/${EVENT_ID}`;
+
+  beforeEach(() => {
+    authState.isAuthenticated = false;
+    authState.user = undefined;
+    window.history.pushState({}, "", GUEST_PATH);
+    vi.stubGlobal("fetch", mockApi(baseEvent));
+  });
+  afterEach(() => {
+    window.history.pushState({}, "", "/");
+    authState.isAuthenticated = true;
+    authState.user = undefined;
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  async function fillGuest(user: ReturnType<typeof userEvent.setup>) {
+    await user.type(await screen.findByTestId("input-guest-name"), "Camila Souza");
+    await user.type(screen.getByTestId("input-guest-email"), "camila@example.com");
+    await user.click(screen.getByTestId("input-guest-phone"));
+    await user.keyboard("{End}");
+    await user.type(screen.getByTestId("input-guest-phone"), "11987654321");
+    await user.type(screen.getByLabelText("CPF"), "52998224725");
+  }
+
+  it("opens the guest dialog on Comprar, with no login toast or redirect", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByTestId("button-event-cta"));
+    expect(await screen.findByTestId("input-guest-email")).toBeInTheDocument();
+    expect(toastSpy).not.toHaveBeenCalled();
+    expect(setLocation).not.toHaveBeenCalled();
+  });
+
+  it("opens the payment modal with the answers and the buyer after the dialog", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByTestId("button-event-cta"));
+    await fillGuest(user);
+    await user.click(screen.getByTestId("button-confirm-registration"));
+    const modal = await screen.findByTestId("payment-modal");
+    expect(JSON.parse(modal.getAttribute("data-answers")!)).toEqual({});
+    const buyer = JSON.parse(modal.getAttribute("data-buyer")!);
+    expect(buyer).toMatchObject({ name: "Camila Souza", email: "camila@example.com", cpf: "529.982.247-25" });
+    expect(buyer.phone).toMatch(/^\d{8,15}$/);
+  });
+
+  it("reopens the dialog prefilled, with the server message and both links, on an identity conflict", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByTestId("button-event-cta"));
+    await fillGuest(user);
+    await user.click(screen.getByTestId("button-confirm-registration"));
+    await user.click(await screen.findByText("simular identity_conflict"));
+
+    expect(await screen.findByText("Estes dados não conferem.")).toBeInTheDocument();
+    expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Esqueci meu e-mail" })).toHaveAttribute("href", "/forgot-email");
+    expect(screen.getByRole("link", { name: "Entrar" })).toHaveAttribute(
+      "href",
+      `/login?next=${encodeURIComponent(GUEST_PATH)}`,
+    );
+    expect((screen.getByTestId("input-guest-email") as HTMLInputElement).value).toBe("camila@example.com");
+  });
+
+  it.runIf(!FOREIGN_PAID_CHECKOUT_ENABLED)("blocks a typed foreigner on a paid event", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByTestId("button-event-cta"));
+    await user.click(await screen.findByTestId("checkbox-foreigner"));
+    expect(screen.getByTestId("button-confirm-registration")).toBeDisabled();
   });
 });

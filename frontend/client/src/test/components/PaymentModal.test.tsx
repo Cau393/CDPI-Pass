@@ -46,7 +46,10 @@ function orderBodies(fetchMock: ReturnType<typeof mockOrders>): unknown[] {
     .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
 }
 
-function renderModal(onIdentityRequired = vi.fn()) {
+function renderModal(
+  onIdentityRequired = vi.fn(),
+  extra: { buyer?: import("../../lib/guestBuyer").GuestBuyer; onIdentityConflict?: (m: string) => void } = {},
+) {
   const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
@@ -59,6 +62,7 @@ function renderModal(onIdentityRequired = vi.fn()) {
         answers={{ "q-cargo": "Farmacêutica" }}
         onIdentityRequired={onIdentityRequired}
         onSuccess={() => {}}
+        {...extra}
       />
     </QueryClientProvider>,
   );
@@ -224,5 +228,48 @@ describe("PaymentModal — registration answers", () => {
 
       expect(keys).toContainEqual([`/api/events/${event.id}`]);
     });
+  });
+});
+
+
+describe("PaymentModal — guest buyer", () => {
+  const buyer = { name: "Camila Souza", email: "camila@example.com", phone: "5511987654321", cpf: "529.982.247-25" };
+
+  afterEach(() => {
+    authState.user = undefined;
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("sends the buyer with the order", async () => {
+    const fetchMock = mockOrders({ status: 201, body: { payment: { pixQrCode: "x" } } });
+    vi.stubGlobal("fetch", fetchMock);
+    renderModal(vi.fn(), { buyer });
+    await userEvent.setup().click(screen.getByTestId("button-confirm-payment"));
+    await waitFor(() => {
+      expect(orderBodies(fetchMock)).toEqual([
+        { eventId: event.id, paymentMethod: "pix", promoCode: null, answers: { "q-cargo": "Farmacêutica" }, buyer },
+      ]);
+    });
+  });
+
+  it("sends no buyer key for a logged-in order", async () => {
+    authState.user = { isForeigner: false };
+    const fetchMock = mockOrders({ status: 201, body: { payment: { pixQrCode: "x" } } });
+    vi.stubGlobal("fetch", fetchMock);
+    renderModal();
+    await userEvent.setup().click(screen.getByTestId("button-confirm-payment"));
+    await waitFor(() => expect(orderBodies(fetchMock)).toHaveLength(1));
+    expect("buyer" in (orderBodies(fetchMock)[0] as object)).toBe(false);
+  });
+
+  it("hands a 409 identity_conflict back to the page with the server message", async () => {
+    const message = "Estes dados não conferem com um cadastro existente.";
+    vi.stubGlobal("fetch", mockOrders({ status: 409, body: { code: "identity_conflict", message } }));
+    const onIdentityConflict = vi.fn();
+    renderModal(vi.fn(), { buyer, onIdentityConflict });
+    await userEvent.setup().click(screen.getByTestId("button-confirm-payment"));
+    await waitFor(() => expect(onIdentityConflict).toHaveBeenCalledWith(message));
+    expect(toastSpy).not.toHaveBeenCalled();
   });
 });
