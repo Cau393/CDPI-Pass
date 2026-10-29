@@ -579,7 +579,11 @@ Gates (a) to (d), in order:
 - [ ] (a) **Schema on prod**, the 2 additive statements (`users.password` DROP NOT NULL; `orders.placed_as_guest` boolean default false
       not null): `pnpm db:diff` against prod first, expect exactly those two, apply them, `pnpm db:diff` again = 0 statements. Before the code.
 - [ ] (b) **Turnstile keys together:** `VITE_TURNSTILE_SITE_KEY` (build) and `TURNSTILE_SECRET_KEY` (server) set at the same time, with the
-      Cloudflare widget "Hostname Management" = the prod hostnames.
+      Cloudflare widget "Hostname Management" = the prod hostnames. Both go in `~/CDPI-Pass/frontend/.env` on EC2 before the merge (the
+      running code ignores them). Since the deploy-B prep (2026-10-29) `vite.config.ts` reads env files from `frontend/` (`envDir`); before,
+      Vite read only `frontend/client/`, so a key in `frontend/.env` never reached the bundle (proved by a probe build). A production build
+      without the site key now fails, which stops the deploy before the cutover. nginx: `infra/nginx/cdpipass.com.br.conf` has
+      `proxy_read_timeout 120s` on both proxy blocks (the 60 s default would 504 a 90 s card POST); the owner applies it (`sudo nginx -t`, reload).
 - [ ] (c) **Merge/deploy:** PR into `hotfix-frontend-update` (a push there is the prod deploy); the owner merges and pushes. Stages 2 to 5 go together.
 - [ ] (d) **Human test with a real site key** on the live site, Asaas **prod** account only after the owner says clear (no prod charge before):
       guest free; guest card approved; card declined then retry; passport buyer gets `foreign_paid_unavailable`. Plus the M5 step: after an unknown
