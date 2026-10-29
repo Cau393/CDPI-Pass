@@ -154,6 +154,17 @@ describe("finalizeOrderPaidLikeWebhook", () => {
     }
   });
 
+  it("PAYMENT_ID_MISMATCH: not warned when the payment is an installment (ids within a plan differ by design)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      claimPaidOrder.mockResolvedValue({ outcome: "paid", order: baseOrder({ status: "paid", asaasPaymentId: "pay_stored" }) });
+      await finalizeOrderPaidLikeWebhook(baseOrder(), { billingType: "CREDIT_CARD", value: 100, paymentId: "pay_other", installment: "ins_1" });
+      expect(warn.mock.calls.filter(([l]) => String(l).includes("PAYMENT_ID_MISMATCH"))).toHaveLength(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("a lost claim (another delivery won) sends nothing and refunds nothing", async () => {
     claimPaidOrder.mockResolvedValue({ outcome: "already_paid" });
     const r = await finalizeOrderPaidLikeWebhook(baseOrder(), pixMeta);

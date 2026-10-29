@@ -8,6 +8,7 @@ const getUser = vi.fn();
 const getEvent = vi.fn();
 const addEmailToQueue = vi.fn();
 const cancelPayment = vi.fn();
+const getPayment = vi.fn();
 
 vi.mock("../../storage", () => ({
   storage: {
@@ -24,9 +25,11 @@ vi.mock("../../storage", () => ({
 vi.mock("../../services/asaasService", () => ({
   asaasService: {
     cancelPayment: (...a: unknown[]) => cancelPayment(...a),
+    getPayment: (...a: unknown[]) => getPayment(...a),
   },
 }));
 
+import { AsaasApiError } from "../../utils/asaasErrors";
 import {
   buildOrderCancelSuccessMessage,
   executeOrderCancel,
@@ -228,5 +231,64 @@ describe("executeOrderCancel", () => {
 
     const r = await executeOrderCancel(o.id, { actor: "admin" });
     expect(r).toEqual({ ok: false, code: "already_cancelled" });
+  });
+
+  describe("pending order with a direct pay_ id", () => {
+    const payOrder = () => baseOrder({ asaasPaymentId: "pay_abc123" });
+    const discarded = () => discardPendingOrder.mockResolvedValue({ ok: true, order: baseOrder({ status: "cancelled" }) });
+
+    it("Asaas delete fails (400): asaas_unavailable, nothing discarded", async () => {
+      getOrder.mockResolvedValue(payOrder());
+      cancelPayment.mockRejectedValue(new AsaasApiError(400, { errors: [{ code: "invalid_action", description: "x" }] }));
+      getPayment.mockResolvedValue({ id: "pay_abc123", status: "CONFIRMED" });
+      const r = await executeOrderCancel("pending-order-id", { actor: "admin" });
+      expect(r).toEqual({ ok: false, code: "asaas_unavailable" });
+      expect(discardPendingOrder).not.toHaveBeenCalled();
+    });
+
+    it("network error: asaas_unavailable", async () => {
+      getOrder.mockResolvedValue(payOrder());
+      cancelPayment.mockRejectedValue(new Error("fetch failed"));
+      getPayment.mockRejectedValue(new Error("fetch failed"));
+      expect(await executeOrderCancel("pending-order-id", { actor: "admin" })).toEqual({ ok: false, code: "asaas_unavailable" });
+      expect(discardPendingOrder).not.toHaveBeenCalled();
+    });
+
+    it("delete answers deleted:false: asaas_unavailable", async () => {
+      getOrder.mockResolvedValue(payOrder());
+      cancelPayment.mockResolvedValue({ deleted: false, id: "pay_abc123" });
+      expect(await executeOrderCancel("pending-order-id", { actor: "admin" })).toEqual({ ok: false, code: "asaas_unavailable" });
+      expect(discardPendingOrder).not.toHaveBeenCalled();
+    });
+
+    it("404: already deleted, discards", async () => {
+      getOrder.mockResolvedValue(payOrder());
+      cancelPayment.mockRejectedValue(new AsaasApiError(404, null));
+      discarded();
+      expect((await executeOrderCancel("pending-order-id", { actor: "admin" })).ok).toBe(true);
+      expect(discardPendingOrder).toHaveBeenCalled();
+    });
+
+    it("delete refused but the payment reads deleted:true: discards", async () => {
+      getOrder.mockResolvedValue(payOrder());
+      cancelPayment.mockRejectedValue(new AsaasApiError(400, null));
+      getPayment.mockResolvedValue({ id: "pay_abc123", deleted: true });
+      discarded();
+      expect((await executeOrderCancel("pending-order-id", { actor: "admin" })).ok).toBe(true);
+    });
+
+    it("delete answers deleted:true: discards", async () => {
+      getOrder.mockResolvedValue(payOrder());
+      cancelPayment.mockResolvedValue({ deleted: true, id: "pay_abc123" });
+      discarded();
+      expect((await executeOrderCancel("pending-order-id", { actor: "admin" })).ok).toBe(true);
+    });
+
+    it("a payment-link id still cancels locally when the delete fails", async () => {
+      getOrder.mockResolvedValue(baseOrder({ asaasPaymentId: "lnk123" }));
+      cancelPayment.mockRejectedValue(new Error("boom"));
+      discarded();
+      expect((await executeOrderCancel("pending-order-id", { actor: "admin" })).ok).toBe(true);
+    });
   });
 });

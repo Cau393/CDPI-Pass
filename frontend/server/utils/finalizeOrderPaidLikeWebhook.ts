@@ -69,8 +69,9 @@ export async function finalizeOrderPaidLikeWebhook(
       return { ok: false, code: "duplicate_other_paid" };
     case "paid":
       // Decided from the row the claim committed, not the snapshot. A card payment link keeps its own
-      // id (not pay_), so only a differing pay_ id is a real mismatch.
-      if (paymentMeta.paymentId && claim.order.asaasPaymentId?.startsWith("pay_") && claim.order.asaasPaymentId !== paymentMeta.paymentId) {
+      // id (not pay_), so only a differing pay_ id is a real mismatch. Ids within one installment
+      // plan differ by design, so an installment payment never warns.
+      if (paymentMeta.paymentId && !paymentMeta.installment && claim.order.asaasPaymentId?.startsWith("pay_") && claim.order.asaasPaymentId !== paymentMeta.paymentId) {
         console.warn(`PAYMENT_ID_MISMATCH order=${claim.order.id}: paid by another Asaas payment than the one stored; kept the stored id`);
       }
       await deactivatePaidLink(claim.order);

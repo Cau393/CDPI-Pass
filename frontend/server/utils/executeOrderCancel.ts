@@ -4,6 +4,10 @@ import { storage } from "../storage";
 import { asaasService } from "../services/asaasService";
 import { buildCancellationEmailHtml } from "./cancellationEmailTemplate";
 import { ownerCanSeeOrder } from "./orderVisibility";
+import { AsaasApiError } from "./asaasErrors";
+
+export const ASAAS_CANCEL_UNAVAILABLE_MESSAGE =
+  "Não foi possível cancelar agora; tente novamente em alguns minutos.";
 
 export function buildOrderCancelSuccessMessage(handled: "pending" | "paid"): string {
   if (handled === "pending") {
@@ -16,7 +20,8 @@ export type ExecuteOrderCancelFailureCode =
   | "not_found"
   | "already_cancelled"
   | "invalid_status"
-  | "forbidden";
+  | "forbidden"
+  | "asaas_unavailable";
 
 export type ExecuteOrderCancelResult =
   | { ok: true; message: string }
@@ -67,14 +72,44 @@ async function cancelPendingViaStorage(orderId: string): Promise<ExecuteOrderCan
   return { ok: true, message: buildOrderCancelSuccessMessage("pending") };
 }
 
-async function cancelAsaasChargeIfNeeded(asaasPaymentId: string | null): Promise<void> {
+/**
+ * A direct `pay_` charge (card, PIX, boleto) may still be confirmed by Asaas, so the order is
+ * discarded locally only when Asaas confirms the removal or says the charge is already gone
+ * (404, or the payment reads deleted). Any other answer keeps the order pending: a charge
+ * Asaas refuses to delete may still be paid. A payment-link id or no id keeps the old
+ * best-effort behaviour. Never logs the Asaas body.
+ */
+async function cancelAsaasChargeIfNeeded(asaasPaymentId: string | null, orderId: string): Promise<boolean> {
   if (!asaasPaymentId) {
-    return;
+    return true;
   }
+  const direct = asaasPaymentId.startsWith("pay_");
   try {
-    await asaasService.cancelPayment(asaasPaymentId);
+    const answer = await asaasService.cancelPayment(asaasPaymentId);
+    if (direct && answer?.deleted === false) {
+      console.error(`ASAAS_CANCEL_REFUSED payment=${asaasPaymentId}: delete answered deleted=false`);
+      return false;
+    }
+    return true;
   } catch (e) {
-    console.error("Erro ao cancelar cobrança Asaas:", e);
+    if (!direct) {
+      console.error("Erro ao cancelar cobrança Asaas:", e);
+      return true;
+    }
+    if (e instanceof AsaasApiError && e.status === 404) {
+      return true;
+    }
+    try {
+      const payment = await asaasService.getPayment(asaasPaymentId, orderId);
+      if (payment?.deleted === true) {
+        return true;
+      }
+    } catch {
+      // Asaas unreachable: treated as not deleted.
+    }
+    const status = e instanceof AsaasApiError ? e.status : "network";
+    console.error(`ASAAS_CANCEL_FAILED payment=${asaasPaymentId} status=${status}: order kept pending`);
+    return false;
   }
 }
 
@@ -128,7 +163,9 @@ export async function executeOrderCancel(
   }
 
   if (order.status === "pending") {
-    await cancelAsaasChargeIfNeeded(order.asaasPaymentId ?? null);
+    if (!(await cancelAsaasChargeIfNeeded(order.asaasPaymentId ?? null, order.id))) {
+      return { ok: false, code: "asaas_unavailable" };
+    }
     return cancelPendingViaStorage(orderId);
   }
 

@@ -24,7 +24,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { parseApiError } from "@/lib/eventForm";
+import { parseApiError, parseApiErrorMessage } from "@/lib/eventForm";
 import { downloadDataUrl } from "@/lib/downloadDataUrl";
 import { Download, Eye, Calendar, MapPin, CreditCard, Ticket, User as UserIcon, Shield, AlertTriangle, RefreshCw, ChevronLeft, ChevronRight, Award } from "lucide-react";
 import { CertificatesTab } from "@/components/CertificatesTab";
@@ -338,7 +338,8 @@ export default function ProfilePage() {
   onError: (error: Error) => {
     toast({
       title: "Erro ao cancelar",
-      description: error.message,
+      // "409: {"message":"..."}" -> the server's readable text (e.g. Asaas could not delete the charge).
+      description: parseApiErrorMessage(error),
       variant: "destructive",
     });
   },

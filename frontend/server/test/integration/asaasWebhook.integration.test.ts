@@ -13,6 +13,7 @@ import express from "express";
 import type { Server } from "http";
 import { Pool } from "pg";
 import { randomUUID } from "crypto";
+import jwt from "jsonwebtoken";
 
 const VERIFY_URL = process.env.VERIFY_DATABASE_URL;
 const enabled = Boolean(VERIFY_URL);
@@ -66,6 +67,8 @@ vi.mock("../../services/s3Service", () => ({
 const asaasCalls: string[] = [];
 /** The refunds Asaas accepted. */
 const acceptedRefunds: string[] = [];
+/** How the fake Asaas answers DELETE /payments/{id}: per id; anything absent is a success. */
+const deleteAnswers = new Map<string, "fail" | "not_found" | "already_deleted">();
 
 let server: Server;
 let baseUrl: string;
@@ -158,10 +161,19 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
         if (call.endsWith("/bankSlip/refund")) return { requestUrl: "https://sandbox.asaas.com/refund-request/abc", status: "PENDING" };
         return { id: endpoint.split("/")[2], status: "RECEIVED" };
       }
+      const paymentDelete = /^DELETE \/payments\/([^/?]+)$/.exec(call);
+      if (paymentDelete) {
+        const answer = deleteAnswers.get(paymentDelete[1]);
+        if (answer === "fail") throw new AsaasApiError(400, { errors: [{ code: "invalid_action", description: "Só é possível remover cobranças pendentes ou vencidas." }] });
+        if (answer === "not_found") throw new AsaasApiError(404, { errors: [{ code: "invalid_object", description: "Cobrança não encontrada." }] });
+        if (answer === "already_deleted") throw new AsaasApiError(400, { errors: [{ code: "invalid_action", description: "Cobrança já removida." }] });
+        return { deleted: true, id: paymentDelete[1] };
+      }
       const paymentRead = /^GET \/payments\/([^/?]+)$/.exec(call);
       if (paymentRead) {
         const id = paymentRead[1];
         const requested = acceptedRefunds.some((r) => r.startsWith(`POST /payments/${id}/`));
+        if (deleteAnswers.get(id) === "already_deleted") return { id, status: "PENDING", deleted: true, refunds: [] };
         return { id, customer: `cus_${id}`, status: "RECEIVED", refunds: requested ? [{ status: "AWAITING_CRITICAL_ACTION_AUTHORIZATION" }] : [] };
       }
       return {};
@@ -584,5 +596,67 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     expect(await state(orderId, eventId)).toEqual({ status: "cancelled", attendees: 0 });
     expect(asaasCalls.filter((c) => c.startsWith("POST") && c.includes("pay_card_cancelled"))).toEqual([]);
     expect(refundEmails(email)).toHaveLength(0);
+  });
+
+  describe("user cancel of a pending order that holds a direct pay_ id (final review I1)", () => {
+    const tokenFor = (userId: string) => jwt.sign({ userId }, process.env.JWT_SECRET!, { expiresIn: "1h" });
+    const cancel = (userId: string, orderId: string) =>
+      fetch(`${baseUrl}/api/orders/${orderId}/cancel`, { method: "DELETE", headers: { Authorization: `Bearer ${tokenFor(userId)}` } });
+
+    it.each(["credit_card", "pix"] as const)("%s: Asaas refuses the delete -> 409, the order stays pending", async (method) => {
+      const id = `pay_${randomUUID().slice(0, 12)}`;
+      deleteAnswers.set(id, "fail");
+      const { eventId, orderId, userId } = await pendingOrder(method, id);
+      const res = await cancel(userId, orderId);
+      const body = await res.json();
+      expect(res.status).toBe(409);
+      expect(body.message).toMatch(/Não foi possível cancelar agora/);
+      expect(JSON.stringify(body)).not.toMatch(/Só é possível/);
+      expect(await state(orderId, eventId)).toEqual({ status: "pending", attendees: 0 });
+    });
+
+    it("Asaas deletes the payment -> cancelled", async () => {
+      const id = `pay_${randomUUID().slice(0, 12)}`;
+      const { eventId, orderId, userId } = await pendingOrder("credit_card", id);
+      expect((await cancel(userId, orderId)).status).toBe(200);
+      expect(asaasCalls).toContain(`DELETE /payments/${id}`);
+      expect((await state(orderId, eventId)).status).toBe("cancelled");
+    });
+
+    it.each(["not_found", "already_deleted"] as const)("payment already gone at Asaas (%s) -> cancelled", async (answer) => {
+      const id = `pay_${randomUUID().slice(0, 12)}`;
+      deleteAnswers.set(id, answer);
+      const { eventId, orderId, userId } = await pendingOrder("credit_card", id);
+      expect((await cancel(userId, orderId)).status).toBe(200);
+      expect((await state(orderId, eventId)).status).toBe("cancelled");
+    });
+
+    it("a payment-link id and a NULL id keep cancelling locally", async () => {
+      const link = await pendingOrder("credit_card", `lnk${randomUUID().slice(0, 12)}`);
+      const none = await pendingOrder("credit_card", null);
+      expect((await cancel(link.userId, link.orderId)).status).toBe(200);
+      expect((await cancel(none.userId, none.orderId)).status).toBe(200);
+    });
+  });
+
+  describe("cancel-type webhooks fall back to externalReference only for a NULL-id pending order (final review M3)", () => {
+    it.each(["PAYMENT_REPROVED_BY_RISK_ANALYSIS", "PAYMENT_DELETED"])("%s cancels a pending order whose stored id is NULL", async (event) => {
+      const { eventId, orderId } = await pendingOrder("credit_card", null);
+      expect(await deliver({ event, payment: { id: `pay_${randomUUID().slice(0, 12)}`, billingType: "CREDIT_CARD", status: "REFUSED", externalReference: orderId } })).toBe(200);
+      expect((await state(orderId, eventId)).status).toBe("cancelled");
+    });
+
+    it("an order holding a different stored id is untouched", async () => {
+      const { eventId, orderId } = await pendingOrder("credit_card", "pay_stored_other");
+      expect(await deliver({ event: "PAYMENT_REPROVED_BY_RISK_ANALYSIS", payment: { id: "pay_unrelated_1", externalReference: orderId } })).toBe(200);
+      expect((await state(orderId, eventId)).status).toBe("pending");
+    });
+
+    it("a paid NULL-id order is untouched", async () => {
+      const { eventId, orderId } = await pendingOrder("credit_card", null);
+      await deliver({ event: "PAYMENT_CONFIRMED", payment: { id: `pay_${randomUUID().slice(0, 12)}`, billingType: "CREDIT_CARD", status: "CONFIRMED", value: 637, externalReference: orderId } });
+      expect(await deliver({ event: "PAYMENT_REPROVED_BY_RISK_ANALYSIS", payment: { id: "pay_late_reprove", externalReference: orderId } })).toBe(200);
+      expect((await state(orderId, eventId)).status).toBe("paid");
+    });
   });
 });

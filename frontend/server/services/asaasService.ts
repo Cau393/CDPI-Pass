@@ -42,6 +42,8 @@ interface AsaasPaymentResponse {
   netValue: number;
   billingType: string;
   status: string;
+  /** True once the charge was removed (DELETE /payments/{id}). */
+  deleted?: boolean;
   /** Card installment plan id (bought in installments). */
   installment?: string | null;
   pixTransaction?: {

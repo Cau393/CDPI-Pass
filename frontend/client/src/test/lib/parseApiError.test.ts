@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseApiError } from "@/lib/eventForm";
+import { parseApiError, parseApiErrorMessage } from "@/lib/eventForm";
 
 describe("parseApiError", () => {
   it("reads status, code, message and body from a JSON error", () => {
@@ -33,5 +33,12 @@ describe("parseApiError", () => {
     const r = parseApiError(new Error("500: 42"));
     expect(r.status).toBe(500);
     expect(r.body).toBeUndefined();
+  });
+});
+
+describe("parseApiErrorMessage (order cancel 409)", () => {
+  it("shows the server's PT message, not the raw status and JSON", () => {
+    const err = new Error('409: {"message":"Não foi possível cancelar agora; tente novamente em alguns minutos."}');
+    expect(parseApiErrorMessage(err)).toBe("Não foi possível cancelar agora; tente novamente em alguns minutos.");
   });
 });
