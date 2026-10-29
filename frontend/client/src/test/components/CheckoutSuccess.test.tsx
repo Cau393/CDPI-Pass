@@ -33,6 +33,27 @@ describe("CheckoutSuccess", () => {
     );
     expect(screen.getByRole("heading", { name: "Inscrição confirmada!" })).toBeTruthy();
     expect(screen.queryByTestId("text-success-total")).toBeNull();
+    expect(screen.queryByTestId("link-success-whatsapp")).toBeNull();
+  });
+
+  it("shows the WhatsApp group as a plain link in a new tab, never opened on its own", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    render(
+      <CheckoutSuccess
+        variant="free"
+        guest
+        email="camila@gmail.com"
+        whatsappGroupUrl="https://chat.whatsapp.com/AbCdEf123"
+        onContinue={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const link = screen.getByRole("link", { name: "Entrar no grupo do WhatsApp" });
+    expect(link.getAttribute("href")).toBe("https://chat.whatsapp.com/AbCdEf123");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
   });
 
   it("sends a guest to /forgot-password without the e-mail in the URL, and closes", async () => {

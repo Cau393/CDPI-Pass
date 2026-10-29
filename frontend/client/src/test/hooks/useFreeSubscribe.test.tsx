@@ -274,6 +274,30 @@ describe("useFreeSubscribe — guest (no session)", () => {
     expect(setLocation).not.toHaveBeenCalled();
   });
 
+  it("keeps the event's WhatsApp group on the guest success screen as a link, without opening it", async () => {
+    const open = vi.fn();
+    vi.stubGlobal("open", open);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json(201, { message: "Inscrição confirmada!", whatsappGroupUrl: "https://chat.whatsapp.com/AbCdEf123" })),
+    );
+    vi.spyOn(appQueryClient, "invalidateQueries").mockResolvedValue();
+    const user = userEvent.setup();
+    mount();
+    await user.click(screen.getByText("abrir"));
+    await fillContact(user);
+    await user.click(screen.getByTestId("solve-turnstile"));
+    await user.click(screen.getByRole("button", { name: "Confirmar inscrição" }));
+
+    await screen.findByRole("heading", { name: "Inscrição confirmada!" });
+    expect(screen.getByRole("link", { name: "Entrar no grupo do WhatsApp" })).toHaveAttribute(
+      "href",
+      "https://chat.whatsapp.com/AbCdEf123",
+    );
+    expect(open).not.toHaveBeenCalled();
+    expect(setLocation).not.toHaveBeenCalledWith("/profile");
+  });
+
   it("reopens prefilled with the server message and both links on identity_conflict", async () => {
     const message = "Estes dados não conferem com um cadastro existente. Entre na sua conta ou use “Esqueci meu e-mail”.";
     vi.stubGlobal("fetch", vi.fn(async () => json(409, { code: "identity_conflict", message })));

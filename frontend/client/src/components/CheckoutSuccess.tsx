@@ -12,6 +12,8 @@ export interface CheckoutSuccessProps {
   email?: string | null;
   /** `order.amount` (paid only). */
   amount?: number | string | null;
+  /** The event's WhatsApp group (free guest inscription): a link, never opened on its own. */
+  whatsappGroupUrl?: string | null;
   /** Logged-in buyer: the caller's success path (toast and /profile). */
   onContinue: () => void;
   /** Guest: dismiss and stay on the page. */
@@ -21,7 +23,15 @@ export interface CheckoutSuccessProps {
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
 /** Success screen shared by the payment modal and the free guest flow (ADR-017). */
-export function CheckoutSuccess({ variant, guest, email, amount, onContinue, onClose }: CheckoutSuccessProps) {
+export function CheckoutSuccess({
+  variant,
+  guest,
+  email,
+  amount,
+  whatsappGroupUrl,
+  onContinue,
+  onClose,
+}: CheckoutSuccessProps) {
   const [, setLocation] = useLocation();
   const total = variant === "paid" && amount != null && amount !== "" ? Number(amount) : null;
   return (
@@ -38,6 +48,19 @@ export function CheckoutSuccess({ variant, guest, email, amount, onContinue, onC
       {email ? (
         <p className="break-words text-sm text-muted-foreground" data-testid="text-success-email">
           Ingresso enviado para {maskEmail(email)}
+        </p>
+      ) : null}
+      {whatsappGroupUrl ? (
+        <p className="text-sm">
+          <a
+            href={whatsappGroupUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-primary underline underline-offset-4"
+            data-testid="link-success-whatsapp"
+          >
+            Entrar no grupo do WhatsApp
+          </a>
         </p>
       ) : null}
       {guest ? (

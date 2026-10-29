@@ -47,7 +47,7 @@ export function useFreeSubscribe() {
   // Kept across a rejected attempt so the reopened dialog is prefilled (R35).
   const [lastBuyer, setLastBuyer] = useState<GuestBuyer | null>(null);
   const [lastAnswers, setLastAnswers] = useState<Record<string, string>>({});
-  const [guestDone, setGuestDone] = useState<{ email: string } | null>(null);
+  const [guestDone, setGuestDone] = useState<{ email: string; whatsappGroupUrl: string | null } | null>(null);
 
   type SubscribeInput = {
     event: Event;
@@ -70,8 +70,9 @@ export function useFreeSubscribe() {
       setPromptError(null);
       setConflict(false);
       if (input.buyer) {
-        // Guest: confirm on screen. No session, so no profile to go to.
-        setGuestDone({ email: input.buyer.email });
+        // Guest: confirm on screen. No session, so no profile to go to, and no Meus Ingressos
+        // to reach the WhatsApp group from: the success screen links it.
+        setGuestDone({ email: input.buyer.email, whatsappGroupUrl: data?.whatsappGroupUrl ?? null });
         setLastBuyer(null);
         setLastAnswers({});
         return;
@@ -179,6 +180,7 @@ export function useFreeSubscribe() {
             variant="free"
             guest
             email={guestDone.email}
+            whatsappGroupUrl={guestDone.whatsappGroupUrl}
             onContinue={closeGuestSuccess}
             onClose={closeGuestSuccess}
           />
