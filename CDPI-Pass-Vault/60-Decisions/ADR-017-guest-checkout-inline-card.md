@@ -1,7 +1,7 @@
 # ADR-017: Guest checkout, inline card payment and signup without an e-mail code
 
 - **Date**: 2026-10-28
-- **Status**: proposed (draft). Stage 1 is implemented (deploy A); stage 2 is implemented on its branch (deploy B); stages 3–6 are planned.
+- **Status**: proposed (draft). Stage 1 is implemented (deploy A); stages 2, 3 and 4 are implemented on stacked local branches (deploy B, after the Stage 5 sandbox rehearsal); stages 5–7 are planned.
 
 ## Context
 Buying a ticket took: log in (or sign up and type a 6-digit e-mail code), open the event, check out, then pay
@@ -345,6 +345,124 @@ server (`POST /payments` with `creditCard`); the hosted `/paymentLinks` card bra
   CPF, CEP and `creditCardToken`: server log 0, responses 0, DB dump 0.
 - Stage 2 curl checks re-run on `1c1c4bf` (token path, 409s, 403s, pending cap, Turnstile and rate limits): green.
 - Each fix-wave test failed before its code (21 new tests red first).
+
+### Stage 4: client checkout UX + e2e (branch `feat/guest-checkout-client`, stacked on `feat/guest-checkout-card`)
+Range `ecad8c7..8b01377`. Client checkout for guests and logged-in buyers, plus two small server changes (verify-email
+`passwordSet`, link-triggered reset wording) and the e2e harness for the inline card. Contract: the SDD spec
+`spec-stage4.md` (R29–R40); process: the SDD ledger `progress.md` (both under `.superpowers/sdd/for-the-website-now-wiggly-willow/` in the
+`guest-s4` worktree).
+
+**What changed**
+- **T1 `d08636d` foundations.** Shared `@shared/cardPayment` (field validators + `parseCardPayment`), `@shared/cpf`,
+  `@shared/maskEmail` (the server copies are gone); `apiRequest(method, url, data?, headers?)`; `parseApiError`
+  (`client/src/lib/eventForm.ts`); `TurnstileWidget` (own component, no npm package, `VITE_TURNSTILE_SITE_KEY`).
+- **T2 `707dbf8` + `8e932b0` guest dialog.** `EventRegistrationDialog` guest mode (`onConfirm({ answers, buyer?, turnstileToken? })`),
+  logged-out entry points on the event page and the home page open the dialog, free guest subscribe, `CheckoutSuccess`
+  (one success component), guest-safe `onSuccess` (a guest is never sent to `/profile`).
+- **T3 `223e02b` card form and polling.** `CardPaymentForm.tsx` + `PaymentModal.tsx`: card body types, Turnstile reset
+  after every response, a synchronous double-submit guard, every 201/202/400/402/403/429/502/5xx/network branch, 5 s
+  polling (guest token header or session), success screen.
+- **T4 `ae1de5d` accounts.** `GET /api/auth/verify-email` 200 body gains `passwordSet`; `VerifyEmailPage` states
+  ("E-mail confirmado" / "Crie sua senha" / error with the server message); `ProfilePage` shows the 400
+  `email_not_verified` message with an "Esqueci minha senha" link; `sendPasswordResetEmail(..., { purpose: "link" })`
+  drops "Você solicitou…" on the verify-email 409 path.
+- **T5 `74895cc` e2e harness.** The fake Asaas keeps payments (no card data), answers `GET /payments/{id}` and
+  `?externalReference=`, flips status with `POST /__payments/{id}/status`; guest rate-limit env raised in `serve.ts`;
+  helpers for the card form, `confirmFakePayment` (flip + app webhook) and `latestEmailLink` (reads `email_queue`);
+  the `test.fixme` "BR pays with Cartão" in `events.spec.ts` is now the inline card.
+- **T6 `4507ec2` guest e2e.** `e2e/tests/guest-checkout.spec.ts`: free online, free in-person, foreign free
+  (passport), PIX then webhook, card approved, card declined then retry, risk card then flip, password-account e-mail
+  (order hidden until the e-mail link), claim via reset link; 9 journeys on 3 projects.
+- **Final-review fix wave** (opus review: merge with fixes, 0 Critical, 1 Important; scoped re-review: clean).
+  - `dd32fa0` I1 card-charge lock (below), T3-M3 (X disabled and "Não feche nem recarregue esta página" while a request
+    is in flight), N1 (tabs disabled in flight).
+  - `dc647ca` T2-M1: the free guest success links the event's WhatsApp group (plain link, never auto-opened).
+  - `8b01377` T6-M4: the e2e asserts "no reset e-mail yet" as a boolean, so a failure never prints a link or token.
+
+**Rulings R29 to R40 (spec-stage4.md)**
+- R29 Turnstile client is our own component (explicit render, shared script promise, `reset()` via ref). No site key
+  renders nothing and sends no `turnstileToken`; with a key, submit waits for a token.
+- R30 One source for card rules in `shared/` (`cardPayment`, `cpf`, `maskEmail`); the server and client import it.
+- R31 `apiRequest` takes optional headers; one `parseApiError` for every status/code branch.
+- R32 `onConfirm` takes one object `{ answers, buyer?, turnstileToken? }`; `buyer` only in guest mode.
+- R33 Guest mode = no authenticated user when the dialog opens; "Seus dados" (name, e-mail, phone) plus system and
+  event questions; it never PUTs `/api/profile/identity`.
+- R34 Turnstile placement: the dialog (free guest flow only) and `PaymentModal` (guest any method, or card for
+  anyone); reset after every response.
+- R35 The caller keeps the last guest buyer and answers, so a reopened dialog is prefilled.
+- R36 409 `identity_conflict`: dialog reopens prefilled with the message and the links "Esqueci meu e-mail" and "Entrar".
+- R37 **AMENDED (final review).** Unknown card outcome (202, non-JSON 5xx, network failure): "Não conseguimos confirmar
+  seu pagamento agora. Não pague de novo…". The card submit stays disabled **for that event until a page reload, or
+  until polling reports paid or cancelled**. The lock is an in-memory per-event map (`client/src/lib/cardChargeLock.ts`,
+  no storage, no card data) set when the card POST is sent, so it survives close, reopen and remount. With an order id
+  (202 or 201 pending) polling resumes on reopen; without one (504, network) no polling. PIX and boleto stay usable.
+- R38 One success component `CheckoutSuccess` (masked e-mail, total from `order.amount`); a guest gets "Crie sua
+  senha" (→ `/forgot-password`, no e-mail in the URL) and "Fechar".
+- R39 Verify-email for a password-less row shows "Crie sua senha" instead of redirecting to `/login`.
+- R40 Turnstile hostname allowlist is a deploy note only (Cloudflare "Hostname Management"); no server check.
+
+**Rulings from the ledger (each with its cost if wrong)**
+- `useFreeSubscribe` gets new logged-out tests instead of "inverting :105-115": the plan's line reference was stale.
+  Cost if wrong: none.
+- The home page logged-out CTA also uses the guest flow: the subscribe signature changed, and leaving it on `/login`
+  would be inconsistent. Cost if wrong: revert one hunk.
+- T3 decisions (1) any card 5xx without JSON is an unknown outcome, (2) the modal cannot close while a request is in
+  flight, (3) reopen starts over for PIX/boleto. Each closes a double-charge or stale-QR path. Cost if wrong: one more
+  pending PIX order per close/reopen (the server caps 3 per 30 min).
+- `passwordSet: false` shows the client text, not the 200 message, because the message tells the user to log in. Cost
+  if wrong: one string.
+- T3-M1 implemented now as the in-memory per-event lock (R37 amended). Cost if wrong: a buyer whose request truly
+  failed must reload or use PIX/boleto to retry by card.
+- The final fix wave also takes T2-M1, T3-M3, T6-M4 and N1; N2 waits (no money or account risk). Cost if wrong for N2:
+  one confusing dialog for a logged-in user mid-load.
+- A polled cancel clears the lock only when it is the locked order, so an expired PIX from a locked modal does not free
+  a card still in risk analysis. Cost if wrong: none beyond one condition.
+- The X is disabled with the "não feche" notice on every in-flight request, not only card (close was already blocked).
+  Cost if wrong: cosmetic.
+- A remount during an in-flight first card request starts locked without polling (it learns the order id on the next
+  reopen). Fails safe. Cost if wrong: an amber notice without live status until reopen.
+- Deploy note: the Turnstile site key (build) and secret (server) are set together (below). Cost if wrong: checkout
+  outage at deploy B.
+
+**Accepted risks and follow-ups (Stage 4)**
+- **Parked (re-review), both real and low:**
+  - R1: a stale `pollNotice` ("Pagamento cancelado" or the e-mail notice) carries into the next order's view in the same
+    modal session (`PaymentModal.tsx:230-234`, `:252-260`). Cosmetic, no money path. Fix with the `useOrderPolling` extraction.
+  - R2: the guest token held in the in-memory lock survives a same-tab login without a reload; another person logging in
+    on that device sees the first buyer's order status only and stays card-locked until reload (`PaymentModal.tsx:111`).
+    Follow-up: clear `cardChargeLock` on an auth change.
+- **T3-M2:** extract a `useOrderPolling` hook (`PaymentModal.tsx` is now 748 lines); no behaviour change.
+- **N2:** the event page, home page and `useFreeSubscribe` treat `!isAuthenticated` as a guest while `useAuth` is still
+  loading with a stored token; the server ignores `buyer` for a session, so no wrong-account order. Fix: keep the CTA
+  disabled while loading with a token.
+- **Small minors that wait:** T1 (trailing blank line in `shared/cpf.ts`, Turnstile injection coverage); T2 (guest PII in
+  react-query mutation variables, memory only; event query not invalidated on guest success; duplicated test helper and
+  page state); T3 (no terminal cap on polling, the server limits Asaas calls to one per order per 15 s; coverage gaps
+  for 5xx variants; duplicated CPF mask); T4 (redirect timer after unmount, profile message not cleared on edit, repeated
+  "Esqueci minha senha" text, duplicated toast title); T5 (unused `context` destructure, paid `orderCount` without
+  `expect.poll`, fake `externalReference` listing comment, duplicate payment query in `payments.ts`, `latestEmailLink`
+  may return a stale link when the newest mail has the path only in its text part); T6 (duplicated reset/login block,
+  loose button regexes, `placed_as_guest` asserted on one journey only, declined test checks visibility not message,
+  dialog bounding-box heuristic). Details: `final-review.md` and `task-{1..6}-review.md`.
+
+**Deploy notes (deploy B)**
+- Build arg `VITE_TURNSTILE_SITE_KEY` (Vite build-time env). With no key the widget renders nothing.
+- `VITE_TURNSTILE_SITE_KEY` (build) and `TURNSTILE_SECRET_KEY` (server) must be set **together**: a secret without a
+  site key makes every guest order and every card order (logged in too) answer 403.
+- Cloudflare Turnstile widget "Hostname Management" = the prod hostnames (R40; there is no server-side hostname check).
+- nginx CSP is still `Content-Security-Policy-Report-Only` (`infra/nginx/cdpipass.com.br.conf:50`). It already lists
+  `https://challenges.cloudflare.com` in script-src and frame-src; when it is switched to enforcing, keep both.
+- One manual pass with a real site key on staging/sandbox before go-live (owner, after all automated tests are green).
+- Stages 2–4 merge into `hotfix-frontend-update` together after the Stage 5 sandbox rehearsal.
+- No schema change in Stage 4.
+
+**Verification (head `8b01377`, Postgres 17 on localhost:55434, observed by the controller)**
+- `pnpm check` exit 0; `test:backend` 596 passed | 260 skipped; `test:frontend` 548 passed | 4 skipped; integration
+  256 passed | 4 skipped; `test:e2e` 125 passed | 9 skipped | 0 failed (1.8 min). The 9 skips are the foreign-paid
+  tests (`FOREIGN_PAID_CHECKOUT_ENABLED` is false).
+- The lock's e2e journey ("card in risk analysis, closed and bought again") failed on the old `PaymentModal` and passes
+  on the fix; 11 mutations of the lock and in-flight guards were each caught by a test.
+- Not yet run: a real Turnstile site key, the sandbox Asaas card, the CSP in enforcing mode (Stage 5).
 
 ## Alternatives considered
 - **Keep the code, only for guests:** that keeps the step the owner wants gone, and a guest has no account to
