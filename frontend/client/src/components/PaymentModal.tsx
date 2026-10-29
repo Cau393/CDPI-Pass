@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -6,7 +6,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CreditCard, QrCode, FileText, Copy, CheckCircle, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Event } from "@shared/schema";
 import type { SystemField } from "@shared/eventRegistrationForm";
@@ -15,6 +14,9 @@ import { isFreeEvent } from "@/lib/eventCta";
 import { parseApiError, parseApiErrorMessage } from "@/lib/eventForm";
 import type { GuestBuyer } from "@/lib/guestBuyer";
 import { identityRequiredMissing, refreshAfterStaleRegistration, RELOAD_PAGE_MESSAGE } from "@/lib/eventRegistration";
+import { CardPaymentForm, type CardPaymentFormHandle } from "@/components/CardPaymentForm";
+import { CheckoutSuccess } from "@/components/CheckoutSuccess";
+import { TurnstileWidget, isTurnstileConfigured, type TurnstileHandle } from "@/components/TurnstileWidget";
 
 interface EventForModal {
   id: string;
@@ -43,6 +45,48 @@ interface PaymentModalProps {
   onSuccess: () => void;
 }
 
+/** R37: the card charge may have gone through; the order, if any, stays pending. */
+const UNCONFIRMED_MESSAGE =
+  "Não conseguimos confirmar seu pagamento agora. Não pague de novo: se a cobrança for aprovada, você recebe o ingresso por e-mail.";
+const EMAIL_LATER_MESSAGE = "Você recebe o ingresso por e-mail quando o pagamento for confirmado.";
+const PAID_PAYMENT_STATUSES = new Set(["CONFIRMED", "RECEIVED"]);
+const POLL_INTERVAL_MS = 5_000;
+
+interface PollTarget {
+  orderId: string;
+  /** Guest: the `orderAccessToken` (X-Order-Access). Logged-in: null, the session is used. */
+  accessToken: string | null;
+}
+
+/** What an order attempt leaves behind. A reopened modal starts from FRESH. */
+interface CheckoutState {
+  /** PIX, boleto or hosted-card instructions (the 201 body). */
+  paymentData: any;
+  /** Card result screen: 201 pending (risk analysis) or 202 (outcome unknown). */
+  cardOutcome: { kind: "review" } | { kind: "unconfirmed"; message: string } | null;
+  paid: boolean;
+  /** `order.amount` once an order exists: the total shown from then on (never `payment.value`). */
+  orderAmount: number | string | null;
+  poll: PollTarget | null;
+  /** Polling ended without a payment: cancelled, or the order cannot be read. */
+  pollNotice: string | null;
+  /** After an unknown or pending card outcome: no new card submit until the modal closes. */
+  cardLocked: boolean;
+  /** A card response shown inline; "unconfirmed" stays visible on every tab. */
+  cardAlert: { kind: "error" | "unconfirmed"; message: string } | null;
+}
+
+const FRESH: CheckoutState = {
+  paymentData: null,
+  cardOutcome: null,
+  paid: false,
+  orderAmount: null,
+  poll: null,
+  pollNotice: null,
+  cardLocked: false,
+  cardAlert: null,
+};
+
 export default function PaymentModal({
   isOpen,
   onClose,
@@ -56,72 +100,219 @@ export default function PaymentModal({
   onSuccess,
 }: PaymentModalProps) {
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
+  // Guest = no authenticated user, the same test the pages use.
+  const isGuest = !isAuthenticated;
   const isForeigner = user?.isForeigner === true;
   const [selectedMethod, setSelectedMethod] = useState<"pix" | "credit_card" | "boleto">("pix");
 
   useEffect(() => {
     if (isForeigner) setSelectedMethod("credit_card");
   }, [isForeigner]);
-  const [paymentData, setPaymentData] = useState<any>(null);
+  const [checkout, setCheckout] = useState<CheckoutState>(FRESH);
+  const update = (patch: Partial<CheckoutState>) => setCheckout((current) => ({ ...current, ...patch }));
+  const { paymentData, cardOutcome, paid, orderAmount, poll, pollNotice, cardLocked, cardAlert } = checkout;
+  const [submitting, setSubmitting] = useState(false);
+  // Synchronous guard: a second click before the re-render must not send a second charge.
+  const inFlight = useRef(false);
+  const cardFormRef = useRef<CardPaymentFormHandle>(null);
+  const turnstileRef = useRef<TurnstileHandle>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
 
-  const createOrderMutation = useMutation({
-    mutationFn: async (paymentMethod: string) => {
+  // Brazilian buyers type the card here; a foreign buyer keeps the hosted invoice.
+  const inlineCard = selectedMethod === "credit_card" && !isForeigner;
+  // The server asks Turnstile of every guest order and of every card order (R34).
+  const needsTurnstile = isGuest || selectedMethod === "credit_card";
+  const waitingForTurnstile = needsTurnstile && isTurnstileConfigured() && turnstileToken == null;
+  const total = orderAmount != null && Number.isFinite(Number(orderAmount)) ? Number(orderAmount) : displayPrice + 5;
+
+  useEffect(() => {
+    if (!needsTurnstile) setTurnstileToken(null);
+  }, [needsTurnstile]);
+
+  // Closing drops the card data; reopening starts over (no stale order, lock or notice).
+  const wasOpen = useRef(isOpen);
+  useLayoutEffect(() => {
+    if (!isOpen && wasOpen.current) cardFormRef.current?.clear();
+    if (isOpen && !wasOpen.current) {
+      setCheckout(FRESH);
+      setTurnstileToken(null);
+    }
+    wasOpen.current = isOpen;
+  }, [isOpen]);
+
+  const markPaid = (amount?: number | string | null) => {
+    cardFormRef.current?.clear();
+    setCheckout((current) => ({ ...current, paid: true, poll: null, orderAmount: amount ?? current.orderAmount }));
+    if (!isGuest) void queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+  };
+
+  /** Polling for a pending order: a guest asks with its order token, a logged-in buyer with the session. */
+  const watchOrder = (orderId: unknown, accessToken: unknown): Partial<CheckoutState> => {
+    if (typeof orderId !== "string") return {};
+    const token = typeof accessToken === "string" ? accessToken : null;
+    // Without the token a guest cannot ask (the session path would answer 401).
+    if (isGuest && !token) return { pollNotice: EMAIL_LATER_MESSAGE };
+    return { poll: { orderId, accessToken: token } };
+  };
+
+  // Every 5 s while open; stops on paid, cancelled, 404, close or unmount.
+  useEffect(() => {
+    if (!isOpen || !poll) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const headers = poll.accessToken ? { "X-Order-Access": poll.accessToken } : undefined;
+    const check = async () => {
+      let again = true;
+      try {
+        const res = await apiRequest("POST", `/api/orders/${poll.orderId}/check-status`, undefined, headers);
+        const body = await res.json();
+        if (stopped) return;
+        // Token path: {status, paymentStatus}. Session path: {message, order, paymentStatus}.
+        if (body?.status === "paid" || body?.order?.status === "paid") {
+          again = false;
+          markPaid(body?.order?.amount);
+        } else if (body?.status === "cancelled" || body?.order?.status === "cancelled") {
+          again = false;
+          update({ poll: null, pollNotice: "Pagamento cancelado" });
+        }
+      } catch (error) {
+        if (stopped) return;
+        if (parseApiError(error).status === 404) {
+          again = false;
+          update({ poll: null, pollNotice: EMAIL_LATER_MESSAGE });
+        }
+      }
+      if (again && !stopped) timer = setTimeout(check, POLL_INTERVAL_MS);
+    };
+    timer = setTimeout(check, POLL_INTERVAL_MS);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [isOpen, poll]);
+
+  const handleOrder = (method: string, data: any) => {
+    const payUrl = data?.payment?.link ?? data?.payment?.paymentLink;
+    if (method === "credit_card" && payUrl) {
+      globalThis.open(payUrl, "_blank", "noopener,noreferrer");
+    }
+    const order = data?.order;
+    update({
+      paymentData: data,
+      orderAmount: order?.amount ?? null,
+      ...(order?.status === "pending" ? watchOrder(order.id, data?.orderAccessToken) : {}),
+    });
+    toast({
+      title: "Pedido criado!",
+      description: "Complete o pagamento para confirmar seu ingresso.",
+    });
+  };
+
+  const handleCardOrder = (status: number, data: any) => {
+    const order = data?.order;
+    if (status !== 202 && (PAID_PAYMENT_STATUSES.has(data?.payment?.status) || order?.status === "paid")) {
+      markPaid(order?.amount);
+      return;
+    }
+    // 202 (outcome unknown, order kept) or 201 pending (risk analysis): never charge again from here.
+    update({
+      cardLocked: true,
+      orderAmount: order?.amount ?? null,
+      cardOutcome:
+        status === 202
+          ? { kind: "unconfirmed", message: typeof data?.message === "string" && data.message ? data.message : UNCONFIRMED_MESSAGE }
+          : { kind: "review" },
+      ...watchOrder(order?.id, data?.orderAccessToken),
+    });
+  };
+
+  const handleOrderError = (error: unknown, card: boolean) => {
+    const parsed = parseApiError(error);
+    // R37: no answer (network) or a gateway page instead of JSON: the charge may have gone through.
+    if (card && (parsed.status === null || (parsed.status >= 500 && parsed.body === undefined))) {
+      update({ cardLocked: true, cardAlert: { kind: "unconfirmed", message: UNCONFIRMED_MESSAGE } });
+      if (!isGuest) void queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      return;
+    }
+    const refreshed = refreshAfterStaleRegistration(error, event.id);
+    if (parsed.code === "identity_conflict" && onIdentityConflict) {
+      onIdentityConflict(parseApiErrorMessage(error));
+      return;
+    }
+    const missing = identityRequiredMissing(error);
+    if (missing) {
+      // Reopen the dialog with the refetched event, not the captured one.
+      void refreshed.then(({ event: fresh }) => {
+        const message = parseApiErrorMessage(error);
+        if (fresh) onIdentityRequired(missing, message, fresh);
+        else onIdentityRequired(missing, message);
+      });
+      return;
+    }
+    if (card) {
+      update({ cardAlert: { kind: "error", message: parseApiErrorMessage(error) } });
+    } else {
+      toast({
+        title: "Erro ao processar pagamento",
+        description: parseApiErrorMessage(error),
+        variant: "destructive",
+      });
+    }
+    void refreshed.then(({ stale, event: fresh }) => {
+      if (stale === "form" && !fresh) {
+        toast({ title: "Erro ao processar pagamento", description: RELOAD_PAGE_MESSAGE, variant: "destructive" });
+      }
+    });
+  };
+
+  const handlePayment = async () => {
+    if (isFreeEvent(event) || inFlight.current) return;
+    const method = selectedMethod;
+    const card = method === "credit_card" && !isForeigner;
+    if (card && cardLocked) return;
+    // PCI: the card body is built here, never stored, and dropped once the answer is in.
+    let cardFields = card ? (cardFormRef.current?.read() ?? null) : null;
+    if (card && !cardFields) return;
+    inFlight.current = true;
+    setSubmitting(true);
+    if (cardAlert?.kind === "error") update({ cardAlert: null });
+    let result: { response: Response; data: any } | { error: unknown };
+    try {
       const response = await apiRequest("POST", "/api/orders", {
         eventId: event.id,
-        paymentMethod,
+        paymentMethod: method,
         promoCode: promoCode, // <-- This is the crucial addition
         answers,
         ...(buyer ? { buyer } : {}),
+        ...(cardFields ?? {}),
+        ...(needsTurnstile && turnstileToken ? { turnstileToken } : {}),
       });
-      return response.json();
-    },
-  });
+      result = { response, data: await response.json() };
+    } catch (error) {
+      result = { error };
+    } finally {
+      cardFields = null;
+      inFlight.current = false;
+    }
+    // Turnstile tokens are single use, and no CVV outlives an answer.
+    turnstileRef.current?.reset();
+    if (card) cardFormRef.current?.clearCvv();
+    setSubmitting(false);
+    if ("error" in result) handleOrderError(result.error, card);
+    else if (card) handleCardOrder(result.response.status, result.data);
+    else handleOrder(method, result.data);
+  };
 
-  const handlePayment = () => {
-    if (isFreeEvent(event)) return;
-    const method = selectedMethod;
-    createOrderMutation.mutate(method, {
-      onSuccess: (data) => {
-        const payUrl = data?.payment?.link ?? data?.payment?.paymentLink;
-        if (method === "credit_card" && payUrl) {
-          globalThis.open(payUrl, "_blank", "noopener,noreferrer");
-        }
-        setPaymentData(data);
-        toast({
-          title: "Pedido criado!",
-          description: "Complete o pagamento para confirmar seu ingresso.",
-        });
-      },
-      onError: (error: Error) => {
-        const refreshed = refreshAfterStaleRegistration(error, event.id);
-        const parsed = parseApiError(error);
-        if (parsed.code === "identity_conflict" && onIdentityConflict) {
-          onIdentityConflict(parseApiErrorMessage(error));
-          return;
-        }
-        const missing = identityRequiredMissing(error);
-        if (missing) {
-          // Reopen the dialog with the refetched event, not the captured one.
-          void refreshed.then(({ event: fresh }) => {
-            const message = parseApiErrorMessage(error);
-            if (fresh) onIdentityRequired(missing, message, fresh);
-            else onIdentityRequired(missing, message);
-          });
-          return;
-        }
-        toast({
-          title: "Erro ao processar pagamento",
-          description: parseApiErrorMessage(error),
-          variant: "destructive",
-        });
-        void refreshed.then(({ stale, event: fresh }) => {
-          if (stale === "form" && !fresh) {
-            toast({ title: "Erro ao processar pagamento", description: RELOAD_PAGE_MESSAGE, variant: "destructive" });
-          }
-        });
-      },
-    });
+  const finish = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+    onSuccess();
+    onClose();
+  };
+
+  const closeAfterOrder = () => {
+    if (!isGuest) void queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+    onClose();
   };
 
   const copyToClipboard = (text: string) => {
@@ -158,13 +349,36 @@ export default function PaymentModal({
     );
   }
 
+  const pollNoticeText = pollNotice ? (
+    <p role="status" className="text-sm font-medium text-gray-700" data-testid="text-payment-poll-status">
+      {pollNotice}
+    </p>
+  ) : null;
+
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog
+      open={isOpen}
+      onOpenChange={() => {
+        // Closing mid-charge would let a reopened modal send a second charge.
+        if (inFlight.current) return;
+        onClose();
+      }}
+    >
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Finalizar Compra - {event?.title}</DialogTitle>
         </DialogHeader>
 
+        {paid ? (
+          <CheckoutSuccess
+            variant="paid"
+            guest={isGuest}
+            email={buyer?.email ?? user?.email}
+            amount={orderAmount}
+            onContinue={finish}
+            onClose={onClose}
+          />
+        ) : (
         <div className="space-y-4">
           {/* Event Summary */}
           <Card>
@@ -199,8 +413,8 @@ export default function PaymentModal({
                   )}
                   <div className="flex justify-between font-bold text-lg mt-2">
                     <span>Total:</span>
-                    <span className="text-primary">
-                      {formatCurrency(displayPrice + 5)}
+                    <span className="text-primary" data-testid="text-payment-total">
+                      {formatCurrency(total)}
                     </span>
                   </div>
                 </div>
@@ -208,7 +422,36 @@ export default function PaymentModal({
             </CardContent>
           </Card>
 
-          {!paymentData ? (
+          {cardOutcome ? (
+            <>
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="text-center space-y-4">
+                    <Clock className="h-12 w-12 mx-auto text-primary" />
+                    {cardOutcome.kind === "review" ? (
+                      <>
+                        <h3 className="font-semibold text-lg">Pagamento em análise</h3>
+                        <p className="text-sm text-gray-600" data-testid="text-payment-review">
+                          A operadora está analisando o pagamento. Você recebe o ingresso por e-mail assim que ele for aprovado.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <h3 className="font-semibold text-lg">Aguardando confirmação</h3>
+                        <p role="alert" className="text-sm text-gray-700" data-testid="text-payment-unconfirmed">
+                          {cardOutcome.message}
+                        </p>
+                      </>
+                    )}
+                    {pollNoticeText}
+                  </div>
+                </CardContent>
+              </Card>
+              <Button variant="outline" className="w-full" onClick={closeAfterOrder} data-testid="button-payment-close">
+                Fechar
+              </Button>
+            </>
+          ) : !paymentData ? (
             <>
               {/* Payment Method Selection */}
               <Tabs value={selectedMethod} onValueChange={(v) => setSelectedMethod(v as any)}>
@@ -250,7 +493,7 @@ export default function PaymentModal({
 
                 <TabsContent value="credit_card" className="space-y-4">
                   <Card>
-                    <CardContent className="pt-6">
+                    <CardContent className="pt-6 space-y-4">
                       <div className="text-center space-y-2">
                         <CreditCard className="h-12 w-12 mx-auto text-primary" />
                         <h3 className="font-semibold">Pagamento com Cartão</h3>
@@ -259,16 +502,19 @@ export default function PaymentModal({
                             Pagamento internacional somente com cartão de crédito ou débito, à vista. PIX, boleto e parcelamento não estão disponíveis.
                           </p>
                         ) : (
-                          <>
-                        <p className="text-sm text-gray-600">
-                          Ao continuar, o link de pagamento abre em uma nova aba e enviamos o mesmo link por e-mail.
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          Aceitamos as principais bandeiras e parcelamento em até 3x.
-                        </p>
-                          </>
+                          <p className="text-sm text-gray-600">
+                            Aceitamos as principais bandeiras e parcelamento em até 3x.
+                          </p>
                         )}
                       </div>
+                      {isForeigner ? null : (
+                        <CardPaymentForm
+                          ref={cardFormRef}
+                          total={total}
+                          defaultHolder={isGuest ? { name: buyer?.name, cpf: buyer?.cpf } : { name: user?.name, cpf: user?.cpf }}
+                          disabled={submitting}
+                        />
+                      )}
                     </CardContent>
                   </Card>
                 </TabsContent>
@@ -291,13 +537,29 @@ export default function PaymentModal({
                 </TabsContent>
               </Tabs>
 
+              {cardAlert?.kind === "unconfirmed" ? (
+                <p
+                  role="alert"
+                  className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+                  data-testid="text-payment-unconfirmed"
+                >
+                  {cardAlert.message}
+                </p>
+              ) : null}
+              {cardAlert?.kind === "error" && inlineCard ? (
+                <p role="alert" className="text-sm font-medium text-destructive" data-testid="text-card-error">
+                  {cardAlert.message}
+                </p>
+              ) : null}
+              {needsTurnstile ? <TurnstileWidget ref={turnstileRef} onToken={setTurnstileToken} /> : null}
+
               <Button
-                onClick={handlePayment}
+                onClick={() => void handlePayment()}
                 className="w-full bg-primary hover:bg-secondary"
-                disabled={createOrderMutation.isPending}
+                disabled={submitting || waitingForTurnstile || (inlineCard && cardLocked)}
                 data-testid="button-confirm-payment"
               >
-                {createOrderMutation.isPending ? "Processando..." : 
+                {submitting ? "Processando..." : 
                  selectedMethod === "pix" ? "Gerar PIX" :
                  selectedMethod === "credit_card" ? "Pagar com Cartão" :
                  "Gerar Boleto"}
@@ -418,16 +680,13 @@ export default function PaymentModal({
                 </Card>
               )}
 
+              {pollNoticeText}
               <div className="text-center">
                 <p className="text-sm text-gray-600 mb-4">
                   Após o pagamento, você receberá o ingresso por e-mail
                 </p>
                 <Button
-                  onClick={() => {
-                    queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
-                    onSuccess();
-                    onClose();
-                  }}
+                  onClick={finish}
                   variant="outline"
                   className="w-full"
                 >
@@ -437,6 +696,7 @@ export default function PaymentModal({
             </div>
           )}
         </div>
+        )}
       </DialogContent>
     </Dialog>
   );
