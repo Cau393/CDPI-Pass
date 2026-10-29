@@ -188,6 +188,38 @@ test.describe("guest checkout (logged out)", () => {
     await expect.poll(() => orderCount(g.email, ev.id, "paid"), { timeout: 20_000 }).toBe("1");
     await expect(page.getByTestId(SUCCESS).getByText("Pagamento confirmado!")).toBeVisible({ timeout: 30_000 });
   });
+
+  test("card in risk analysis, closed and bought again: card stays locked, PIX open, approval shows success", async ({ page, request }) => {
+    const ev = await createEvent("presencialPaid");
+    const g = newGuest("gcardlock");
+    await openAndFillDialog(page, ev.id, g, { cpf: uniqueCpf(), address: ADDRESS });
+    const first = await paymentModal(page, "Cartão");
+    await payWithCard(first, { number: FAKE_CARDS.risk });
+    await expect(first.getByText("Pagamento em análise")).toBeVisible({ timeout: 20_000 });
+    await first.getByTestId("button-payment-close").click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+
+    // "Comprar" again on the same page (no reload): the dialog comes back prefilled, then the modal.
+    await page.getByTestId("button-event-cta").click();
+    await guestDialog(page);
+    await page.getByTestId("button-confirm-registration").click();
+    const modal = await paymentModal(page, "Cartão");
+    await expect(modal.getByTestId("text-payment-unconfirmed")).toBeVisible();
+    await expect(modal.getByTestId("button-confirm-payment")).toBeDisabled();
+    await expectNoHorizontalScroll(page, "card locked");
+    await modal.getByRole("tab", { name: "PIX" }).click();
+    await expect(modal.getByTestId("button-confirm-payment")).toBeEnabled();
+    expect(await orderCount(g.email, ev.id)).toBe("1");
+
+    // The reopened modal polls the locked order: the approval reaches it.
+    await confirmFakePayment(request, {
+      paymentId: await paymentIdOf(g.email, ev.id),
+      orderId: await orderIdOf(g.email, ev.id),
+      billingType: "CREDIT_CARD",
+    });
+    await expect(page.getByTestId(SUCCESS).getByText("Pagamento confirmado!")).toBeVisible({ timeout: 30_000 });
+    await expect.poll(() => orderCount(g.email, ev.id, "paid")).toBe("1");
+  });
 });
 
 test.describe("guest checkout and accounts", () => {

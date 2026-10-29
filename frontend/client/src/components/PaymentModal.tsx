@@ -17,6 +17,7 @@ import { identityRequiredMissing, refreshAfterStaleRegistration, RELOAD_PAGE_MES
 import { CardPaymentForm, type CardPaymentFormHandle } from "@/components/CardPaymentForm";
 import { CheckoutSuccess } from "@/components/CheckoutSuccess";
 import { TurnstileWidget, isTurnstileConfigured, type TurnstileHandle } from "@/components/TurnstileWidget";
+import { cardChargeLockFor, lockCardCharge, releaseCardCharge } from "@/lib/cardChargeLock";
 
 interface EventForModal {
   id: string;
@@ -58,7 +59,7 @@ interface PollTarget {
   accessToken: string | null;
 }
 
-/** What an order attempt leaves behind. A reopened modal starts from FRESH. */
+/** What an order attempt leaves behind. A reopened modal starts over, except for the card-charge lock. */
 interface CheckoutState {
   /** PIX, boleto or hosted-card instructions (the 201 body). */
   paymentData: any;
@@ -70,7 +71,7 @@ interface CheckoutState {
   poll: PollTarget | null;
   /** Polling ended without a payment: cancelled, or the order cannot be read. */
   pollNotice: string | null;
-  /** After an unknown or pending card outcome: no new card submit until the modal closes. */
+  /** After an unknown or pending card outcome: no new card submit (see `cardChargeLock`). */
   cardLocked: boolean;
   /** A card response shown inline; "unconfirmed" stays visible on every tab. */
   cardAlert: { kind: "error" | "unconfirmed"; message: string } | null;
@@ -86,6 +87,30 @@ const FRESH: CheckoutState = {
   cardLocked: false,
   cardAlert: null,
 };
+
+/** Polling for a pending order: a guest asks with its order token, a logged-in buyer with the session. */
+function pollFor(orderId: unknown, accessToken: unknown, isGuest: boolean): Partial<CheckoutState> {
+  if (typeof orderId !== "string") return {};
+  const token = typeof accessToken === "string" ? accessToken : null;
+  // Without the token a guest cannot ask (the session path would answer 401).
+  if (isGuest && !token) return { pollNotice: EMAIL_LATER_MESSAGE };
+  return { poll: { orderId, accessToken: token } };
+}
+
+/**
+ * How a mounted or reopened modal starts: FRESH, or, while a card charge for the event is unresolved,
+ * with the card submit locked, the amber alert, and polling resumed when the order is known.
+ */
+function startState(eventId: string, isGuest: boolean): CheckoutState {
+  const lock = cardChargeLockFor(eventId);
+  if (!lock) return FRESH;
+  return {
+    ...FRESH,
+    cardLocked: true,
+    cardAlert: { kind: "unconfirmed", message: UNCONFIRMED_MESSAGE },
+    ...pollFor(lock.orderId, lock.accessToken, isGuest),
+  };
+}
 
 export default function PaymentModal({
   isOpen,
@@ -109,7 +134,8 @@ export default function PaymentModal({
   useEffect(() => {
     if (isForeigner) setSelectedMethod("credit_card");
   }, [isForeigner]);
-  const [checkout, setCheckout] = useState<CheckoutState>(FRESH);
+  // A remount (the home page unmounts the modal on close) must not lift the card-charge lock.
+  const [checkout, setCheckout] = useState<CheckoutState>(() => startState(event.id, isGuest));
   const update = (patch: Partial<CheckoutState>) => setCheckout((current) => ({ ...current, ...patch }));
   const { paymentData, cardOutcome, paid, orderAmount, poll, pollNotice, cardLocked, cardAlert } = checkout;
   const [submitting, setSubmitting] = useState(false);
@@ -130,31 +156,27 @@ export default function PaymentModal({
     if (!needsTurnstile) setTurnstileToken(null);
   }, [needsTurnstile]);
 
-  // Closing drops the card data; reopening starts over (no stale order, lock or notice).
+  // Closing drops the card data; reopening starts over (no stale order or notice), but an unresolved
+  // card charge for the event stays locked.
   const wasOpen = useRef(isOpen);
   useLayoutEffect(() => {
     if (!isOpen && wasOpen.current) cardFormRef.current?.clear();
     if (isOpen && !wasOpen.current) {
-      setCheckout(FRESH);
+      setCheckout(startState(event.id, isGuest));
       setTurnstileToken(null);
     }
     wasOpen.current = isOpen;
   }, [isOpen]);
 
   const markPaid = (amount?: number | string | null) => {
+    // The buyer holds a paid order for the event: the server refuses a second one (409).
+    releaseCardCharge(event.id);
     cardFormRef.current?.clear();
     setCheckout((current) => ({ ...current, paid: true, poll: null, orderAmount: amount ?? current.orderAmount }));
     if (!isGuest) void queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
   };
 
-  /** Polling for a pending order: a guest asks with its order token, a logged-in buyer with the session. */
-  const watchOrder = (orderId: unknown, accessToken: unknown): Partial<CheckoutState> => {
-    if (typeof orderId !== "string") return {};
-    const token = typeof accessToken === "string" ? accessToken : null;
-    // Without the token a guest cannot ask (the session path would answer 401).
-    if (isGuest && !token) return { pollNotice: EMAIL_LATER_MESSAGE };
-    return { poll: { orderId, accessToken: token } };
-  };
+  const watchOrder = (orderId: unknown, accessToken: unknown) => pollFor(orderId, accessToken, isGuest);
 
   // Every 5 s while open; stops on paid, cancelled, 404, close or unmount.
   useEffect(() => {
@@ -174,7 +196,14 @@ export default function PaymentModal({
           markPaid(body?.order?.amount);
         } else if (body?.status === "cancelled" || body?.order?.status === "cancelled") {
           again = false;
-          update({ poll: null, pollNotice: "Pagamento cancelado" });
+          // Only the cancel of the locked card order frees the card (not a PIX or boleto order's).
+          const freed = cardChargeLockFor(event.id)?.orderId === poll.orderId;
+          if (freed) releaseCardCharge(event.id);
+          update({
+            poll: null,
+            pollNotice: "Pagamento cancelado",
+            ...(freed ? { cardLocked: false, cardAlert: null } : {}),
+          });
         }
       } catch (error) {
         if (stopped) return;
@@ -216,6 +245,10 @@ export default function PaymentModal({
       return;
     }
     // 202 (outcome unknown, order kept) or 201 pending (risk analysis): never charge again from here.
+    lockCardCharge(event.id, {
+      orderId: typeof order?.id === "string" ? order.id : null,
+      accessToken: typeof data?.orderAccessToken === "string" ? data.orderAccessToken : null,
+    });
     update({
       cardLocked: true,
       orderAmount: order?.amount ?? null,
@@ -230,11 +263,14 @@ export default function PaymentModal({
   const handleOrderError = (error: unknown, card: boolean) => {
     const parsed = parseApiError(error);
     // R37: no answer (network) or a gateway page instead of JSON: the charge may have gone through.
+    // The card-charge lock set when the POST was sent stays.
     if (card && (parsed.status === null || (parsed.status >= 500 && parsed.body === undefined))) {
       update({ cardLocked: true, cardAlert: { kind: "unconfirmed", message: UNCONFIRMED_MESSAGE } });
       if (!isGuest) void queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       return;
     }
+    // Every other answer is the server refusing before any charge: the card may be tried again.
+    if (card) releaseCardCharge(event.id);
     const refreshed = refreshAfterStaleRegistration(error, event.id);
     if (parsed.code === "identity_conflict" && onIdentityConflict) {
       onIdentityConflict(parseApiErrorMessage(error));
@@ -270,13 +306,15 @@ export default function PaymentModal({
     if (isFreeEvent(event) || inFlight.current) return;
     const method = selectedMethod;
     const card = method === "credit_card" && !isForeigner;
-    if (card && cardLocked) return;
+    if (card && (cardLocked || cardChargeLockFor(event.id))) return;
     // PCI: the card body is built here, never stored, and dropped once the answer is in.
     let cardFields = card ? (cardFormRef.current?.read() ?? null) : null;
     if (card && !cardFields) return;
     inFlight.current = true;
     setSubmitting(true);
     if (cardAlert?.kind === "error") update({ cardAlert: null });
+    // From here the charge may happen: locked even if the modal unmounts before the answer.
+    if (card) lockCardCharge(event.id);
     let result: { response: Response; data: any } | { error: unknown };
     try {
       const response = await apiRequest("POST", "/api/orders", {
@@ -364,7 +402,7 @@ export default function PaymentModal({
         onClose();
       }}
     >
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" closeDisabled={submitting}>
         <DialogHeader>
           <DialogTitle>Finalizar Compra - {event?.title}</DialogTitle>
         </DialogHeader>
@@ -457,17 +495,17 @@ export default function PaymentModal({
               <Tabs value={selectedMethod} onValueChange={(v) => setSelectedMethod(v as any)}>
                 <TabsList className={`grid w-full ${isForeigner ? "grid-cols-1" : "grid-cols-3"}`}>
                   {!isForeigner && (
-                  <TabsTrigger value="pix" className="flex items-center gap-2">
+                  <TabsTrigger value="pix" disabled={submitting} className="flex items-center gap-2">
                     <QrCode className="h-4 w-4" />
                     PIX
                   </TabsTrigger>
                   )}
-                  <TabsTrigger value="credit_card" className="flex items-center gap-2">
+                  <TabsTrigger value="credit_card" disabled={submitting} className="flex items-center gap-2">
                     <CreditCard className="h-4 w-4" />
                     Cartão
                   </TabsTrigger>
                   {!isForeigner && (
-                  <TabsTrigger value="boleto" className="flex items-center gap-2">
+                  <TabsTrigger value="boleto" disabled={submitting} className="flex items-center gap-2">
                     <FileText className="h-4 w-4" />
                     Boleto
                   </TabsTrigger>
@@ -546,6 +584,8 @@ export default function PaymentModal({
                   {cardAlert.message}
                 </p>
               ) : null}
+              {/* A reopened modal polling the locked card order: e.g. "Pagamento cancelado". */}
+              {pollNoticeText}
               {cardAlert?.kind === "error" && inlineCard ? (
                 <p role="alert" className="text-sm font-medium text-destructive" data-testid="text-card-error">
                   {cardAlert.message}
@@ -564,6 +604,12 @@ export default function PaymentModal({
                  selectedMethod === "credit_card" ? "Pagar com Cartão" :
                  "Gerar Boleto"}
               </Button>
+              {submitting ? (
+                // The close is blocked in flight, and a reload would drop the card-charge lock.
+                <p role="status" className="text-center text-sm font-medium text-gray-700" data-testid="text-payment-in-flight">
+                  Não feche nem recarregue esta página
+                </p>
+              ) : null}
             </>
           ) : (
             /* Payment Instructions */

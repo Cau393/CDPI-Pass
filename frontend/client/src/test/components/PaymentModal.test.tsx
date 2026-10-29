@@ -23,6 +23,10 @@ vi.mock("wouter", () => ({ useLocation: () => ["/", setLocation] }));
 
 import PaymentModal from "../../components/PaymentModal";
 import { queryClient as appQueryClient } from "../../lib/queryClient";
+import { cardChargeLockFor, resetCardChargeLocks } from "../../lib/cardChargeLock";
+
+// The card-charge lock lives in module scope: no test may inherit another test's lock.
+afterEach(() => resetCardChargeLocks());
 
 const event = {
   id: "44444444-4444-4444-4444-444444444444",
@@ -338,12 +342,12 @@ describe("PaymentModal — inline card, Turnstile, statuses and polling", () => 
     const onSuccess = vi.fn();
     const onIdentityConflict = vi.fn();
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    const ui = (isOpen: boolean) => (
+    const ui = (isOpen: boolean, forEvent: Event = event) => (
       <QueryClientProvider client={client}>
         <PaymentModal
           isOpen={isOpen}
           onClose={onClose}
-          event={event}
+          event={forEvent}
           promoCode={null}
           displayPrice={100}
           answers={ANSWERS}
@@ -354,15 +358,21 @@ describe("PaymentModal — inline card, Turnstile, statuses and polling", () => 
         />
       </QueryClientProvider>
     );
-    const view = render(ui(true));
+    let view = render(ui(true));
     return {
       user: userEvent.setup({ advanceTimers: vi.advanceTimersByTime }),
       onClose,
       onSuccess,
       onIdentityConflict,
       client,
+      /** The event page path: the modal stays mounted and toggles `isOpen`. */
       close: () => view.rerender(ui(false)),
       reopen: () => view.rerender(ui(true)),
+      /** The home page path (and a route change): the modal unmounts, and the next "Comprar" mounts a new one. */
+      remount: (forEvent: Event = event) => {
+        view.unmount();
+        view = render(ui(true, forEvent));
+      },
     };
   }
 
@@ -856,6 +866,41 @@ describe("PaymentModal — inline card, Turnstile, statuses and polling", () => 
       expect(orderCalls(f as unknown as FetchMock)).toHaveLength(1);
     });
 
+    it("while the charge is in flight the X and the tabs are disabled, and the modal says not to close or reload", async () => {
+      authState.user = account;
+      let release!: (response: Response) => void;
+      const f = vi.fn((input: RequestInfo | URL, _init?: RequestInit) =>
+        String(input) === "/api/orders"
+          ? new Promise<Response>((resolve) => {
+              release = resolve;
+            })
+          : Promise.resolve(json(404, {})),
+      );
+      vi.stubGlobal("fetch", f);
+      const { user, onClose } = setup();
+      await fillCard(user);
+      const closeX = screen.getByRole("button", { name: "Close" });
+      expect(closeX).toBeEnabled();
+      expect(screen.queryByTestId("text-payment-in-flight")).toBeNull();
+
+      await pay(user);
+      expect(submit()).toHaveTextContent("Processando...");
+      expect(screen.getByTestId("text-payment-in-flight")).toHaveTextContent("Não feche nem recarregue esta página");
+      expect(closeX).toBeDisabled();
+      await user.click(closeX);
+      expect(onClose).not.toHaveBeenCalled();
+      for (const name of [/PIX/, /Cartão/, /Boleto/]) expect(screen.getByRole("tab", { name })).toBeDisabled();
+      await user.click(screen.getByRole("tab", { name: /PIX/ }));
+      expect(screen.getByRole("tab", { name: /Cartão/ })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByTestId("input-card-number")).toBeInTheDocument();
+
+      await act(async () => release(json(402, { code: "card_declined", message: DECLINED })));
+      expect(await screen.findByTestId("text-card-error")).toHaveTextContent(DECLINED);
+      expect(screen.queryByTestId("text-payment-in-flight")).toBeNull();
+      expect(closeX).toBeEnabled();
+      expect(screen.getByRole("tab", { name: /PIX/ })).toBeEnabled();
+    });
+
     it("hands a card identity_conflict back to the page", async () => {
       const message = "Estes dados não conferem com um cadastro existente.";
       vi.stubGlobal("fetch", serve({ orders: [{ status: 409, body: { code: "identity_conflict", message } }] }));
@@ -983,19 +1028,248 @@ describe("PaymentModal — inline card, Turnstile, statuses and polling", () => 
     });
   });
 
-  it("closing the modal clears the card fields and lifts the unknown-outcome lock", async () => {
-    authState.user = account;
-    vi.stubGlobal("fetch", serve({ orders: [{ status: 504, html: "<html>504</html>" }] }));
-    const { user, close, reopen } = setup();
-    await fillCard(user);
-    await pay(user);
-    await screen.findByTestId("text-payment-unconfirmed");
+  // R37 amended: after an unknown or pending card outcome, no new card charge for the event until a
+  // page reload, or until polling reports paid or cancelled. PIX and boleto stay usable.
+  describe("card-charge lock across close, reopen and remount", () => {
+    const otherEvent = { ...event, id: "66666666-6666-6666-6666-666666666666" } as unknown as Event;
+    const amber = () => screen.queryByTestId("text-payment-unconfirmed");
+    const cardTab = () => screen.getByRole("tab", { name: /Cartão/ });
+    const answered = () => waitFor(() => expect(submit()).not.toHaveTextContent("Processando..."));
 
-    close();
-    reopen();
-    expect(screen.getByTestId("input-card-number")).toHaveValue("");
-    expect(screen.getByTestId("input-card-ccv")).toHaveValue("");
-    expect(screen.queryByTestId("text-payment-unconfirmed")).toBeNull();
-    expect(submit()).toBeEnabled();
+    it("a 504 survives close and reopen: empty fields, the amber alert, card submit disabled, PIX usable", async () => {
+      authState.user = account;
+      const f = serve({ orders: [{ status: 504, html: "<html>504</html>" }] });
+      vi.stubGlobal("fetch", f);
+      const { user, close, reopen } = setup();
+      await fillCard(user);
+      await pay(user);
+      await screen.findByTestId("text-payment-unconfirmed");
+
+      close();
+      reopen();
+      await user.click(cardTab());
+      expect(screen.getByTestId("input-card-number")).toHaveValue("");
+      expect(screen.getByTestId("input-card-ccv")).toHaveValue("");
+      expect(amber()).toHaveTextContent(UNCONFIRMED);
+      expect(amber()).toHaveClass("bg-amber-50");
+      expect(submit()).toBeDisabled();
+      await user.click(screen.getByRole("tab", { name: /PIX/ }));
+      expect(submit()).toBeEnabled();
+      await tick();
+      expect(statusCalls(f)).toHaveLength(0);
+      expect(orderCalls(f)).toHaveLength(1);
+    });
+
+    it("a 504 survives an unmount and a new mount (the home page path)", async () => {
+      authState.user = account;
+      const f = serve({ orders: [{ status: 504, html: "<html>504</html>" }] });
+      vi.stubGlobal("fetch", f);
+      const { user, remount } = setup();
+      await fillCard(user);
+      await pay(user);
+      await screen.findByTestId("text-payment-unconfirmed");
+
+      remount();
+      expect(amber()).toHaveTextContent(UNCONFIRMED);
+      await fillCard(user);
+      expect(submit()).toBeDisabled();
+      expect(orderCalls(f)).toHaveLength(1);
+    });
+
+    it("locks only the event charged", async () => {
+      authState.user = account;
+      vi.stubGlobal("fetch", serve({ orders: [{ status: 504, html: "<html>504</html>" }] }));
+      const { user, remount } = setup();
+      await fillCard(user);
+      await pay(user);
+      await screen.findByTestId("text-payment-unconfirmed");
+
+      remount(otherEvent);
+      await user.click(cardTab());
+      expect(amber()).toBeNull();
+      expect(submit()).toBeEnabled();
+      remount();
+      await user.click(cardTab());
+      expect(submit()).toBeDisabled();
+    });
+
+    it("a 202 survives a new mount, which resumes polling with the guest's X-Order-Access; paid releases the lock", async () => {
+      const f = serve({
+        orders: [{ status: 202, body: unconfirmedBody }],
+        checkStatus: [
+          { status: 200, body: { status: "pending", paymentStatus: null } },
+          { status: 200, body: { status: "paid", paymentStatus: "CONFIRMED" } },
+        ],
+      });
+      vi.stubGlobal("fetch", f);
+      const { user, remount } = setup({ buyer: guest });
+      await fillCard(user);
+      await pay(user);
+      await screen.findByTestId("text-payment-unconfirmed");
+
+      remount();
+      await user.click(cardTab());
+      expect(amber()).toHaveTextContent(UNCONFIRMED);
+      expect(submit()).toBeDisabled();
+      await tick();
+      expect(statusCalls(f)).toHaveLength(1);
+      const [url, init] = statusCalls(f)[0];
+      expect(url).toBe(`/api/orders/${ORDER_ID}/check-status`);
+      expect(init!.headers).toMatchObject({ "X-Order-Access": "ord-tok" });
+      await tick();
+      expect(await screen.findByText("Pagamento confirmado!")).toBeInTheDocument();
+      expect(screen.getByTestId("button-success-create-password")).toBeInTheDocument();
+
+      remount();
+      await user.click(cardTab());
+      expect(amber()).toBeNull();
+      expect(submit()).toBeEnabled();
+    });
+
+    it("a 201 under risk analysis survives close and reopen, resumes session polling, and a polled cancel releases it", async () => {
+      authState.user = account;
+      const f = serve({
+        orders: [
+          {
+            status: 201,
+            body: {
+              order: { id: ORDER_ID, status: "pending", amount: "104.00" },
+              payment: { id: "pay_1", status: "AWAITING_RISK_ANALYSIS", value: 104, installmentCount: 1 },
+            },
+          },
+        ],
+        checkStatus: [
+          { status: 200, body: { message: "Status do pedido: cancelled", order: { id: ORDER_ID, status: "cancelled" }, paymentStatus: "REFUNDED" } },
+        ],
+      });
+      vi.stubGlobal("fetch", f);
+      const { user, close, reopen } = setup();
+      await fillCard(user);
+      await pay(user);
+      expect(await screen.findByText("Pagamento em análise")).toBeInTheDocument();
+
+      close();
+      reopen();
+      await user.click(cardTab());
+      expect(amber()).toHaveTextContent(UNCONFIRMED);
+      expect(submit()).toBeDisabled();
+      await tick();
+      expect(statusCalls(f)).toHaveLength(1);
+      expect(statusCalls(f)[0][1]!.headers).not.toHaveProperty("X-Order-Access");
+      expect(await screen.findByTestId("text-payment-poll-status")).toHaveTextContent("Pagamento cancelado");
+      expect(amber()).toBeNull();
+      expect(submit()).toBeEnabled();
+
+      close();
+      reopen();
+      await user.click(cardTab());
+      expect(amber()).toBeNull();
+      expect(submit()).toBeEnabled();
+    });
+
+    it("a cancelled PIX order does not free a locked card", async () => {
+      authState.user = account;
+      const f = serve({
+        orders: [
+          { status: 504, html: "<html>504</html>" },
+          {
+            status: 201,
+            body: {
+              order: { id: ORDER_ID, status: "pending", amount: "105.00" },
+              payment: { id: "pay_2", status: "PENDING", value: 105, pixQrCode: "x", pixPayload: "PIX-PAYLOAD" },
+            },
+          },
+        ],
+        checkStatus: [{ status: 200, body: { message: "Status do pedido: cancelled", order: { id: ORDER_ID, status: "cancelled" } } }],
+      });
+      vi.stubGlobal("fetch", f);
+      const { user, close, reopen } = setup();
+      await fillCard(user);
+      await pay(user);
+      await screen.findByTestId("text-payment-unconfirmed");
+      await user.click(screen.getByRole("tab", { name: /PIX/ }));
+      await pay(user);
+      expect(await screen.findByText("PIX Gerado com Sucesso!")).toBeInTheDocument();
+      await tick();
+      expect(await screen.findByTestId("text-payment-poll-status")).toHaveTextContent("Pagamento cancelado");
+
+      close();
+      reopen();
+      await user.click(cardTab());
+      expect(amber()).toHaveTextContent(UNCONFIRMED);
+      expect(submit()).toBeDisabled();
+    });
+
+    it("a polling 404 keeps the lock", async () => {
+      const f = serve({
+        orders: [{ status: 202, body: unconfirmedBody }],
+        checkStatus: [{ status: 404, body: { message: "Pedido não encontrado" } }],
+      });
+      vi.stubGlobal("fetch", f);
+      const { user, close, reopen } = setup({ buyer: guest });
+      await fillCard(user);
+      await pay(user);
+      await screen.findByTestId("text-payment-unconfirmed");
+      await tick();
+      expect(await screen.findByTestId("text-payment-poll-status")).toHaveTextContent(EMAIL_LATER);
+
+      close();
+      reopen();
+      await user.click(cardTab());
+      expect(amber()).toHaveTextContent(UNCONFIRMED);
+      expect(submit()).toBeDisabled();
+    });
+
+    it("a modal unmounted while the charge is in flight comes back locked; the late answer still settles the lock", async () => {
+      authState.user = account;
+      let release!: (response: Response) => void;
+      const f = vi.fn((input: RequestInfo | URL, _init?: RequestInit) =>
+        String(input) === "/api/orders"
+          ? new Promise<Response>((resolve) => {
+              release = resolve;
+            })
+          : Promise.resolve(json(404, {})),
+      );
+      vi.stubGlobal("fetch", f);
+      const { user, remount } = setup();
+      await fillCard(user);
+      await pay(user);
+      expect(orderCalls(f as unknown as FetchMock)).toHaveLength(1);
+
+      remount();
+      expect(amber()).toHaveTextContent(UNCONFIRMED);
+      await user.click(cardTab());
+      expect(submit()).toBeDisabled();
+
+      await act(async () => release(json(402, { code: "card_declined", message: DECLINED })));
+      await waitFor(() => expect(cardChargeLockFor(event.id)).toBeNull());
+      remount();
+      await user.click(cardTab());
+      expect(amber()).toBeNull();
+      expect(submit()).toBeEnabled();
+    });
+
+    it.each([
+      [402, "card_declined", {}],
+      [400, "invalid_card", {}],
+      [403, "turnstile_failed", {}],
+      [429, "rate_limited", {}],
+      [502, "payment_provider_error", {}],
+      [400, "identity_required", { missing: ["document"] }],
+      [409, "identity_conflict", {}],
+    ])("a JSON %i %s (retry-safe) leaves no lock behind", async (status, code, extra) => {
+      const f = serve({ orders: [{ status, body: { code, message: "Mensagem do servidor.", ...extra } }] });
+      vi.stubGlobal("fetch", f);
+      const { user, remount } = setup({ buyer: guest });
+      await fillCard(user);
+      await pay(user);
+      await answered();
+      expect(cardChargeLockFor(event.id)).toBeNull();
+
+      remount();
+      await user.click(cardTab());
+      expect(amber()).toBeNull();
+      expect(submit()).toBeEnabled();
+    });
   });
 });
