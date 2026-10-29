@@ -23,7 +23,7 @@ vi.mock("wouter", () => ({ useLocation: () => ["/", setLocation] }));
 
 import PaymentModal from "../../components/PaymentModal";
 import { queryClient as appQueryClient } from "../../lib/queryClient";
-import { cardChargeLockFor, resetCardChargeLocks } from "../../lib/cardChargeLock";
+import { cardChargeLockFor, dropGuestAccessTokens, resetCardChargeLocks } from "../../lib/cardChargeLock";
 
 // The card-charge lock lives in module scope: no test may inherit another test's lock.
 afterEach(() => resetCardChargeLocks());
@@ -1124,6 +1124,36 @@ describe("PaymentModal — inline card, Turnstile, statuses and polling", () => 
       await user.click(cardTab());
       expect(amber()).toBeNull();
       expect(submit()).toBeEnabled();
+    });
+
+    it("R2: an auth change drops the guest token, keeps the card locked, and never polls with the old token", async () => {
+      const f = serve({
+        orders: [{ status: 202, body: unconfirmedBody }],
+        checkStatus: [{ status: 200, body: { status: "paid", paymentStatus: "CONFIRMED" } }],
+      });
+      vi.stubGlobal("fetch", f);
+      const { user, remount } = setup({ buyer: guest });
+      await fillCard(user);
+      await pay(user);
+      await screen.findByTestId("text-payment-unconfirmed");
+
+      act(() => dropGuestAccessTokens());
+      await tick();
+      await tick();
+      expect(statusCalls(f)).toHaveLength(0);
+      expect(cardChargeLockFor(event.id)).not.toBeNull();
+      expect(cardChargeLockFor(event.id)!.accessToken).toBeNull();
+      expect(screen.getByTestId("text-payment-poll-status")).toHaveTextContent(/recebe o ingresso por e-mail/);
+      expect(amber()).toHaveTextContent(UNCONFIRMED);
+
+      // A new mount (the next buyer on the same tab) stays locked and does not poll either.
+      authState.user = account;
+      remount();
+      await user.click(cardTab());
+      expect(submit()).toBeDisabled();
+      await tick();
+      expect(statusCalls(f)).toHaveLength(0);
+      expect(screen.getByTestId("text-payment-poll-status")).toHaveTextContent(/recebe o ingresso por e-mail/);
     });
 
     it("a 201 under risk analysis survives close and reopen, resumes session polling, and a polled cancel releases it", async () => {

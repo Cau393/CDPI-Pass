@@ -17,7 +17,7 @@ import { identityRequiredMissing, refreshAfterStaleRegistration, RELOAD_PAGE_MES
 import { CardPaymentForm, type CardPaymentFormHandle } from "@/components/CardPaymentForm";
 import { CheckoutSuccess } from "@/components/CheckoutSuccess";
 import { TurnstileWidget, isTurnstileConfigured, type TurnstileHandle } from "@/components/TurnstileWidget";
-import { cardChargeLockFor, lockCardCharge, releaseCardCharge } from "@/lib/cardChargeLock";
+import { cardChargeLockFor, lockCardCharge, releaseCardCharge, subscribeGuestTokenDrop } from "@/lib/cardChargeLock";
 
 interface EventForModal {
   id: string;
@@ -108,7 +108,8 @@ function startState(eventId: string, isGuest: boolean): CheckoutState {
     ...FRESH,
     cardLocked: true,
     cardAlert: { kind: "unconfirmed", message: UNCONFIRMED_MESSAGE },
-    ...pollFor(lock.orderId, lock.accessToken, isGuest),
+    // The guest token was dropped on an auth change: stay locked, do not poll (same as a start without a token).
+    ...(lock.guestTokenDropped && lock.orderId ? { pollNotice: EMAIL_LATER_MESSAGE } : pollFor(lock.orderId, lock.accessToken, isGuest)),
   };
 }
 
@@ -177,6 +178,17 @@ export default function PaymentModal({
   };
 
   const watchOrder = (orderId: unknown, accessToken: unknown) => pollFor(orderId, accessToken, isGuest);
+
+  // Auth changed in this tab: stop polling with the guest token held in state. The card stays locked.
+  useEffect(
+    () =>
+      subscribeGuestTokenDrop(() =>
+        setCheckout((current) =>
+          current.poll?.accessToken ? { ...current, poll: null, pollNotice: EMAIL_LATER_MESSAGE } : current,
+        ),
+      ),
+    [],
+  );
 
   // Every 5 s while open; stops on paid, cancelled, 404, close or unmount.
   useEffect(() => {

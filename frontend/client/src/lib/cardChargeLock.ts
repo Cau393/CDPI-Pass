@@ -10,6 +10,8 @@ export interface CardChargeLock {
   readonly orderId: string | null;
   /** Guest: the order's `orderAccessToken` (X-Order-Access) to poll with. Logged-in: null. */
   readonly accessToken: string | null;
+  /** Set when the guest token was dropped on an auth change: the order can no longer be polled from here. */
+  readonly guestTokenDropped?: boolean;
 }
 
 const locks = new Map<string, CardChargeLock>();
@@ -30,4 +32,26 @@ export function releaseCardCharge(eventId: string): void {
 /** Tests only: module state outlives a render. */
 export function resetCardChargeLocks(): void {
   locks.clear();
+}
+
+const dropListeners = new Set<() => void>();
+
+/** A mounted modal hears the drop and stops polling with the token it holds in state. */
+export function subscribeGuestTokenDrop(listener: () => void): () => void {
+  dropListeners.add(listener);
+  return () => {
+    dropListeners.delete(listener);
+  };
+}
+
+/**
+ * Auth changed in this tab (login, logout, another account): no lock keeps the first buyer's guest
+ * token, so nobody else polls that order. The locks stay: the card submit remains locked (R37).
+ */
+export function dropGuestAccessTokens(): void {
+  for (const [eventId, lock] of Array.from(locks)) {
+    if (lock.accessToken == null) continue;
+    locks.set(eventId, { orderId: lock.orderId, accessToken: null, guestTokenDropped: true });
+  }
+  dropListeners.forEach((listener) => listener());
 }

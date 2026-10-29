@@ -10,6 +10,7 @@ vi.mock("wouter", () => ({
 
 const authState: {
   isAuthenticated: boolean;
+  isLoading?: boolean;
   user?: { cpf: string | null; foreignDocument: string | null; isForeigner: boolean; address: string | null };
 } = { isAuthenticated: false };
 vi.mock("../../hooks/useAuth", () => ({
@@ -224,6 +225,39 @@ describe("HomePage — main event cover image", () => {
     await waitFor(() => expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument());
     expect(setLocation).not.toHaveBeenCalledWith("/profile");
     expect(toastSpy).not.toHaveBeenCalled();
+  });
+
+  describe("N2: auth still resolving", () => {
+    afterEach(() => {
+      authState.isLoading = undefined;
+      localStorage.clear();
+    });
+
+    it("token + loading: the paid and the free CTA open no guest dialog", async () => {
+      localStorage.setItem("token", "t");
+      authState.isLoading = true;
+      const user = userEvent.setup();
+      vi.stubGlobal("fetch", mockApi({ ...baseEvent, price: "100.00", isFree: false }));
+      const view = renderPage();
+      await user.click(await screen.findByTestId("button-buy-main"));
+      expect(screen.queryByTestId("input-guest-name")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
+      view.unmount();
+
+      vi.stubGlobal("fetch", mockApi(baseEvent));
+      renderPage();
+      await user.click(await screen.findByTestId("button-buy-main"));
+      expect(screen.queryByTestId("input-guest-name")).not.toBeInTheDocument();
+    });
+
+    it("no token + loading: the guest dialog still opens", async () => {
+      authState.isLoading = true;
+      vi.stubGlobal("fetch", mockApi({ ...baseEvent, price: "100.00", isFree: false }));
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(await screen.findByTestId("button-buy-main"));
+      expect(await screen.findByTestId("input-guest-name")).toBeInTheDocument();
+    });
   });
 
   it("subscribes in place for a free event and never opens the payment modal", async () => {

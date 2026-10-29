@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
+import { isAuthResolving } from "@/lib/authResolving";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { isOnlineEvent } from "@shared/eventModality";
@@ -38,7 +39,7 @@ type SubscribeResponse = {
  * shows `CheckoutSuccess` in place and never navigates to /profile.
  */
 export function useFreeSubscribe() {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [prompt, setPrompt] = useState<{ event: Event; missing?: SystemField[] } | null>(null);
@@ -134,6 +135,8 @@ export function useFreeSubscribe() {
   });
 
   const subscribe = (event: Event) => {
+    // A session is still being resolved: the buyer may be logged in, so no guest dialog yet (N2).
+    if (isAuthResolving(isLoading)) return;
     // A guest always sees the dialog: it is where they type who they are.
     if (!isAuthenticated || needsRegistrationDialog(event, user)) {
       setPromptError(null);

@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Calendar, MapPin, Users, Clock, ArrowLeft, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { isAuthResolving } from "@/lib/authResolving";
 import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
 import type { Event, Order } from "@shared/schema";
@@ -44,7 +45,7 @@ interface EventWithPromo extends Event {
 export default function EventDetailsPage() {
   const { id } = useParams();
   const [, setLocation] = useLocation();
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const { toast } = useToast();
 
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -199,6 +200,8 @@ export default function EventDetailsPage() {
   // ✅ Updated handleBuyTicket to accept event + promo
   const handleBuyTicket = (selected: Event, code: string | null) => {
     if (!event) return;
+    // A session is still being resolved: no guest dialog for a possibly logged-in buyer (N2).
+    if (isAuthResolving(authLoading)) return;
     if (isFreeEvent(event)) return;
     if (foreignPaidCheckoutBlocked(user)) {
       toast({

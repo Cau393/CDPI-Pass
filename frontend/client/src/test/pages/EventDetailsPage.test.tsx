@@ -16,7 +16,7 @@ type Account = {
   isForeigner: boolean;
   address: string | null;
 };
-const authState: { isAuthenticated: boolean; user?: Account } = { isAuthenticated: true };
+const authState: { isAuthenticated: boolean; isLoading?: boolean; user?: Account } = { isAuthenticated: true };
 vi.mock("../../hooks/useAuth", () => ({
   useAuth: () => authState,
 }));
@@ -897,6 +897,40 @@ describe("EventDetailsPage — guest purchase (logged out)", () => {
     await user.type(screen.getByTestId("input-guest-phone"), "11987654321");
     await user.type(screen.getByLabelText("CPF"), "52998224725");
   }
+
+  describe("N2: auth still resolving", () => {
+    afterEach(() => {
+      authState.isLoading = undefined;
+    });
+
+    it("token + loading: the paid CTA opens no guest dialog", async () => {
+      localStorage.setItem("token", "t");
+      authState.isLoading = true;
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(await screen.findByTestId("button-event-cta"));
+      expect(screen.queryByTestId("input-guest-email")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
+    });
+
+    it("token + loading: the free CTA opens no guest dialog", async () => {
+      localStorage.setItem("token", "t");
+      authState.isLoading = true;
+      vi.stubGlobal("fetch", mockApi({ ...baseEvent, price: "0.00", isFree: true }));
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(await screen.findByTestId("button-event-cta"));
+      expect(screen.queryByTestId("input-guest-email")).not.toBeInTheDocument();
+    });
+
+    it("no token + loading: the guest dialog still opens", async () => {
+      authState.isLoading = true;
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(await screen.findByTestId("button-event-cta"));
+      expect(await screen.findByTestId("input-guest-email")).toBeInTheDocument();
+    });
+  });
 
   it("opens the guest dialog on Comprar, with no login toast or redirect", async () => {
     const user = userEvent.setup();

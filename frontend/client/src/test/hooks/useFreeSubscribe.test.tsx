@@ -6,11 +6,14 @@ import type { ReactNode } from "react";
 import type { Event } from "@shared/schema";
 
 const LOGGED_IN = { isForeigner: false, cpf: "52998224725", email: "maria@example.com" };
-const authState: { user: { isForeigner: boolean; cpf?: string | null; email?: string } | undefined } = {
+const authState: {
+  user: { isForeigner: boolean; cpf?: string | null; email?: string } | undefined;
+  isLoading?: boolean;
+} = {
   user: LOGGED_IN,
 };
 vi.mock("../../hooks/useAuth", () => ({
-  useAuth: () => ({ user: authState.user, isAuthenticated: authState.user != null }),
+  useAuth: () => ({ user: authState.user, isLoading: authState.isLoading, isAuthenticated: authState.user != null }),
 }));
 vi.mock("../../hooks/use-toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
 const setLocation = vi.fn();
@@ -342,5 +345,50 @@ describe("useFreeSubscribe — guest (no session)", () => {
     await userEvent.setup().click(screen.getByText("abrir"));
     await waitFor(() => expect(setLocation).toHaveBeenCalledWith("/profile"));
     expect(screen.queryByTestId("checkout-success")).not.toBeInTheDocument();
+  });
+});
+
+
+describe("useFreeSubscribe — N2: auth still resolving", () => {
+  function Harness() {
+    const { subscribe, registrationDialog } = useFreeSubscribe();
+    return (
+      <>
+        <button onClick={() => subscribe(event)}>abrir</button>
+        {registrationDialog}
+      </>
+    );
+  }
+  const mount = () =>
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <Harness />
+      </QueryClientProvider>,
+    );
+
+  afterEach(() => {
+    authState.user = LOGGED_IN;
+    authState.isLoading = undefined;
+    localStorage.clear();
+  });
+
+  it("token + loading: subscribe opens no guest dialog and sends nothing", async () => {
+    localStorage.setItem("token", "t");
+    authState.user = undefined;
+    authState.isLoading = true;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    mount();
+    await userEvent.setup().click(screen.getByText("abrir"));
+    expect(screen.queryByTestId("input-guest-email")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("no token + loading: the guest dialog opens", async () => {
+    authState.user = undefined;
+    authState.isLoading = true;
+    mount();
+    await userEvent.setup().click(screen.getByText("abrir"));
+    expect(await screen.findByTestId("input-guest-email")).toBeInTheDocument();
   });
 });

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { MapPin, Calendar, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
+import { isAuthResolving } from "@/lib/authResolving";
 import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
 import type { Event, Order } from "@shared/schema";
@@ -59,7 +60,7 @@ export default function HomePage() {
   const [expandedFAQ, setExpandedFAQ] = useState<string | null>(null);
   const [promoCode, setPromoCode] = useState<string | null>(null);
   const [, setLocation] = useLocation();
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const { toast } = useToast();
   const {
     subscribe,
@@ -130,6 +131,8 @@ export default function HomePage() {
   };
 
   const handlePrimaryCta = (event: Event) => {
+    // A session is still being resolved: no guest dialog for a possibly logged-in buyer (N2).
+    if (isAuthResolving(authLoading)) return;
     if (isFreeEvent(event)) {
       subscribe(event);
       return;
