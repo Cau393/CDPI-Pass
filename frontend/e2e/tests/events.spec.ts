@@ -3,6 +3,8 @@ import { createEvent, fmtCpf, scalar, sql } from "../support/db";
 import { clickEventCta, createAccount, login, makeUser, orderCount, waitForRegistrationDialog } from "../support/ui";
 import { ADDRESS, completeRegistrationDialog, newPassport, paymentMethods, uniqueCpf } from "../support/flows";
 import { FOREIGN_PAID_CHECKOUT_ENABLED } from "../../shared/foreignCheckout";
+import { payWithCard } from "../support/payments";
+import { FAKE_CARDS } from "../harness/fakeCards";
 
 test.describe("online free event", () => {
   test("BR 4-field account subscribes without any dialog", async ({ page }) => {
@@ -78,9 +80,7 @@ test.describe("presencial free event", () => {
 
 test.describe("presencial paid event", () => {
   for (const method of ["PIX", "Boleto", "Cartão"] as const) {
-    // Stage 4: inline card form replaces the hosted link (the card order now needs card fields).
-    const run = method === "Cartão" ? test.fixme : test;
-    run(`BR pays with ${method}`, async ({ page, context }) => {
+    test(`BR pays with ${method}`, async ({ page, context }) => {
       const ev = await createEvent("presencialPaid");
       const u = makeUser(`paid${method.slice(0, 3).toLowerCase()}`);
       await createAccount(u);
@@ -93,12 +93,9 @@ test.describe("presencial paid event", () => {
       await expectNoHorizontalScroll(page, "payment modal");
       await dialog.getByRole("tab", { name: method }).click();
       if (method === "Cartão") {
-        const popup = context.waitForEvent("page");
-        await dialog.getByTestId("button-confirm-payment").click();
-        const opened = await popup;
-        expect(opened.url()).toContain("/link/");
-        await opened.close();
-        await expect(dialog.getByText("Pagamento pendente")).toBeVisible();
+        // Stage 4: the inline card form charges through the (fake) Asaas; an approved card pays at once.
+        await payWithCard(dialog, { number: FAKE_CARDS.approved });
+        await expect(dialog.getByText("Pagamento confirmado!")).toBeVisible();
       } else {
         await dialog.getByTestId("button-confirm-payment").click();
         if (method === "PIX") {
@@ -109,7 +106,7 @@ test.describe("presencial paid event", () => {
         }
       }
       await expectNoHorizontalScroll(page, `payment ${method}`);
-      expect(await orderCount(u.email, ev.id, "pending")).toBe("1");
+      expect(await orderCount(u.email, ev.id, method === "Cartão" ? "paid" : "pending")).toBe("1");
       expect(
         await scalar(`SELECT o.payment_method FROM orders o JOIN users x ON x.id=o.user_id WHERE lower(x.email)=lower($1)`, [u.email]),
       ).toBe(method === "PIX" ? "pix" : method === "Boleto" ? "boleto" : "credit_card");

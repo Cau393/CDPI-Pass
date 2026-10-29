@@ -20,7 +20,23 @@ const PIX_IMAGE =
 let seq = 0;
 // installment id -> row values, answered by GET /payments?installment=<id>.
 const installments = new Map<string, number[]>();
+// payment id -> what Asaas would return for it. Card data is never kept here.
+interface StoredPayment {
+  id: string;
+  status: string;
+  value: number;
+  billingType: string;
+  externalReference?: string;
+  installment?: string;
+  dateCreated: string;
+}
+const payments = new Map<string, StoredPayment>();
 const requests: { method: string; path: string; body: unknown }[] = [];
+
+function keep(p: StoredPayment) {
+  payments.set(p.id, p);
+  return p;
+}
 
 function send(res: http.ServerResponse, status: number, body: unknown, type = "application/json") {
   res.writeHead(status, { "Content-Type": type });
@@ -45,6 +61,14 @@ const server = http.createServer((req, res) => {
       return res.end();
     }
     if (path === "/__requests") return send(res, 200, requests);
+    // Test hook: flip a stored payment (the webhook is posted by the test itself).
+    const flip = path.match(/^\/__payments\/([^/]+)\/status$/);
+    if (method === "POST" && flip) {
+      const stored = payments.get(flip[1]);
+      if (!stored || typeof body?.status !== "string") return send(res, stored ? 400 : 404, { error: "unknown payment or no status" });
+      stored.status = body.status;
+      return send(res, 200, stored);
+    }
     if (path === "/health") return send(res, 200, { ok: true });
     requests.push({ method, path, body: body ? { ...body, cpfCnpj: undefined, creditCard: undefined, creditCardHolderInfo: undefined } : null });
     if (requests.length > 500) requests.shift();
@@ -90,19 +114,31 @@ const server = http.createServer((req, res) => {
         installments.set(installment, Array.from({ length: count }, () => value));
       }
       const risk = number === FAKE_CARDS.risk;
-      return send(res, 200, {
+      const stored = keep({
         id,
         status: risk ? "AWAITING_RISK_ANALYSIS" : "CONFIRMED",
         value,
-        netValue: value,
         billingType: "CREDIT_CARD",
+        externalReference: body.externalReference,
         ...(installment ? { installment } : {}),
         dateCreated: new Date().toISOString(),
+      });
+      return send(res, 200, {
+        ...stored,
+        netValue: value,
         creditCard: { creditCardNumber: number.slice(-4), creditCardBrand: "VISA", creditCardToken: "fake-token" },
       });
     }
     if (method === "POST" && path === "/payments") {
       const id = `pay_fake${++seq}`;
+      keep({
+        id,
+        status: "PENDING",
+        value: body?.value,
+        billingType: body?.billingType ?? "UNDEFINED",
+        externalReference: body?.externalReference,
+        dateCreated: new Date().toISOString(),
+      });
       return send(res, 200, {
         id,
         status: "PENDING",
@@ -124,6 +160,17 @@ const server = http.createServer((req, res) => {
     if (method === "GET" && path === "/payments" && url.searchParams.get("installment")) {
       const rows = installments.get(url.searchParams.get("installment")!) ?? [];
       return send(res, 200, { data: rows.map((value, i) => ({ id: `pay_fakeins${i}`, value })) });
+    }
+    const one = path.match(/^\/payments\/([^/]+)$/);
+    if (method === "GET" && one) {
+      const stored = payments.get(one[1]);
+      // Same shape as Asaas for an unknown id.
+      if (!stored) return send(res, 404, { errors: [{ code: "invalid_object", description: "Não foi possível encontrar o registro." }] });
+      return send(res, 200, stored);
+    }
+    if (method === "GET" && path === "/payments" && url.searchParams.get("externalReference")) {
+      const ref = url.searchParams.get("externalReference");
+      return send(res, 200, { data: Array.from(payments.values()).filter((p) => p.externalReference === ref) });
     }
     if (method === "GET" && path.startsWith("/payments")) return send(res, 200, { data: [] });
     if (method === "GET" && /^\/(invoice|boleto|link)\//.test(path)) {
