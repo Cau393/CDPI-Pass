@@ -16,13 +16,18 @@ vi.mock("../../hooks/useAuth", () => ({
   useAuth: () => authState,
 }));
 
+const toastSpy = vi.fn();
 vi.mock("../../hooks/use-toast", () => ({
-  useToast: () => ({ toast: vi.fn() }),
+  useToast: () => ({ toast: toastSpy }),
 }));
 
 vi.mock("../../components/PaymentModal", () => ({
-  default: (props: { buyer?: unknown }) => (
-    <div data-testid="payment-modal" data-buyer={JSON.stringify(props.buyer ?? null)} />
+  default: (props: { buyer?: unknown; onSuccess?: () => void }) => (
+    <div data-testid="payment-modal" data-buyer={JSON.stringify(props.buyer ?? null)}>
+      <button type="button" onClick={() => props.onSuccess?.()}>
+        simular sucesso
+      </button>
+    </div>
   ),
 }));
 
@@ -213,6 +218,12 @@ describe("HomePage — main event cover image", () => {
     const modal = await screen.findByTestId("payment-modal");
     expect(JSON.parse(modal.getAttribute("data-buyer")!)).toMatchObject({ email: "camila@example.com" });
     expect(setLocation).not.toHaveBeenCalledWith(expect.stringContaining("/login"));
+
+    toastSpy.mockClear();
+    await user.click(screen.getByText("simular sucesso"));
+    await waitFor(() => expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument());
+    expect(setLocation).not.toHaveBeenCalledWith("/profile");
+    expect(toastSpy).not.toHaveBeenCalled();
   });
 
   it("subscribes in place for a free event and never opens the payment modal", async () => {

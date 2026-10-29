@@ -486,6 +486,11 @@ export default function EventDetailsPage() {
             setRegistrationPrompt({ message, conflict: true });
           }}
           onSuccess={() => {
+            // A guest has no profile: the modal's own success screen said it all.
+            if (!isAuthenticated) {
+              setIsPaymentModalOpen(false);
+              return;
+            }
             toast({
               title: "Pagamento iniciado!",
               description:

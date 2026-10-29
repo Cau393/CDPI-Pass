@@ -34,6 +34,7 @@ vi.mock("../../components/PaymentModal", () => ({
     buyer?: unknown;
     onIdentityRequired: (missing: string[], message: string) => void;
     onIdentityConflict?: (message: string) => void;
+    onSuccess?: () => void;
   }) =>
     props.isOpen ? (
       <div
@@ -41,6 +42,9 @@ vi.mock("../../components/PaymentModal", () => ({
         data-answers={JSON.stringify(props.answers)}
         data-buyer={JSON.stringify(props.buyer ?? null)}
       >
+        <button type="button" onClick={() => props.onSuccess?.()}>
+          simular sucesso
+        </button>
         <button type="button" onClick={() => props.onIdentityConflict?.("Estes dados não conferem.")}>
           simular identity_conflict
         </button>
@@ -932,6 +936,18 @@ describe("EventDetailsPage — guest purchase (logged out)", () => {
       `/login?next=${encodeURIComponent(GUEST_PATH)}`,
     );
     expect((screen.getByTestId("input-guest-email") as HTMLInputElement).value).toBe("camila@example.com");
+  });
+
+  it("closes the modal on success without going to /profile or pointing to it in a toast", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByTestId("button-event-cta"));
+    await fillGuest(user);
+    await user.click(screen.getByTestId("button-confirm-registration"));
+    await user.click(await screen.findByText("simular sucesso"));
+    await waitFor(() => expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument());
+    expect(setLocation).not.toHaveBeenCalledWith("/profile");
+    expect(toastSpy).not.toHaveBeenCalled();
   });
 
   it.runIf(!FOREIGN_PAID_CHECKOUT_ENABLED)("blocks a typed foreigner on a paid event", async () => {

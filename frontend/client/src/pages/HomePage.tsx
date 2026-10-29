@@ -521,6 +521,12 @@ export default function HomePage() {
             setRegistrationPrompt({ event: conflicted, message, conflict: true });
           }}
           onSuccess={() => {
+            // A guest has no profile: the modal's own success screen said it all.
+            if (!isAuthenticated) {
+              setIsPaymentModalOpen(false);
+              setSelectedEvent(null);
+              return;
+            }
             toast({
               title: "Pagamento iniciado!",
               description: "Acompanhe o status do seu pedido na página de perfil.",
