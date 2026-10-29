@@ -129,8 +129,8 @@ describe("finalizeOrderPaidLikeWebhook", () => {
     await finalizeOrderPaidLikeWebhook(baseOrder(), pixMeta);
     await finalizeOrderPaidLikeWebhook(baseOrder(), { billingType: "CREDIT_CARD" }, { duplicatePolicy: "reject_only" });
     expect(claimPaidOrder.mock.calls).toEqual([
-      ["order-uuid", "refund_then_discard"],
-      ["order-uuid", "reject_only"],
+      ["order-uuid", "refund_then_discard", pixMeta.paymentId],
+      ["order-uuid", "reject_only", undefined],
     ]);
   });
 

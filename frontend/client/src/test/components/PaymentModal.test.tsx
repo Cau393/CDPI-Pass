@@ -1126,6 +1126,56 @@ describe("PaymentModal — inline card, Turnstile, statuses and polling", () => 
       expect(submit()).toBeEnabled();
     });
 
+    it("F4a: unknown outcome, polled to paid, closed and reopened: a fresh form whose submit waits only for Turnstile, then is enabled", async () => {
+      const turnstile = stubTurnstile();
+      const f = serve({
+        orders: [{ status: 202, body: unconfirmedBody }],
+        checkStatus: [{ status: 200, body: { status: "paid", paymentStatus: "CONFIRMED" } }],
+      });
+      vi.stubGlobal("fetch", f);
+      const { user, close, reopen } = setup({ buyer: guest });
+      await turnstile.solve("tok-1");
+      await fillCard(user);
+      await pay(user);
+      await screen.findByTestId("text-payment-unconfirmed");
+      await tick();
+      expect(await screen.findByText("Pagamento confirmado!")).toBeInTheDocument();
+      expect(cardChargeLockFor(event.id)).toBeNull();
+
+      close();
+      reopen();
+      await user.click(cardTab());
+      // Reopen starts over (T3 decision 3): empty form, no success screen, no lock.
+      expect(screen.queryByText("Pagamento confirmado!")).toBeNull();
+      expect(screen.getByTestId("input-card-number")).toHaveValue("");
+      expect(amber()).toBeNull();
+      // The disabled button is the new Turnstile challenge, not a stuck lock.
+      expect(submit()).toBeDisabled();
+      await turnstile.solve("tok-2");
+      expect(submit()).toBeEnabled();
+    });
+
+    it("F4a: closed while locked, paid meanwhile: reopening polls and shows the success screen", async () => {
+      authState.user = account;
+      const f = serve({
+        orders: [{ status: 202, body: unconfirmedBody }],
+        checkStatus: [{ status: 200, body: { order: { id: ORDER_ID, status: "paid", amount: "105.00" }, paymentStatus: "CONFIRMED" } }],
+      });
+      vi.stubGlobal("fetch", f);
+      const { user, close, reopen } = setup();
+      await fillCard(user);
+      await pay(user);
+      await screen.findByTestId("text-payment-unconfirmed");
+      close();
+      await tick();
+      expect(statusCalls(f)).toHaveLength(0);
+
+      reopen();
+      await tick();
+      expect(await screen.findByText("Pagamento confirmado!")).toBeInTheDocument();
+      expect(cardChargeLockFor(event.id)).toBeNull();
+    });
+
     it("R2: an auth change drops the guest token, keeps the card locked, and never polls with the old token", async () => {
       const f = serve({
         orders: [{ status: 202, body: unconfirmedBody }],
