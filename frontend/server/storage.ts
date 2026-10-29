@@ -625,7 +625,13 @@ export class DatabaseStorage implements IStorage {
       const [paid] = await tx
         .update(orders)
         // A lost card answer leaves the order without an id; the webhook that pays it fills it in.
-        .set({ status: "paid", updatedAt: new Date(), ...(paymentId && !order.asaasPaymentId ? { asaasPaymentId: paymentId } : {}) })
+        // COALESCE decides in the UPDATE itself: the order row is not locked above, so a concurrent
+        // writer of the id must win over this one.
+        .set({
+          status: "paid",
+          updatedAt: new Date(),
+          ...(paymentId ? { asaasPaymentId: sql`COALESCE(${orders.asaasPaymentId}, ${paymentId})` } : {}),
+        })
         .where(and(eq(orders.id, orderId), eq(orders.status, "pending")))
         .returning();
       if (!paid) return { outcome: "not_pending", status: null };

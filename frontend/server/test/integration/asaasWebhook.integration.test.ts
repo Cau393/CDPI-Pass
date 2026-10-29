@@ -211,6 +211,14 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
       expect(await deliver(confirmed(orderId, paymentId))).toBe(200);
       expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
       expect(await storedId(orderId)).toBe(paymentId);
+      const email = (await pool.query(`SELECT u.email FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id = $1`, [orderId])).rows[0].email as string;
+      expect(ticketEmails.filter((to) => to === email)).toHaveLength(1);
+
+      // Asaas redelivers: a no-op (same id, one seat, no second ticket).
+      expect(await deliver(confirmed(orderId, paymentId))).toBe(200);
+      expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+      expect(await storedId(orderId)).toBe(paymentId);
+      expect(ticketEmails.filter((to) => to === email)).toHaveLength(1);
     });
 
     it("an equal stored id stays as it is", async () => {
@@ -219,6 +227,36 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
       expect(await deliver(confirmed(orderId, paymentId))).toBe(200);
       expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
       expect(await storedId(orderId)).toBe(paymentId);
+    });
+
+    it("a payment-link card order (stored link id) keeps it and is not warned about a pay_ id", async () => {
+      const linkId = `lnk${randomUUID().slice(0, 12)}`;
+      const { eventId, orderId } = await pendingOrder("credit_card", linkId);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(await deliver(confirmed(orderId, `pay_${randomUUID().slice(0, 12)}`))).toBe(200);
+        expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+        expect(await storedId(orderId)).toBe(linkId);
+        expect(warn.mock.calls.map((c) => c.join(" ")).filter((l) => l.includes("PAYMENT_ID_MISMATCH"))).toEqual([]);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("no mismatch warning when the claim discards the order as a duplicate", async () => {
+      const first = await pendingOrder("pix", "pay_first_dup");
+      expect(await deliver({ event: "PAYMENT_RECEIVED", payment: { id: "pay_first_dup", billingType: "PIX", status: "RECEIVED", value: 637, externalReference: first.orderId } })).toBe(200);
+      const kept = `pay_${randomUUID().slice(0, 12)}`;
+      const secondId = await anotherOrder(first, kept);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(await deliver(confirmed(secondId, `pay_${randomUUID().slice(0, 12)}`))).toBe(200);
+        expect((await pool.query(`SELECT status FROM orders WHERE id = $1`, [secondId])).rows[0].status).toBe("cancelled");
+        expect(await storedId(secondId)).toBe(kept);
+        expect(warn.mock.calls.map((c) => c.join(" ")).filter((l) => l.includes("PAYMENT_ID_MISMATCH"))).toEqual([]);
+      } finally {
+        warn.mockRestore();
+      }
     });
 
     it("a different stored id is never overwritten, and the mismatch is warned without the ids", async () => {
