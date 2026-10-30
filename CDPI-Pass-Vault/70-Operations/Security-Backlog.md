@@ -35,6 +35,7 @@ Priority key: **P1** exploitable now or silent data loss · **P2** broken featur
 | 25 | P3 | Dev/test-only toolchain advisories (full `pnpm audit`, not `--prod`): `vite` 5.4.21 dev server (1 HIGH), `vitest`/`tinypool` (2 CRITICAL), `undici` via jsdom (2 HIGH), `shell-quote` via drizzle-kit → gel (1 CRITICAL) | open; none ships in the prod runtime (`vite build` runs on EC2, not the dev server); upgrade after 2026-10-21 |
 | 26 | P3 | pm2 on EC2 was installed with `npm install -g pm2`, the last npm use (owner wants pnpm only) | open; after 2026-10-21: `pnpm add -g pm2`, then `pm2 update` so the running daemon moves to the new binary, then `npm rm -g pm2` |
 | 27 | P3 | `follow-redirects` 1.16.0 (CVE-2026-111755, CVE-2026-111756, HIGH) on the SendGrid e-mail path; Security Scans red from 2026-10-21 | resolved 2026-10-21 (PR #24, deployed `e73304b`); not reachable before the fix |
+| 28 | P1 | `body-parser` 1.20.8 (CVE-2026-111181, HIGH): one unauthenticated gzip POST crashes the app (reachable, reproduced); `multer` 2.4.0 (CVE-2026-113872, HIGH), not reachable; `zod` 3.25.76 (CVE-2023-54404) flagged on 2026-10-28, CVE rejected the same day | fixed in the deps PR of 2026-10-30 (`body-parser` 1.20.9, `multer` 2.5.0), not yet deployed; zod: no change (owner, 2026-10-30), zod 4 migration open |
 
 ---
 
@@ -490,6 +491,41 @@ Published 2026-10-20 (GHSA-8r9p-f939-6h3c, GHSA-q3jh-wrc6-jgq8), fixed in 1.16.1
 **Residual resolved (2026-10-21, sanitize-html/dist PR):** `frontend/dist` is untracked (`git rm --cached`, 23 files, the tracked root `.gitignore` has `frontend/dist/`; not a new `frontend/.gitignore`, which the root file ignores and which would overwrite the local ignored one on pull). The deploy no longer puts a stale build back: it restores `frontend/dist` and `ecosystem.config.cjs` in separate tolerant commands, pulls, then copies the rollback snapshot (the live build) into `frontend/dist/` so the app keeps serving it until the new build replaces it.
 - **Transition deploy:** `dist` is still tracked on the box and modified by the last build, so `git checkout -- frontend/dist` is needed once or the pull refuses; the pull then deletes the formerly tracked files and the `cp -R` restores the live ones. Later deploys: the checkout is a no-op.
 - **Proof:** a local simulation (bare origin plus an EC2 clone at `e73304b` with a modified `index.js`/`index.html` and an untracked asset) running the lines extracted from `deploy.yml`: new script exit 0, `index.html`/`index.js` keep the live content, the untracked asset survives, `git status --porcelain frontend/dist` and `git ls-files frontend/dist` are empty; a second run also succeeds. The old lines on the same state leave the stale tracked `index.html` in place until the build. 11 of 11 assertions passed. `pnpm run build` still writes `dist/index.js`, `dist/run-email-worker.js` and `dist/public/index.html`, and git sees nothing under `frontend/dist`.
+
+### 28. `body-parser` 1.20.8, `multer` 2.4.0, `zod` 3.25.76 (CVE-2026-111181, CVE-2026-113872, CVE-2023-54404, HIGH)
+
+The lockfile on `hotfix-frontend-update` (`a9bbbbb`) did not change. The scanner database gained three advisories, so #27's run `40693325395` (2026-10-28 13:06 UTC) went red in "Dependencies and IaC (trivy)" while Run Tests passed. Every PR into the deploy branch failed the same way.
+
+**`body-parser` 1.20.8, CVE-2026-111181 (GHSA-27r3-jxmh-p828, CVSS 7.5): reachable, process crash.**
+- **Trigger:** a valid compressed body followed by trailing bytes. The request is answered, but the gzip/deflate decoder stays piped with no `error` listener. The trailing bytes then reach the finished decoder, it emits an error, and Node exits on the `Unhandled 'error' event`.
+- **Why we are exposed:** `server/index.ts:30-31` mounts `express.json({ limit: "50mb" })` and `express.urlencoded(...)` on every route with the default `inflate: true`. Parsing runs before routing and auth, so one anonymous POST to any path is enough. pm2 restarts the process (`autorestart`), but a loop of requests keeps the site down. nginx does not touch request `Content-Encoding`.
+- **Second fixed path:** a 415 for an unsupported charset, but only with a `verify` option, which the app never sets.
+- **Diff 1.20.8 → 1.20.9:** only `lib/read.js` (detach and destroy the decoder after the body, charset check before the decoder exists), plus tests and docs. Engines unchanged.
+- **Comes through:** `express` 4.22.3, the latest 4.x, which declares `body-parser ~1.20.5`. So 1.20.9 is a lockfile-only `pnpm update body-parser`, no override needed.
+
+**`multer` 2.4.0, CVE-2026-113872 (GHSA-q7qp-rjg7-q26m, CVSS 7.5): not reachable.**
+- **Trigger:** needs an *asynchronous* `fileFilter`. One file is rejected while another file's async filter is still pending, the late callback resumes a torn-down busboy, and its error has no listener.
+- **Why we are not exposed:** the app's only `fileFilter` (`uploadCoverImage`, `server/routes.ts:555`) is synchronous, and every multer route is admin-only.
+- **Bumped anyway** to `^2.5.0`, which also clears the gate. The 2.5.0 diff (`lib/make-middleware.js`) also stops adding a failed upload to the abort cleanup list, and accepts a field value exactly at `fieldSize` (it was rejected before). No API or engine change.
+
+**`zod` 3.25.76, CVE-2023-54404 (GHSA-mrhx-c7xc-m3w5): CVE rejected, no change (owner decision C, 2026-10-30).**
+- **Rejected:** NVD lists the CVE as `Rejected`, last modified 2026-10-28 22:17 UTC, about 9 hours after the CI run. VulnCheck (the CNA) gave its reason: memory grows only in proportion to input that `JSON.parse` already allocated, and only without a request-size limit.
+- **Effect on the gate:** trivy 0.75.0 with the 2026-10-30 database no longer reports zod at any severity, so no `.trivyignore.yaml` entry.
+- **The GHSA is not withdrawn** (`< 4.6.6`). osv-scanner 2.7.0 still lists `zod 3.25.76: GHSA-mrhx-c7xc-m3w5` in the step summary, which is report-only and does not fail the job. osv no longer lists `body-parser` or `multer`.
+- **The behaviour is real.** Zod walks every array element before checking `.max()`, one issue per failing element, so cost is linear in the element count. Zod 4.6.6 checks the bound first. The maintainer says zod 3 gets no fix (colinhacks/zod#6653).
+- **Exposure:** no public request schema has a `z.array`. The only array is drizzle-zod's `events.interestAreas` on the admin event routes. The JSON limit is 50 MB, about 25 M elements, but `JSON.parse` would already have allocated the same order of memory.
+- **Open item:** zod 4 migration, as its own PR:
+  - **Packages:** `zod` 4.6.7, `drizzle-zod` 0.8.3 (peer `zod ^3.25 || ^4`, `drizzle-orm >=0.36`, so 0.39.3 still fits) and `@hookform/resolvers` ≥ 5.2.2 (peer `react-hook-form ^7.55`).
+  - **Files:** about 13.
+  - **Code changes:** `errorMap`/`required_error` become `error`, `ZodError.errors` becomes `.issues` (`errorHandler.ts`, `routes.ts`), stricter `.uuid()` on 34 route params, and `.refine` followed by `.omit`/`.extend`. The Portuguese messages must survive.
+
+**Proof (2026-10-30, branch `fix/deps-body-parser-multer-zod`).**
+- **Crash reproduction:** a scratch script builds an express app with the app's parser setup and sends the payload from body-parser 1.20.9's own regression test (`gzip({"a":1})` + `0x00` + 100 KB of `X`), then a follow-up `GET /health`. On the deploy-branch install (1.20.8) the response is `200`, then the process dies on `Unhandled 'error' event` (exit 1). On this branch (1.20.9) the response is `200`, the follow-up `/health` is `200`, and the process survives. Node 22.22.2.
+- **trivy** 0.75.0 with the CI flags, database of 2026-10-30:
+  - Base lockfile without the ignorefile: `body-parser`, `multer`, plus the 3 accepted #19/#20 findings.
+  - This branch: only the 3 accepted findings. With `.trivyignore.yaml`: 0.
+- **Lockfile:** `pnpm install --frozen-lockfile` exit 0. The diff is 2 version swaps, no new transitive package. Both releases are dated 2026-10-22, past the 3-day `minimumReleaseAge`.
+- **Gates:** tsc 0; frontend 442 passed / 4 skipped; backend 431 / 142; integration 138 / 4 (host PG17 `:55434`).
 
 ---
 
