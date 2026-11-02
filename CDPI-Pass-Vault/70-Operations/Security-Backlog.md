@@ -35,7 +35,7 @@ Priority key: **P1** exploitable now or silent data loss · **P2** broken featur
 | 25 | P3 | Dev/test-only toolchain advisories (full `pnpm audit`, not `--prod`): `vite` 5.4.21 dev server (1 HIGH), `vitest`/`tinypool` (2 CRITICAL), `undici` via jsdom (2 HIGH), `shell-quote` via drizzle-kit → gel (1 CRITICAL) | open; none ships in the prod runtime (`vite build` runs on EC2, not the dev server); upgrade after 2026-10-21 |
 | 26 | P3 | pm2 on EC2 was installed with `npm install -g pm2`, the last npm use (owner wants pnpm only) | open; after 2026-10-21: `pnpm add -g pm2`, then `pm2 update` so the running daemon moves to the new binary, then `npm rm -g pm2` |
 | 27 | P3 | `follow-redirects` 1.16.0 (CVE-2026-111755, CVE-2026-111756, HIGH) on the SendGrid e-mail path; Security Scans red from 2026-10-21 | resolved 2026-10-21 (PR #24, deployed `e73304b`); not reachable before the fix |
-| 28 | P1 | `body-parser` 1.20.8 (CVE-2026-111181, HIGH): one unauthenticated gzip POST crashes the app (reachable, reproduced); `multer` 2.4.0 (CVE-2026-113872, HIGH), not reachable; `zod` 3.25.76 (CVE-2023-54404) flagged on 2026-10-28, CVE rejected the same day | fixed in the deps PR of 2026-10-30 (`body-parser` 1.20.9, `multer` 2.5.0), not yet deployed; zod: no change (owner, 2026-10-30), zod 4 migration open |
+| 28 | P1 | `body-parser` 1.20.8 (CVE-2026-111181, HIGH): one unauthenticated gzip POST crashes the app (reachable, reproduced); `multer` 2.4.0 (CVE-2026-113872, HIGH), not reachable; `zod` 3.25.76 (CVE-2023-54404) flagged on 2026-10-28, CVE rejected the same day; then `follow-redirects` 1.16.1 (CVE-2026-116689, HIGH, not reachable) and a gitleaks false positive on the guest-stack branches | fixed in PR #28 (`body-parser` 1.20.9, `multer` 2.5.0, `follow-redirects` 1.16.2, one `.gitleaksignore` fingerprint), not yet deployed; zod: no change (owner, 2026-10-30), zod 4 migration open |
 
 ---
 
@@ -518,6 +518,17 @@ The lockfile on `hotfix-frontend-update` (`a9bbbbb`) did not change. The scanner
   - **Packages:** `zod` 4.6.7, `drizzle-zod` 0.8.3 (peer `zod ^3.25 || ^4`, `drizzle-orm >=0.36`, so 0.39.3 still fits) and `@hookform/resolvers` ≥ 5.2.2 (peer `react-hook-form ^7.55`).
   - **Files:** about 13.
   - **Code changes:** `errorMap`/`required_error` become `error`, `ZodError.errors` becomes `.issues` (`errorHandler.ts`, `routes.ts`), stricter `.uuid()` on 34 route params, and `.refine` followed by `.omit`/`.extend`. The Portuguese messages must survive.
+
+**Found on PR #28's own run `41534506620` (2026-11-02).** Run Tests passed. Security Scans failed at gitleaks, so trivy never ran in CI. A local re-scan with that day's database then found a fourth advisory.
+
+- **gitleaks, `generic-api-key`, false positive.** The match is `newPassword: "…"` at `frontend/server/test/integration/guestCheckout.integration.test.ts:737` in commit `e0fd524` ("TEST: Stage 2 guest checkout red tests", 2026-10-28 13:25 UTC). It is a fixture password for a throwaway test user, not a credential.
+  - **Why every PR fails:** the commit is on all three pushed guest branches, and CI scans every fetched branch (`gitleaks git --log-opts="--all"`). So every PR has failed since that push, which came after #27's run.
+  - **Why no later edit fixes it:** the finding lives in history.
+  - **Fix:** a root `.gitleaksignore` with that one exact fingerprint (`commit:file:rule:line`), no path or rule allowlist. Local `gitleaks git --log-opts=--all` (8.30.1): before 1 leak, after "no leaks found".
+- **`follow-redirects` 1.16.1, CVE-2026-116689 (GHSA-mrwp-f3q8-3g9p, published 2026-10-30 22:59 UTC, CVSS 5.9, rated HIGH): not reachable.**
+  - **The bug:** 1.16.0–1.16.1 check a caller's `sensitiveHeaders` with `instanceof Array`, so an array from another JavaScript realm is replaced by `[]` and a custom credential header survives a cross-origin redirect.
+  - **Our path** is the same one as #27: `@sendgrid/mail` → `axios` 1.20.0 → `follow-redirects`. axios builds that array in the app's own realm, SendGrid declares no custom sensitive header, and `Authorization` is on the built-in strip list. The bug also still needs a cross-origin redirect from `api.sendgrid.com`.
+  - **Fix:** 1.16.2 (published 2026-10-25, past `minimumReleaseAge`) through `pnpm update follow-redirects`, a 4-line lockfile change. The `index.js` diff is only `isArray()` → `Array.isArray()`.
 
 **Proof (2026-10-30, branch `fix/deps-body-parser-multer-zod`).**
 - **Crash reproduction:** a scratch script builds an express app with the app's parser setup and sends the payload from body-parser 1.20.9's own regression test (`gzip({"a":1})` + `0x00` + 100 KB of `X`), then a follow-up `GET /health`. On the deploy-branch install (1.20.8) the response is `200`, then the process dies on `Unhandled 'error' event` (exit 1). On this branch (1.20.9) the response is `200`, the follow-up `/health` is `200`, and the process survives. Node 22.22.2.
