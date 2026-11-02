@@ -230,3 +230,17 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Root cause:** the deploy ran `git checkout -- frontend/dist` before building, to stop the pull from conflicting with the previous build. That put the stale May `index.html` and assets back on disk, so the box served them for the whole build, and a failed build left them there for a later pm2 restart. The build itself (vite `emptyOutDir`, tsup `clean`) wiped them every time, which hid the problem.
 - **Fix:** untrack `frontend/dist` and ignore it. Because the transition deploy still sees it tracked and modified, the deploy keeps a tolerant `git checkout -- frontend/dist` for that one run and copies the rollback snapshot back after the pull. Proven with a local bare-origin simulation, old script vs new.
 - **Prevention:** never commit build output; a deploy step that "restores" a path to make a pull work must be checked for what it leaves on disk during the build. Test a git-state migration on a throwaway clone with the real script lines, including the second run. Put new ignore rules in the tracked root `.gitignore`: it ignores the name `.gitignore`, so a new `frontend/.gitignore` would need `git add -f` and would silently overwrite the owner's local, ignored `frontend/.gitignore` on pull.
+
+## 2026-10-30 — a zod 4 migration was planned for a CVE that had been rejected
+
+- **Symptom:** the deps handoff asked the owner to choose between accepting CVE-2023-54404 in `.trivyignore.yaml` and migrating to zod 4 now, from #27's CI log of 2026-10-28 13:06 UTC.
+- **Root cause:** the CNA rejected the CVE at 22:17 UTC the same day, and trivy's database dropped it. A CI log is a snapshot of the scanner database on that day. The plan was written from the log, without re-scanning.
+- **Fix:** re-scanned with today's database and read the NVD record (`vulnStatus: Rejected`). The PR shrank to `body-parser` + `multer`. The owner chose no zod change, and the zod 4 migration stays a backlog item ([[70-Operations/Security-Backlog|Security Backlog]] #28).
+- **Prevention:** before planning a fix or an accept for a scanner finding, re-run trivy with a fresh database. Check the CVE's NVD `vulnStatus` (Rejected or Disputed) and the GHSA `withdrawn_at`. The same pass found the reverse case: `body-parser` looked like routine hygiene but crashes the process from one anonymous request. Test reachability with the advisory's own regression payload, not a guessed one; two guessed payloads did not trigger the crash.
+
+## 2026-11-02 — a test password on a feature branch failed gitleaks on every PR
+
+- **Symptom:** PR #28 (deps only) went red in "Secrets in git history (gitleaks)": `generic-api-key` in `guestCheckout.integration.test.ts`, a file that PR does not touch.
+- **Root cause:** CI runs `gitleaks git --log-opts="--all"` on a full-history checkout, so it scans every pushed branch. A high-entropy fixture password (`newPassword: "…"`) committed on the guest-stack branches on 2026-10-28 has failed every PR since that push, and no later edit removes it from history.
+- **Fix:** one exact fingerprint (`commit:file:rule:line`) in a root `.gitleaksignore`. A path or rule allowlist would weaken the scan for real secrets.
+- **Prevention:** run `gitleaks git --log-opts="--all" --redact .` before asking the owner to push any branch, not only the PR branch. Keep test passwords low-entropy (for example `test-password-1`). When the security job fails at an early step, the later steps (trivy) were skipped: re-run them locally before calling the PR green.
