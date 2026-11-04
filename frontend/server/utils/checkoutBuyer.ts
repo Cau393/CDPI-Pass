@@ -104,7 +104,11 @@ export async function resolveCheckoutBuyer(
   }
 
   const parsed = parseGuestBuyer(input.buyer);
-  if (!parsed.ok) return { ok: false, status: 400, body: { code: "invalid_buyer", message: parsed.message } };
+  if (!parsed.ok) {
+    // `field` (ADR-017 Stage 5 fix) lets the client focus the input; `code` and `message` stay as they were.
+    const body = { code: "invalid_buyer", message: parsed.message, ...(parsed.field ? { field: parsed.field } : {}) };
+    return { ok: false, status: 400, body };
+  }
   const { buyer } = parsed;
   const contact = { name: buyer.name, phone: buyer.phone };
   const typed = buyer.document;

@@ -146,6 +146,39 @@ describe("resolveCheckoutBuyer: guest validation", () => {
     expect(writes(store)).toBe(0);
   });
 
+  it("names the bad CPF in `field`, keeping code and message (ADR-017 Stage 5 fix)", async () => {
+    const result = await resolveCheckoutBuyer(
+      { sessionUser: undefined, buyer: { ...brBuyer, cpf: "123.456.789-00" }, event: presencialPaid, paid: true },
+      fakeStorage(),
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 400,
+      body: { code: "invalid_buyer", message: "CPF inválido", field: "cpf" },
+    });
+  });
+
+  it("names a bad passport in `field` (foreign guest, free in-person event)", async () => {
+    const result = await resolveCheckoutBuyer(
+      { sessionUser: undefined, buyer: { ...foreignBuyer, foreignDocument: "AB1" }, event: presencialFree, paid: false },
+      fakeStorage(),
+    );
+
+    expect(result).toMatchObject({ ok: false, status: 400, body: { code: "invalid_buyer", field: "foreignDocument" } });
+  });
+
+  it("never answers invalid_buyer to a session user, whatever buyer the body carries", async () => {
+    const session = makeUser({ cpf: CPF_A, address: "Rua de teste, 123" });
+
+    const result = await resolveCheckoutBuyer(
+      { sessionUser: session, buyer: { ...brBuyer, cpf: "123.456.789-00" }, event: presencialPaid, paid: true },
+      fakeStorage(),
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
   it("rejects a missing buyer with 400 invalid_buyer", async () => {
     const result = await resolveCheckoutBuyer(
       { sessionUser: undefined, buyer: undefined, event: onlineFree, paid: false },

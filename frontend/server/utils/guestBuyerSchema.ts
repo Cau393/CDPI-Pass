@@ -1,3 +1,4 @@
+import { isGuestBuyerField, type GuestBuyerField } from "@shared/guestBuyerField";
 import { accountEmailSchema } from "@shared/schema";
 import { normalizePhoneE164 } from "./normalizePhoneE164";
 import { profileIdentitySchema } from "./profileUpdateSchema";
@@ -12,7 +13,10 @@ export type GuestBuyer = {
   address: string | null;
 };
 
-export type ParseGuestBuyerResult = { ok: true; buyer: GuestBuyer } | { ok: false; message: string };
+/** `field` names the input that failed, so the client can send the buyer back to it; absent when no input is to blame. */
+export type ParseGuestBuyerResult =
+  | { ok: true; buyer: GuestBuyer }
+  | { ok: false; message: string; field?: GuestBuyerField };
 
 const MISSING_BUYER_MESSAGE = "Informe seus dados para continuar.";
 
@@ -33,20 +37,24 @@ export function parseGuestBuyer(input: unknown): ParseGuestBuyerResult {
   const body = input as Record<string, unknown>;
 
   const name = typeof body.name === "string" ? body.name.trim() : "";
-  if (name.length < 3) return { ok: false, message: "Nome deve ter pelo menos 3 caracteres" };
-  if (name.length > 120) return { ok: false, message: "Nome deve ter no máximo 120 caracteres" };
+  if (name.length < 3) return { ok: false, message: "Nome deve ter pelo menos 3 caracteres", field: "name" };
+  if (name.length > 120) return { ok: false, message: "Nome deve ter no máximo 120 caracteres", field: "name" };
   if (/[<>]/.test(name) || /https?:\/\/|www\./i.test(name)) {
-    return { ok: false, message: "Nome inválido" };
+    return { ok: false, message: "Nome inválido", field: "name" };
   }
 
   const email = accountEmailSchema.safeParse(body.email);
-  if (!email.success) return { ok: false, message: email.error.errors[0]?.message ?? "Email inválido" };
+  if (!email.success) return { ok: false, message: email.error.errors[0]?.message ?? "Email inválido", field: "email" };
 
   let phone: string;
   try {
     phone = normalizePhoneE164(typeof body.phone === "string" ? body.phone : "", "BR");
   } catch (error) {
-    return { ok: false, message: error instanceof Error && error.message ? error.message : "Telefone inválido" };
+    return {
+      ok: false,
+      message: error instanceof Error && error.message ? error.message : "Telefone inválido",
+      field: "phone",
+    };
   }
 
   const parsed = profileIdentitySchema.safeParse({
@@ -56,7 +64,13 @@ export function parseGuestBuyer(input: unknown): ParseGuestBuyerResult {
     address: sentOrUndefined(body.address),
   });
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.errors[0]?.message ?? "Dados inválidos" };
+    const issue = parsed.error.errors[0];
+    const field = issue?.path[0];
+    return {
+      ok: false,
+      message: issue?.message ?? "Dados inválidos",
+      ...(isGuestBuyerField(field) ? { field } : {}),
+    };
   }
   const { isForeigner, cpf, foreignDocument, address } = parsed.data;
 
@@ -64,7 +78,9 @@ export function parseGuestBuyer(input: unknown): ParseGuestBuyerResult {
   const sendsDocument = isForeigner === true || cpf !== undefined || foreignDocument !== undefined;
   if (sendsDocument) {
     const identity = resolveRegisterIdentity({ isForeigner, cpf, foreignDocument });
-    if (!identity.ok) return { ok: false, message: identity.message };
+    if (!identity.ok) {
+      return { ok: false, message: identity.message, field: isForeigner === true ? "foreignDocument" : "cpf" };
+    }
     document = {
       isForeigner: identity.isForeigner,
       cpf: identity.cpf,
