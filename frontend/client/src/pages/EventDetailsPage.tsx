@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Calendar, MapPin, Users, Clock, ArrowLeft, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
+import { captureLeadTagFromUrl } from "@/lib/leadTag";
 import { useAuth } from "@/hooks/useAuth";
 import { isAuthResolving } from "@/lib/authResolving";
 import { useToast } from "@/hooks/use-toast";
@@ -70,7 +71,9 @@ export default function EventDetailsPage() {
     const params = new URLSearchParams(window.location.search);
     setPromoCode(params.get("promo"));
     setCourtesyCode(params.get("cortesia"));
-  }, []);
+    // ADR-018: remember ?tag= for this event (the URL keeps it, so a reload re-captures).
+    if (id) captureLeadTagFromUrl(id, window.location.search);
+  }, [id]);
 
   // ✅ Fetch main event details
   const { data: event, isLoading, error } = useQuery<Event>({
