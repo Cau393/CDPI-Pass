@@ -14,6 +14,7 @@ import { z } from "zod";
 import { useState, useMemo } from "react";
 import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
 import { getValidatedNextPath } from "@/lib/authRedirect";
+import { parseApiError, parseApiErrorMessage } from "@/lib/eventForm";
 
 // ADR-016: name, e-mail, phone and password only. The document and address
 // are asked at the first inscription that needs them.
@@ -37,6 +38,9 @@ export default function RegisterPage() {
   const nextRaw = useMemo(() => new URLSearchParams(search).get("next"), [search]);
   const { toast } = useToast();
   const [acceptTerms, setAcceptTerms] = useState(false);
+  // 409 guest_account_claim (ADR-017): the e-mail has guest tickets and was sent a create-password link.
+  const [claimNotice, setClaimNotice] = useState<string | null>(null);
+  const loginHref = nextRaw != null && nextRaw !== "" ? `/login?next=${encodeURIComponent(nextRaw)}` : "/login";
 
   const form = useForm<RegisterFormData>({
     resolver: zodResolver(registerFormSchema),
@@ -64,15 +68,21 @@ export default function RegisterPage() {
       setLocation(getValidatedNextPath(nextRaw));
     },
     onError: (error: Error) => {
+      // Not an error for the visitor: the mailbox owner claims the account from the link.
+      if (parseApiError(error).code === "guest_account_claim") {
+        setClaimNotice(parseApiErrorMessage(error));
+        return;
+      }
       toast({
         title: "Erro no cadastro",
-        description: error.message || "Tente novamente",
+        description: parseApiErrorMessage(error) || "Tente novamente",
         variant: "destructive",
       });
     },
   });
 
   const onSubmit = (data: RegisterFormData) => {
+    setClaimNotice(null);
     registerMutation.mutate(data);
   };
 
@@ -91,6 +101,19 @@ export default function RegisterPage() {
         
         <CardContent>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+            {claimNotice ? (
+              <div
+                role="status"
+                className="space-y-2 rounded-md border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900"
+                data-testid="notice-guest-account-claim"
+              >
+                <p className="font-medium">{claimNotice}</p>
+                <p>Confira sua caixa de entrada e a pasta de spam. Depois de criar a senha, entre com este e-mail.</p>
+                <a href={loginHref} className="font-medium underline" data-testid="link-claim-login">
+                  Ir para o login
+                </a>
+              </div>
+            ) : null}
             <div className="space-y-4">
               <div>
                 <Label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
@@ -247,11 +270,7 @@ export default function RegisterPage() {
             <div className="text-center">
               <span className="text-gray-600">Já tem conta? </span>
               <a
-                href={
-                  nextRaw != null && nextRaw !== ""
-                    ? `/login?next=${encodeURIComponent(nextRaw)}`
-                    : "/login"
-                }
+                href={loginHref}
                 className="text-primary hover:text-secondary font-medium"
                 data-testid="link-login"
               >

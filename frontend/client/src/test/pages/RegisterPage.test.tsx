@@ -10,8 +10,9 @@ vi.mock("wouter", () => ({
   useSearch: () => search,
 }));
 
+const toastSpy = vi.fn();
 vi.mock("../../hooks/use-toast", () => ({
-  useToast: () => ({ toast: vi.fn() }),
+  useToast: () => ({ toast: toastSpy }),
 }));
 
 import RegisterPage from "../../pages/RegisterPage";
@@ -48,6 +49,7 @@ beforeEach(() => {
   localStorage.clear();
   search = "";
   setLocation.mockReset();
+  toastSpy.mockReset();
   fetchMock.mockReset();
   fetchMock.mockResolvedValue(
     new Response(JSON.stringify({ message: "ok", token: "jwt-new", user: { id: "u1", email: "maria@example.com", name: "Maria Silva", emailVerified: false } }), {
@@ -146,5 +148,58 @@ describe("RegisterPage — minimal signup (ADR-016 Phase 4)", () => {
     expect(screen.getByTestId("text-email-confirm-error")).toHaveTextContent("Os e-mails não coincidem");
     expect(screen.getByTestId("text-password-confirm-error")).toHaveTextContent("As senhas não coincidem");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ADR-017 Stage 5 fix: an e-mail that already has guest tickets is a notice, not an error with raw JSON.
+describe("RegisterPage — server answers", () => {
+  const CLAIM = "Este e-mail já tem ingressos. Enviamos um link para você criar sua senha.";
+  const answer = (status: number, body: unknown) =>
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }),
+    );
+
+  it("409 guest_account_claim: a persistent notice with the inbox/spam hint and a login link, no error toast", async () => {
+    answer(409, { code: "guest_account_claim", message: CLAIM });
+    const user = userEvent.setup();
+    renderPage();
+    await fillSignup(user, "camila@example.com", "61987654321");
+    await user.click(screen.getByTestId("button-register"));
+
+    const notice = await screen.findByTestId("notice-guest-account-claim");
+    expect(notice).toHaveTextContent(CLAIM);
+    expect(notice).toHaveTextContent(/caixa de entrada.*spam/i);
+    expect(notice).not.toHaveTextContent("409");
+    expect(notice).not.toHaveTextContent("{");
+    expect(notice.getAttribute("role")).toBe("status");
+    expect(screen.getByTestId("link-claim-login").getAttribute("href")).toBe("/login");
+    expect(toastSpy).not.toHaveBeenCalled();
+    expect(localStorage.getItem("token")).toBeNull();
+  });
+
+  it("keeps ?next= on the notice's login link", async () => {
+    search = "next=%2Fevent%2Fabc";
+    answer(409, { code: "guest_account_claim", message: CLAIM });
+    const user = userEvent.setup();
+    renderPage();
+    await fillSignup(user, "camila@example.com", "61987654321");
+    await user.click(screen.getByTestId("button-register"));
+
+    expect((await screen.findByTestId("link-claim-login")).getAttribute("href")).toBe(
+      `/login?next=${encodeURIComponent("/event/abc")}`,
+    );
+  });
+
+  it("other errors toast the server message, never the raw `400: {json}`", async () => {
+    answer(400, { message: "Email já cadastrado" });
+    const user = userEvent.setup();
+    renderPage();
+    await fillSignup(user, "maria@example.com", "61987654321");
+    await user.click(screen.getByTestId("button-register"));
+
+    await waitFor(() =>
+      expect(toastSpy).toHaveBeenCalledWith(expect.objectContaining({ description: "Email já cadastrado" })),
+    );
+    expect(screen.queryByTestId("notice-guest-account-claim")).toBeNull();
   });
 });
