@@ -327,7 +327,12 @@ server (`POST /payments` with `creditCard`); the hosted `/paymentLinks` card bra
 - Polling never sees a deleted or reproved card payment (it cancels only on OVERDUE/CANCELED); only the webhook cancels such an order (M9/Q1).
 
 **Deploy notes (deploy B)**
-- Asaas must enable the direct card API (`POST /payments` with `creditCard`) on the production account.
+- ~~Asaas must enable the direct card API (`POST /payments` with `creditCard`) on the production account.~~
+  Corrected 2026-11-04: this prerequisite was written without a doc quote. The Asaas docs
+  (https://docs.asaas.com/docs/cobrancas-via-cartao-de-credito, checked 2026-11-03) require production enablement only
+  for tokenization, which the app does not use: "A tokenização está disponível para testes no Sandbox. Em produção, o
+  recurso depende de habilitação na sua conta." Direct `creditCard` + `creditCardHolderInfo` charges are not
+  listed as needing enablement. Gate (a) closed 2026-11-04 (lesson: quote the doc for every external prerequisite).
 - nginx `proxy_read_timeout` of at least 120 s for `/api/orders`: the card POST times out at 90 s (Asaas asks for
   "timeout mínimo de 60 segundos"), and a shorter proxy timeout turns an unknown outcome into a non-JSON 504.
 - `TURNSTILE_SECRET_KEY` and the hostname allowlist (Stage 2 note) now also gate every card submit.
@@ -514,7 +519,7 @@ https://docs.asaas.com/reference/create-new-customer (customer notifications).
 **Rehearsal findings and owner decisions (2026-10-29)**
 - F1 / M8, Asaas e-mails the buyer its own receipts: **kept** (no `notificationDisabled` change).
 - F2, refund and chargeback events ignored: pre-existing for link/PIX/boleto, more likely with inline card. **Own stage after deploy B**;
-  until then the owner cancels refunded tickets by hand. Security-Backlog #28.
+  until then the owner cancels refunded tickets by hand. Security-Backlog #29.
 - F3, risk analysis, 3DS and chargeback cannot be proven in the sandbox: the fake-Asaas e2e is the proof; watch prod logs after deploy B.
 - F4, a webhook-paid unknown-outcome order kept `asaas_payment_id` NULL in 2 of 3 runs (the webhook matched by `externalReference`
   before the 202 path stored the id), and a reopened modal after the reconcile showed an empty card form with a disabled button: H2 below.
@@ -568,8 +573,8 @@ https://docs.asaas.com/reference/create-new-customer (customer notifications).
 **Accepted risks and follow-ups (Stage 5)**
 - Not provable in the sandbox: risk analysis, 3DS, chargeback. Covered by the fake-Asaas e2e; watch prod logs after deploy B.
 - The holder phone format is accepted loosely by the sandbox; the national digits form stays.
-- Refund and chargeback events stay ignored until their own stage (Security-Backlog #28).
-- Follow-ups: R1 (stale `pollNotice`) and T3-M2 (`useOrderPolling` extraction) stay with Security-Backlog #28's list; the deferred minors
+- Refund and chargeback events stay ignored until their own stage (Security-Backlog #29).
+- Follow-ups: R1 (stale `pollNotice`) and T3-M2 (`useOrderPolling` extraction) stay with Security-Backlog #29's list; the deferred minors
   in `progress.md` Stage 5 (H1: `onSuccess` `!authResolving` branches without a direct test, epoch bump in a post-commit effect;
   H2-M2: installment N's id stored when its webhook arrives first on a NULL-id order).
 - Cleanup left 30 confirmed sandbox card payments that Asaas refuses to delete (harmless, no money).
@@ -625,7 +630,7 @@ Gates (a) to (d), in order:
   - A pre-deploy token (no `pv`) outlives a reset for up to 7 days.
 - **Rollback of deploy A:** code only. Old code would 403 the accounts created without a code, and those
   accounts would need to be set verified, as on 2026-10-13.
-- Follow-ups: stages 2–6 in the plan; ADR-002 (card inline) and ADR-016 (guest dialog) carry a note from Stage 5; refund/chargeback handling is Security-Backlog #28.
+- Follow-ups: stages 2–6 in the plan; ADR-002 (card inline) and ADR-016 (guest dialog) carry a note from Stage 5; refund/chargeback handling is Security-Backlog #29.
 
 ## Related
 - [[60-Decisions/ADR-016-event-registration-forms-and-minimal-signup]]
