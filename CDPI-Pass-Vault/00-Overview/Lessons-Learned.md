@@ -2,6 +2,13 @@
 
 One entry per mistake or wrong assumption that cost time. Each entry: date · symptom · root cause · prevention (rule or check). Newest first. When a prevention changes how code must be written, it also gets a one-line rule in `frontend/.claude/rules/*.md`.
 
+## 2026-11-04 — guest checkout: a bad CPF trapped the buyer on the payment screen (ADR-017 Stage 5 fix)
+
+- **Symptom:** on staging, a logged-out buyer typed `123.456.789-00` in "Complete sua inscrição", reached "Finalizar Compra", and every submit answered 400 `invalid_buyer` "CPF inválido" (a toast for PIX, the card alert for card). The payment screen has no CPF field and no way back; only X, which drops everything. Signup with an e-mail that has guest tickets toasted the raw `409: {"code":"guest_account_claim",…}` as "Erro no cadastro".
+- **Root cause:** the 4xx identity answers were mapped back to the identity dialog only for `identity_conflict` (and `identity_required`); `invalid_buyer` fell through to a toast. The dialog checked the CPF format but not its digits, which the server checks. The first hypothesis, the card-charge lock, was wrong: it is released for every JSON non-5xx answer. `RegisterPage` used `error.message` instead of `parseApiErrorMessage`.
+- **Fix (`7099838`, `2717c24`, `14abdb6`):** `invalid_buyer` carries `field`; `PaymentModal` hands it to the page, which reopens the dialog prefilled with the message under that input, focused (or at the top when there is no field). The dialog checks the CPF with the server's `validateCpf`. "Voltar e editar dados" while nothing was charged or created. `RegisterPage` shows a claim notice.
+- **Prevention:** every server 4xx that names an input typed on an earlier screen routes back to that screen, prefilled, with the field focused; validate on the client everything the server validates, with the same `shared/` helper. Test the error path of each step, not only the happy path. Rules added to `frontend.md`.
+
 ## 2026-10-29 — inline card sandbox rehearsal (ADR-017 Stage 5): a test card that fails our Luhn check, a webhook that left the payment id NULL, and a sandbox that cannot reach risk or chargeback
 
 - **Symptom:** (1) the Asaas sandbox README card `4444 4444 4444 4444` answered 400 `invalid_card` from our own form. (2) A card order paid by the webhook after an unknown outcome kept `asaas_payment_id` NULL in 2 of 3 runs. (3) Risk analysis, 3DS and chargeback never appeared. (4) The permission classifier refused a bulk cleanup of sandbox payments and customers.

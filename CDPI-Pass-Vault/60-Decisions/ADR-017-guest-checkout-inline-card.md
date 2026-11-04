@@ -611,6 +611,48 @@ Gates (a) to (d), in order:
   flag false).
 - Red-first: H1 8 failed + 3 unresolved before, 6 after the first fix; H2 F4b 3 failed, M1 1 failed; final wave 4 unit + 4 integration failed.
 
+### Stage 5 fix (2026-11-04): guest identity correction
+Branch `feat/guest-checkout-client`, commits `7099838` (server), `2717c24` (client), `14abdb6` (RegisterPage), `ee1578a` (e2e).
+
+**Symptom (staging, logged out, paid event).** "Complete sua inscrição" accepted `123.456.789-00` and opened "Finalizar
+Compra". Every submit answered 400 `{"code":"invalid_buyer","message":"CPF inválido"}`: PIX showed only a toast, card the inline
+alert. The payment screen has no CPF field and no way back; the only exit was X, which closes everything. Separately, signup
+with an e-mail that has guest tickets toasted "Erro no cadastro" with the raw `409: {"code":"guest_account_claim",…}`.
+
+**Cause.** The CPF is typed on an earlier screen with no way back, and the dialog checked only the CPF format, not its digits
+(the server's `resolveRegisterIdentity` checks both). `PaymentModal` mapped only 409 `identity_conflict` and 400
+`identity_required` back to the dialog; `invalid_buyer` fell through to a toast. **Not the card-charge lock:** it is already
+released for every JSON non-5xx answer, and `submitting` disables the form only in flight.
+
+**Rulings**
+- R41 The guest/identity dialog checks the CPF digits with `@shared/cpf` `validateCpf` (the server's helper) whenever the
+  document is asked and the buyer is Brazilian: "CPF inválido" under the field, submit blocked, field editable. The same check
+  runs for a logged-in account saving its CPF (it never reaches `PUT /api/profile/identity`).
+- R42 400 `invalid_buyer` keeps `code` and `message` and gains `field` (`name`, `email`, `phone`, `cpf`, `foreignDocument`,
+  `address`; absent for a missing buyer), from `parseGuestBuyer` through `resolveCheckoutBuyer`, on `POST /api/orders` and
+  `/subscribe`. The list is `shared/guestBuyerField.ts`.
+- R43 `PaymentModal` hands `invalid_buyer` to the page (`onInvalidBuyer({ message, field })`, field null when unknown); the page
+  closes the modal and reopens the dialog prefilled (`buyerError`). The message shows under the named input, which gets focus on
+  open; with no field, or a field the dialog does not show, it is an alert at the top of the dialog.
+- R44 "Voltar e editar dados" (guest only) returns to the prefilled dialog. It shows only when nothing is in flight, there is no
+  card-charge lock for the event (state and module), and no order, poll, PIX/boleto, card outcome or paid screen in this modal.
+- R45 **Lock invariant kept:** `cardChargeLock` is unchanged. A card `invalid_buyer` is a refusal before any charge, so the lock is
+  released exactly as for the other JSON 4xx (as before); a 202, non-JSON 5xx or network outcome keeps it, and no back control
+  appears, so going back can never re-enable a forbidden card submit.
+- R46 Logged-in buyers cannot get `invalid_buyer`: `resolveCheckoutBuyer` returns for a session user before `parseGuestBuyer`
+  (the only source of the code), and the profile CPF was checksum-validated when saved. No profile alert was added.
+- R47 Foreign path: a passport `invalid_buyer` (`field: "foreignDocument"`) routes back to the passport input (unit-tested; paid
+  foreign checkout is still off). The free foreign subscribe already kept the dialog open and editable with the message inline;
+  unchanged (characterization test).
+- R48 `RegisterPage`: 409 `guest_account_claim` is a persistent inline notice (server message, inbox/spam hint, login link keeping
+  `?next=`); every other error toasts `parseApiErrorMessage`, never the raw `409: {json}`.
+
+**Verification (head `ee1578a`).** `pnpm check` exit 0; `test:backend` 619 passed | 276 skipped; `test:frontend` 605 passed | 4
+skipped. Red first: server 12 failed (10 `parseGuestBuyer` field, 2 resolver body), dialog 7, `PaymentModal` 7, pages 5 (real dialog
++ modal integration and home page), RegisterPage 3. Mutation: removing the lock check from the back control fails the 504 and
+network tests. Two e2e journeys added (bad CPF blocked then fixed; `page.route` 400 `invalid_buyer` → focused CPF → fixed → PIX
+order), type-checked, not run here (they run with the full e2e gate).
+
 ## Alternatives considered
 - **Keep the code, only for guests:** that keeps the step the owner wants gone, and a guest has no account to
   verify.
