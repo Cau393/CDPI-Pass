@@ -35,7 +35,7 @@ Priority key: **P1** exploitable now or silent data loss · **P2** broken featur
 | 25 | P3 | Dev/test-only toolchain advisories (full `pnpm audit`, not `--prod`): `vite` 5.4.21 dev server (1 HIGH), `vitest`/`tinypool` (2 CRITICAL), `undici` via jsdom (2 HIGH), `shell-quote` via drizzle-kit → gel (1 CRITICAL) | open; none ships in the prod runtime (`vite build` runs on EC2, not the dev server); upgrade after 2026-10-21 |
 | 26 | P3 | pm2 on EC2 was installed with `npm install -g pm2`, the last npm use (owner wants pnpm only) | open; after 2026-10-21: `pnpm add -g pm2`, then `pm2 update` so the running daemon moves to the new binary, then `npm rm -g pm2` |
 | 27 | P3 | `follow-redirects` 1.16.0 (CVE-2026-111755, CVE-2026-111756, HIGH) on the SendGrid e-mail path; Security Scans red from 2026-10-21 | resolved 2026-10-21 (PR #24, deployed `e73304b`); not reachable before the fix |
-| 28 | P1 | `body-parser` 1.20.8 (CVE-2026-111181, HIGH): one unauthenticated gzip POST crashes the app (reachable, reproduced); `multer` 2.4.0 (CVE-2026-113872, HIGH), not reachable; `zod` 3.25.76 (CVE-2023-54404) flagged on 2026-10-28, CVE rejected the same day; then `follow-redirects` 1.16.1 (CVE-2026-116689, HIGH, not reachable) and a gitleaks false positive on the guest-stack branches | fixed in PR #28 (`body-parser` 1.20.9, `multer` 2.5.0, `follow-redirects` 1.16.2, one `.gitleaksignore` fingerprint), not yet deployed; zod: no change (owner, 2026-10-30), zod 4 migration open |
+| 28 | P1 | `body-parser` 1.20.8 (CVE-2026-111181, HIGH): one unauthenticated gzip POST crashes the app (reachable, reproduced); `multer` 2.4.0 (CVE-2026-113872, HIGH), not reachable; `zod` 3.25.76 (CVE-2023-54404) flagged on 2026-10-28, CVE rejected the same day; then `follow-redirects` 1.16.1 (CVE-2026-116689, HIGH, not reachable) and a gitleaks false positive on the guest-stack branches | resolved, deployed `a8ae661` (PR #28: `body-parser` 1.20.9, `multer` 2.5.0, `follow-redirects` 1.16.2, one `.gitleaksignore` fingerprint); zod: no change (owner, 2026-10-30), zod 4 migration stays open |
 | 29 | P2 | Asaas refund and chargeback events are ignored: a refunded order stays `paid` with a valid ticket (pre-existing for link/PIX/boleto; more likely with the inline card) | open (owner 2026-10-29: own stage after deploy B; manual cancel until then) |
 
 ---
@@ -614,3 +614,13 @@ Feature deploys since, none of them a backlog item: PR #22 "Esqueci meu e-mail" 
 ### 2026-10-21 — #27 `follow-redirects` 1.16.1 + unused `axios` removed (PR #24, deployed `e73304b`)
 
 Merged 2026-10-21 18:52 BRT by the owner. PR CI `39680617889`: tests and security green, deploy skipped. Push run `39682230644`: Run Tests, Security Scans and Deploy all green. EC2 fast-forwarded `49b4239..e73304b`. The log shows "Lockfile passes supply-chain policies (941 entries in 30.9s)", "Smoke test OK" and "Deploy OK. Live /api/events -> 200". `cdpi-pass` and `cdpi-pass-email-worker` restarted `online` with new pids. The owner sent "Esqueci minha senha" to their own account after the deploy, and the e-mail arrived: the SendGrid path (axios → follow-redirects 1.16.1) works. Details and proof are in [[#27. `follow-redirects` 1.16.0: credential headers on cross-origin redirects (CVE-2026-111755, CVE-2026-111756, HIGH)|#27]].
+
+### 2026-11-02 — #28 `body-parser` 1.20.9, `multer` 2.5.0, `follow-redirects` 1.16.2, gitleaks fingerprint (PR #28, deployed `a8ae661`)
+
+PR #28 merged as `a8ae661` ("MERGE: body-parser 1.20.9, multer 2.5.0, follow-redirects 1.16.2, gitleaks fingerprint (#28)"). Push run `41543335560` on `hotfix-frontend-update`: Run Tests, Security Scans and Deploy to EC2 all green. EC2 fast-forwarded `a9bbbbb..a8ae661`. The log shows "Lockfile passes supply-chain policies (943 entries)", "Smoke test OK" and "Deploy OK. Live /api/events -> 200".
+
+- **`body-parser` 1.20.9 (CVE-2026-111181, P1):** one anonymous gzip POST crashed the process. Reproduced on 1.20.8, and the process survives on 1.20.9.
+- **`multer` ^2.5.0 (CVE-2026-113872):** not reachable.
+- **`follow-redirects` 1.16.2 (CVE-2026-116689):** not reachable.
+- **gitleaks:** root `.gitleaksignore` with one exact fingerprint, for a fixture password in a test.
+- **`zod`:** CVE-2023-54404 was rejected on 2026-10-28. No change. The zod 4 migration stays an open backlog item (see [[#28. `body-parser` 1.20.8, `multer` 2.4.0, `zod` 3.25.76 (CVE-2026-111181, CVE-2026-113872, CVE-2023-54404, HIGH)|#28]]).

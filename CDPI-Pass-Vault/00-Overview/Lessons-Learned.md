@@ -9,6 +9,11 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Fix (`7099838`, `2717c24`, `14abdb6`):** `invalid_buyer` carries `field`; `PaymentModal` hands it to the page, which reopens the dialog prefilled with the message under that input, focused (or at the top when there is no field). The dialog checks the CPF with the server's `validateCpf`. "Voltar e editar dados" while nothing was charged or created. `RegisterPage` shows a claim notice.
 - **Prevention:** every server 4xx that names an input typed on an earlier screen routes back to that screen, prefilled, with the field focused; validate on the client everything the server validates, with the same `shared/` helper. Test the error path of each step, not only the happy path. Rules added to `frontend.md`.
 
+## 2026-11-04 — a deploy prerequisite was written without the doc quote
+- **Symptom:** ADR-017 said "Asaas must enable the direct card API" for production, which would have blocked the card flow on a step that may not exist.
+- **Root cause:** the prerequisite was written from memory, not from the provider's page. The Asaas docs (https://docs.asaas.com/docs/cobrancas-via-cartao-de-credito, checked 2026-11-03) require production enablement only for card tokenization, which the app does not use: "A tokenização está disponível para testes no Sandbox. Em produção, o recurso depende de habilitação na sua conta." Sending `creditCard` and `creditCardHolderInfo` directly needs no enablement.
+- **Prevention:** for every external-account prerequisite, quote the exact sentence from the provider's docs, with the URL and the check date. No quote, no prerequisite.
+
 ## 2026-10-29 — inline card sandbox rehearsal (ADR-017 Stage 5): a test card that fails our Luhn check, a webhook that left the payment id NULL, and a sandbox that cannot reach risk or chargeback
 
 - **Symptom:** (1) the Asaas sandbox README card `4444 4444 4444 4444` answered 400 `invalid_card` from our own form. (2) A card order paid by the webhook after an unknown outcome kept `asaas_payment_id` NULL in 2 of 3 runs. (3) Risk analysis, 3DS and chargeback never appeared. (4) The permission classifier refused a bulk cleanup of sandbox payments and customers.
