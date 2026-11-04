@@ -189,6 +189,62 @@ test.describe("guest checkout (logged out)", () => {
     await expect(page.getByTestId(SUCCESS).getByText("Pagamento confirmado!")).toBeVisible({ timeout: 30_000 });
   });
 
+  // ADR-017 Stage 5 fix: a bad CPF is caught in the dialog, and a server invalid_buyer sends the guest back to it.
+  test("bad CPF checksum: blocked inline in the dialog, fixed, PIX order created", async ({ page }) => {
+    const ev = await createEvent("presencialPaid");
+    const g = newGuest("gbadcpf");
+    await openAndFillDialog(page, ev.id, g, { cpf: "12345678900", address: ADDRESS });
+    await expect(page.getByRole("dialog").getByTestId("text-cpf-error")).toHaveText("CPF inválido");
+    await expect(page.getByTestId("button-confirm-payment")).toHaveCount(0);
+    await expectNoHorizontalScroll(page, "bad CPF inline");
+
+    const cpf = page.getByTestId("input-cpf");
+    await cpf.fill("");
+    await cpf.pressSequentially(uniqueCpf());
+    await page.getByTestId("button-confirm-registration").click();
+    const modal = await paymentModal(page, "PIX");
+    await modal.getByTestId("button-confirm-payment").click();
+    await expect(modal.getByText("PIX Gerado com Sucesso!")).toBeVisible({ timeout: 15_000 });
+    await expect.poll(() => orderCount(g.email, ev.id, "pending")).toBe("1");
+  });
+
+  test("server invalid_buyer on the CPF: back in the dialog at the CPF, prefilled, fixed, PIX order created", async ({ page }) => {
+    const ev = await createEvent("presencialPaid");
+    const g = newGuest("gsrvcpf");
+    // The first order POST is refused as the server would refuse a CPF it cannot accept.
+    let refused = false;
+    await page.route("**/api/orders", async (route) => {
+      if (route.request().method() !== "POST" || refused) return route.continue();
+      refused = true;
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ code: "invalid_buyer", message: "CPF inválido", field: "cpf" }),
+      });
+    });
+    await openAndFillDialog(page, ev.id, g, { cpf: uniqueCpf(), address: ADDRESS });
+    const first = await paymentModal(page, "PIX");
+    await first.getByTestId("button-confirm-payment").click();
+
+    const dialog = await guestDialog(page);
+    await expect(dialog.getByTestId("text-cpf-error")).toHaveText("CPF inválido");
+    await expect(page.getByTestId("input-cpf")).toBeFocused();
+    await expect(page.getByTestId("input-guest-email")).toHaveValue(g.email);
+    await expect(page.getByLabel("Endereço")).toHaveValue(ADDRESS);
+    await expectNoHorizontalScroll(page, "invalid_buyer back in the dialog");
+    expect(refused).toBe(true);
+    expect(await orderCount(g.email, ev.id)).toBe("0");
+
+    const cpf = page.getByTestId("input-cpf");
+    await cpf.fill("");
+    await cpf.pressSequentially(uniqueCpf());
+    await page.getByTestId("button-confirm-registration").click();
+    const modal = await paymentModal(page, "PIX");
+    await modal.getByTestId("button-confirm-payment").click();
+    await expect(modal.getByText("PIX Gerado com Sucesso!")).toBeVisible({ timeout: 15_000 });
+    await expect.poll(() => orderCount(g.email, ev.id, "pending")).toBe("1");
+  });
+
   test("card in risk analysis, closed and bought again: card stays locked, PIX open, approval shows success", async ({ page, request }) => {
     const ev = await createEvent("presencialPaid");
     const g = newGuest("gcardlock");
