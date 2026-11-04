@@ -303,7 +303,8 @@ export default function PaymentModal({
       onIdentityConflict(parseApiErrorMessage(error));
       return;
     }
-    if (parsed.code === "invalid_buyer" && onInvalidBuyer) {
+    // Only a guest has a buyer to correct; a logged-in buyer whose session lapsed gets the message below.
+    if (parsed.code === "invalid_buyer" && isGuest && onInvalidBuyer) {
       const field = (parsed.body as { field?: unknown } | undefined)?.field;
       onInvalidBuyer({ message: parseApiErrorMessage(error), field: isGuestBuyerField(field) ? field : null });
       return;

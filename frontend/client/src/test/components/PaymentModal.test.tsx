@@ -1448,6 +1448,69 @@ describe("PaymentModal — inline card, Turnstile, statuses and polling", () => 
       );
     });
 
+    // A session the client believes in but the server does not: 400 invalid_buyer without a field.
+    // The page has no dialog to correct for a logged-in buyer, so the modal keeps the message itself.
+    const staleSession = { code: "invalid_buyer", message: "Informe seus dados para continuar." };
+
+    it("keeps a logged-in card 400 invalid_buyer in the card alert, frees the card and does not call the page", async () => {
+      authState.user = account;
+      vi.stubGlobal("fetch", serve({ orders: [{ status: 400, body: staleSession }] }));
+      const { user, onInvalidBuyer } = setup();
+      await fillCard(user);
+      await pay(user);
+
+      expect(await screen.findByTestId("text-card-error")).toHaveTextContent(staleSession.message);
+      expect(onInvalidBuyer).not.toHaveBeenCalled();
+      expect(cardChargeLockFor(event.id)).toBeNull();
+      expect(submit()).toBeEnabled();
+    });
+
+    it("shows a logged-in PIX 400 invalid_buyer in the destructive toast and does not call the page", async () => {
+      authState.user = account;
+      vi.stubGlobal("fetch", serve({ orders: [{ status: 400, body: staleSession }] }));
+      const { user, onInvalidBuyer } = setup();
+      await pay(user);
+
+      await waitFor(() =>
+        expect(toastSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ description: staleSession.message, variant: "destructive" }),
+        ),
+      );
+      expect(onInvalidBuyer).not.toHaveBeenCalled();
+    });
+
+    it("hides the back control while only a poll runs (a 202 remounted: locked, polling, no card outcome)", async () => {
+      vi.stubGlobal(
+        "fetch",
+        serve({
+          orders: [{ status: 202, body: unconfirmedBody }],
+          checkStatus: [{ status: 200, body: { status: "pending", paymentStatus: null } }],
+        }),
+      );
+      const { user, remount } = setup({ buyer: guest });
+      await fillCard(user);
+      await pay(user);
+      await screen.findByTestId("text-payment-unconfirmed");
+
+      remount();
+      expect(back()).toBeNull();
+      await tick();
+      expect(back()).toBeNull();
+    });
+
+    it("hides the back control while only a poll notice shows (guest token dropped, remounted)", async () => {
+      vi.stubGlobal("fetch", serve({ orders: [{ status: 202, body: unconfirmedBody }] }));
+      const { user, remount } = setup({ buyer: guest });
+      await fillCard(user);
+      await pay(user);
+      await screen.findByTestId("text-payment-unconfirmed");
+
+      act(() => dropGuestAccessTokens());
+      remount();
+      expect(screen.getByTestId("text-payment-poll-status")).toBeInTheDocument();
+      expect(back()).toBeNull();
+    });
+
     it("offers a guest “Voltar e editar dados”, which hands back to the page", async () => {
       vi.stubGlobal("fetch", serve({}));
       const { user, onEditBuyer } = setup({ buyer: guest });
