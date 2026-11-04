@@ -337,6 +337,36 @@ describe("useFreeSubscribe — guest (no session)", () => {
     });
   });
 
+  // ADR-017 Stage 5 fix (E): the free foreign path already keeps the dialog open and editable on an error.
+  it("free foreign guest: a 400 invalid_buyer on the passport shows inline, the dialog stays open and editable", async () => {
+    const inPerson = { ...event, modality: "presencial" } as unknown as Event;
+    const message = "Documento estrangeiro deve ter 5 a 32 letras ou números";
+    const fetchMock = vi.fn(async () => json(400, { code: "invalid_buyer", message, field: "foreignDocument" }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(appQueryClient, "invalidateQueries").mockResolvedValue();
+    const user = userEvent.setup();
+    mount(inPerson);
+    await user.click(screen.getByText("abrir"));
+    await fillContact(user);
+    await user.click(screen.getByTestId("checkbox-foreigner"));
+    await user.type(screen.getByTestId("input-foreign-document"), "AB12345");
+    await user.type(screen.getByLabelText("Endereço"), "Av. Mariscal López 1234, Asunción");
+    await user.click(screen.getByTestId("solve-turnstile"));
+    await user.click(screen.getByRole("button", { name: "Confirmar inscrição" }));
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    const passport = screen.getByTestId("input-foreign-document") as HTMLInputElement;
+    expect(passport.value).toBe("AB12345");
+    expect(passport.disabled).toBe(false);
+    // Turnstile tokens are single use: a fresh solve, then the corrected passport goes out.
+    await user.clear(passport);
+    await user.type(passport, "PY1234567");
+    await user.click(screen.getByTestId("solve-turnstile"));
+    await user.click(screen.getByRole("button", { name: "Confirmar inscrição" }));
+    await waitFor(() => expect(subscribeCalls(fetchMock)).toHaveLength(2));
+    expect(subscribeCalls(fetchMock)[1].buyer).toMatchObject({ isForeigner: true, foreignDocument: "PY1234567" });
+  });
+
   it("keeps the logged-in success path: toast and /profile, no success screen", async () => {
     authState.user = LOGGED_IN;
     vi.stubGlobal("fetch", vi.fn(async () => json(201, { message: "Inscrição confirmada!" })));

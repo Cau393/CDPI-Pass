@@ -30,7 +30,9 @@ import {
   type RegistrationQuestions,
 } from "@/lib/eventRegistration";
 import type { GuestBuyer } from "@/lib/guestBuyer";
-import { accountEmailSchema, refineAccountDocument, type Event } from "@shared/schema";
+import { validateCpf } from "@shared/cpf";
+import type { GuestBuyerField } from "@shared/guestBuyerField";
+import { accountEmailSchema, CPF_FORMAT, refineAccountDocument, type Event } from "@shared/schema";
 import type { SystemField } from "@shared/eventRegistrationForm";
 import {
   FOREIGN_PAID_CHECKOUT_ENABLED,
@@ -59,7 +61,23 @@ export interface RegistrationConfirmation {
   turnstileToken?: string;
 }
 
+/** A 400 `invalid_buyer` from the order (ADR-017 Stage 5 fix): `field` is the input the server named, if any. */
+export interface BuyerFieldError {
+  message: string;
+  field: GuestBuyerField | null;
+}
+
 const ACCOUNT_REFRESH_FAILED = "Não foi possível atualizar seus dados. Tente novamente.";
+
+/** The input each `invalid_buyer` field points at, to focus it. */
+const BUYER_FIELD_INPUT_ID: Record<GuestBuyerField, string> = {
+  name: "guest-name",
+  email: "guest-email",
+  phone: "guest-phone",
+  cpf: "cpf",
+  foreignDocument: "foreignDocument",
+  address: "registration-address",
+};
 
 /**
  * Inscription questions (ADR-016): the document and address the event needs
@@ -85,6 +103,7 @@ export function EventRegistrationDialog({
   turnstile = false,
   identityConflict = false,
   buyer: prefillBuyer,
+  buyerError,
   initialAnswers,
   onCancel,
   onConfirm,
@@ -103,6 +122,8 @@ export function EventRegistrationDialog({
   identityConflict?: boolean;
   /** Guest mode: the last buyer typed, to prefill a reopened dialog. */
   buyer?: GuestBuyer | null;
+  /** Guest mode: the order's 400 invalid_buyer, shown under the input it names (focused) or at the top. */
+  buyerError?: BuyerFieldError | null;
   /** The last answers given, to prefill a reopened dialog. */
   initialAnswers?: Record<string, string>;
   onCancel: () => void;
@@ -171,6 +192,20 @@ export function EventRegistrationDialog({
   const foreignPaidBlocked =
     Boolean(event && !event.isFree) && foreignPaidCheckoutBlocked({ isForeigner: form.watch("isForeigner") });
 
+  // A server invalid_buyer goes under the input it names when the dialog shows that input; else at the top.
+  const isForeignerTyped = form.watch("isForeigner") === true;
+  const shownBuyerFields: Record<GuestBuyerField, boolean> = {
+    name: isGuest,
+    email: isGuest,
+    phone: isGuest,
+    cpf: Boolean(questions?.document) && !isForeignerTyped,
+    foreignDocument: Boolean(questions?.document) && isForeignerTyped,
+    address: Boolean(questions?.address),
+  };
+  const buyerErrorField = buyerError?.field && shownBuyerFields[buyerError.field] ? buyerError.field : null;
+  const buyerAlert = buyerError && !buyerErrorField ? buyerError.message : null;
+  const formRef = useRef<HTMLFormElement>(null);
+
   // Reopened guest dialog (after identity_required / identity_conflict): fill
   // blanks from what the caller kept; whatever is already typed wins.
   useEffect(() => {
@@ -199,6 +234,14 @@ export function EventRegistrationDialog({
       });
     }
   }, [open]);
+
+  // Each opening starts without the last attempt's errors; a server invalid_buyer marks its input
+  // (shown only while the dialog shows that input). The next submit validates afresh.
+  useEffect(() => {
+    if (!open) return;
+    form.clearErrors();
+    if (buyerError?.field) form.setError(buyerError.field, { type: "server", message: buyerError.message });
+  }, [open, buyerError]);
 
   useEffect(() => {
     if (!open || !user) return;
@@ -292,13 +335,33 @@ export function EventRegistrationDialog({
         if (!next) handleCancel();
       }}
     >
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
+      <DialogContent
+        className="max-h-[90vh] overflow-y-auto"
+        onOpenAutoFocus={(e) => {
+          // Back from the payment step with a server error: start on the input to fix.
+          if (!buyerErrorField) return;
+          const input = formRef.current?.querySelector<HTMLElement>(`#${BUYER_FIELD_INPUT_ID[buyerErrorField]}`);
+          if (!input) return;
+          e.preventDefault();
+          input.focus();
+        }}
+      >
         {event && questions ? (
-          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+          <form ref={formRef} onSubmit={handleSubmit} className="space-y-4" noValidate>
             <DialogHeader>
               <DialogTitle>Complete sua inscrição</DialogTitle>
               <DialogDescription>{event.title}</DialogDescription>
             </DialogHeader>
+
+            {buyerAlert ? (
+              <p
+                role="alert"
+                className="rounded-md border border-destructive/50 p-3 text-sm font-medium text-destructive"
+                data-testid="text-registration-buyer-error"
+              >
+                {buyerAlert}
+              </p>
+            ) : null}
 
             {isGuest ? (
               <fieldset className="space-y-3">
@@ -469,7 +532,12 @@ function identitySchemaFor(questions: RegistrationQuestions | null, isGuest: boo
     })
     .superRefine((data, ctx) => {
       if (isGuest) refineGuestContact(data, ctx);
-      if (questions?.document) refineAccountDocument(data, ctx);
+      if (questions?.document) {
+        refineAccountDocument(data, ctx);
+        // The server checks the CPF digits too (resolveRegisterIdentity): say it here, not after the payment step.
+        const cpf = data.cpf.trim();
+        if (!data.isForeigner && CPF_FORMAT.test(cpf) && !validateCpf(cpf)) issue(ctx, "cpf", "CPF inválido");
+      }
       if (questions?.address && data.address.trim().length < 10) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

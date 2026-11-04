@@ -23,10 +23,21 @@ vi.mock("../../hooks/use-toast", () => ({
 }));
 
 vi.mock("../../components/PaymentModal", () => ({
-  default: (props: { buyer?: unknown; onSuccess?: () => void }) => (
+  default: (props: {
+    buyer?: unknown;
+    onSuccess?: () => void;
+    onInvalidBuyer?: (rejection: { message: string; field: string | null }) => void;
+    onEditBuyer?: () => void;
+  }) => (
     <div data-testid="payment-modal" data-buyer={JSON.stringify(props.buyer ?? null)}>
       <button type="button" onClick={() => props.onSuccess?.()}>
         simular sucesso
+      </button>
+      <button type="button" onClick={() => props.onInvalidBuyer?.({ message: "CPF inválido", field: "cpf" })}>
+        simular invalid_buyer
+      </button>
+      <button type="button" onClick={() => props.onEditBuyer?.()}>
+        simular voltar
       </button>
     </div>
   ),
@@ -225,6 +236,44 @@ describe("HomePage — main event cover image", () => {
     await waitFor(() => expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument());
     expect(setLocation).not.toHaveBeenCalledWith("/profile");
     expect(toastSpy).not.toHaveBeenCalled();
+  });
+
+  // ADR-017 Stage 5 fix: the home page wires the same way back to the dialog as the event page.
+  describe("guest identity correction", () => {
+    async function openModal(user: ReturnType<typeof userEvent.setup>) {
+      vi.stubGlobal("fetch", mockApi({ ...baseEvent, price: "100.00", isFree: false }));
+      renderPage();
+      await user.click(await screen.findByTestId("button-buy-main"));
+      await user.type(await screen.findByTestId("input-guest-name"), "Camila Souza");
+      await user.type(screen.getByTestId("input-guest-email"), "camila@example.com");
+      await user.click(screen.getByTestId("input-guest-phone"));
+      await user.keyboard("{End}");
+      await user.type(screen.getByTestId("input-guest-phone"), "11987654321");
+      await user.type(screen.getByLabelText("CPF"), "52998224725");
+      await user.click(screen.getByTestId("button-confirm-registration"));
+      await screen.findByTestId("payment-modal");
+    }
+
+    it("reopens the dialog prefilled with the server message under the CPF on invalid_buyer", async () => {
+      const user = userEvent.setup();
+      await openModal(user);
+      await user.click(screen.getByText("simular invalid_buyer"));
+
+      expect((await screen.findByTestId("text-cpf-error")).textContent).toBe("CPF inválido");
+      expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
+      expect((screen.getByLabelText("CPF") as HTMLInputElement).value).toBe("529.982.247-25");
+      expect((screen.getByTestId("input-guest-email") as HTMLInputElement).value).toBe("camila@example.com");
+    });
+
+    it("“Voltar e editar dados” reopens the dialog prefilled, without an error", async () => {
+      const user = userEvent.setup();
+      await openModal(user);
+      await user.click(screen.getByText("simular voltar"));
+
+      expect(((await screen.findByTestId("input-guest-email")) as HTMLInputElement).value).toBe("camila@example.com");
+      expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("text-cpf-error")).toBeNull();
+    });
   });
 
   describe("N2: auth still resolving", () => {

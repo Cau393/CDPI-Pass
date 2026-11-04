@@ -19,6 +19,7 @@ import SiteFooter from "@/components/SiteFooter";
 import { useFreeSubscribe } from "@/hooks/useFreeSubscribe";
 import {
   EventRegistrationDialog,
+  type BuyerFieldError,
   type RegistrationConfirmation,
 } from "@/components/EventRegistrationDialog";
 import type { GuestBuyer } from "@/lib/guestBuyer";
@@ -58,6 +59,8 @@ export default function EventDetailsPage() {
     message?: string;
     /** The order was refused with a 409 identity_conflict (guest). */
     conflict?: boolean;
+    /** The order was refused with a 400 invalid_buyer (guest): shown at the input it names. */
+    buyerError?: BuyerFieldError;
   } | null>(null);
   const [checkoutAnswers, setCheckoutAnswers] = useState<Record<string, string>>({});
   // Guest checkout: who is buying, kept so a reopened dialog is prefilled.
@@ -494,6 +497,14 @@ export default function EventDetailsPage() {
             setIsPaymentModalOpen(false);
             setRegistrationPrompt({ message, conflict: true });
           }}
+          onInvalidBuyer={(buyerError) => {
+            setIsPaymentModalOpen(false);
+            setRegistrationPrompt({ buyerError });
+          }}
+          onEditBuyer={() => {
+            setIsPaymentModalOpen(false);
+            setRegistrationPrompt({});
+          }}
           onSuccess={() => {
             // A guest has no profile: the modal's own success screen said it all.
             if (!isAuthenticated && !authResolving) {
@@ -517,6 +528,7 @@ export default function EventDetailsPage() {
         error={registrationPrompt?.message}
         identityConflict={registrationPrompt?.conflict === true}
         buyer={guestBuyer}
+        buyerError={registrationPrompt?.buyerError}
         initialAnswers={checkoutAnswers}
         confirmLabel="Continuar para pagamento"
         onCancel={() => setRegistrationPrompt(null)}

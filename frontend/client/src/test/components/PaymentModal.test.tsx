@@ -341,6 +341,8 @@ describe("PaymentModal — inline card, Turnstile, statuses and polling", () => 
     const onClose = vi.fn();
     const onSuccess = vi.fn();
     const onIdentityConflict = vi.fn();
+    const onInvalidBuyer = vi.fn();
+    const onEditBuyer = vi.fn();
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     const ui = (isOpen: boolean, forEvent: Event = event) => (
       <QueryClientProvider client={client}>
@@ -353,6 +355,8 @@ describe("PaymentModal — inline card, Turnstile, statuses and polling", () => 
           answers={ANSWERS}
           onIdentityRequired={vi.fn()}
           onIdentityConflict={onIdentityConflict}
+          onInvalidBuyer={onInvalidBuyer}
+          onEditBuyer={onEditBuyer}
           onSuccess={onSuccess}
           buyer={opts.buyer}
         />
@@ -364,6 +368,8 @@ describe("PaymentModal — inline card, Turnstile, statuses and polling", () => 
       onClose,
       onSuccess,
       onIdentityConflict,
+      onInvalidBuyer,
+      onEditBuyer,
       client,
       /** The event page path: the modal stays mounted and toggles `isOpen`. */
       close: () => view.rerender(ui(false)),
@@ -1369,6 +1375,7 @@ describe("PaymentModal — inline card, Turnstile, statuses and polling", () => 
       [502, "payment_provider_error", {}],
       [400, "identity_required", { missing: ["document"] }],
       [409, "identity_conflict", {}],
+      [400, "invalid_buyer", { field: "cpf" }],
     ])("a JSON %i %s (retry-safe) leaves no lock behind", async (status, code, extra) => {
       const f = serve({ orders: [{ status, body: { code, message: "Mensagem do servidor.", ...extra } }] });
       vi.stubGlobal("fetch", f);
@@ -1382,6 +1389,170 @@ describe("PaymentModal — inline card, Turnstile, statuses and polling", () => 
       await user.click(cardTab());
       expect(amber()).toBeNull();
       expect(submit()).toBeEnabled();
+    });
+  });
+
+  // ADR-017 Stage 5 fix: a buyer the server refuses goes back to the identity dialog, never stuck here.
+  describe("guest identity correction", () => {
+    const BACK = "button-payment-edit-buyer";
+    const back = () => screen.queryByTestId(BACK);
+    const cardTab = () => screen.getByRole("tab", { name: /Cartão/ });
+    const invalidCpf = { code: "invalid_buyer", message: "CPF inválido", field: "cpf" };
+
+    it("hands a PIX 400 invalid_buyer to the page with the message and the field, with no toast", async () => {
+      vi.stubGlobal("fetch", serve({ orders: [{ status: 400, body: invalidCpf }] }));
+      const { user, onInvalidBuyer } = setup({ buyer: guest });
+      await pay(user);
+
+      await waitFor(() => expect(onInvalidBuyer).toHaveBeenCalledWith({ message: "CPF inválido", field: "cpf" }));
+      expect(toastSpy).not.toHaveBeenCalled();
+    });
+
+    it("hands a card 400 invalid_buyer to the page and frees the card (no charge was sent)", async () => {
+      vi.stubGlobal("fetch", serve({ orders: [{ status: 400, body: invalidCpf }] }));
+      const { user, onInvalidBuyer } = setup({ buyer: guest });
+      await fillCard(user);
+      await pay(user);
+
+      await waitFor(() => expect(onInvalidBuyer).toHaveBeenCalledWith({ message: "CPF inválido", field: "cpf" }));
+      expect(cardChargeLockFor(event.id)).toBeNull();
+      expect(screen.queryByTestId("text-card-error")).toBeNull();
+    });
+
+    it("hands a passport invalid_buyer with field foreignDocument (foreign visitor)", async () => {
+      const message = "Documento estrangeiro deve ter 5 a 32 letras ou números";
+      vi.stubGlobal(
+        "fetch",
+        serve({ orders: [{ status: 400, body: { code: "invalid_buyer", message, field: "foreignDocument" } }] }),
+      );
+      const foreigner: GuestBuyer = { name: "Juan Pérez", email: "juan@example.com", phone: "595981123456", isForeigner: true, foreignDocument: "AB1" };
+      const { user, onInvalidBuyer } = setup({ buyer: foreigner });
+      await pay(user);
+
+      await waitFor(() => expect(onInvalidBuyer).toHaveBeenCalledWith({ message, field: "foreignDocument" }));
+    });
+
+    it.each([
+      ["no field", {}],
+      ["an unknown field", { field: "birthDate" }],
+    ])("hands an invalid_buyer with %s to the page with field null", async (_label, extra) => {
+      vi.stubGlobal(
+        "fetch",
+        serve({ orders: [{ status: 400, body: { code: "invalid_buyer", message: "Informe seus dados para continuar.", ...extra } }] }),
+      );
+      const { user, onInvalidBuyer } = setup({ buyer: guest });
+      await pay(user);
+
+      await waitFor(() =>
+        expect(onInvalidBuyer).toHaveBeenCalledWith({ message: "Informe seus dados para continuar.", field: null }),
+      );
+    });
+
+    it("offers a guest “Voltar e editar dados”, which hands back to the page", async () => {
+      vi.stubGlobal("fetch", serve({}));
+      const { user, onEditBuyer } = setup({ buyer: guest });
+
+      expect(back()).toHaveTextContent("Voltar e editar dados");
+      await user.click(back()!);
+      expect(onEditBuyer).toHaveBeenCalledTimes(1);
+    });
+
+    it("offers no back control to a logged-in buyer", () => {
+      authState.user = account;
+      vi.stubGlobal("fetch", serve({}));
+      setup();
+
+      expect(back()).toBeNull();
+    });
+
+    it("hides the back control while the order is in flight", async () => {
+      let release!: (response: Response) => void;
+      const f = vi.fn((input: RequestInfo | URL, _init?: RequestInit) =>
+        String(input) === "/api/orders"
+          ? new Promise<Response>((resolve) => {
+              release = resolve;
+            })
+          : Promise.resolve(json(404, {})),
+      );
+      vi.stubGlobal("fetch", f);
+      const { user } = setup({ buyer: guest });
+      await fillCard(user);
+      await pay(user);
+
+      expect(submit()).toHaveTextContent("Processando...");
+      expect(back()).toBeNull();
+      await act(async () => release(json(402, { code: "card_declined", message: DECLINED })));
+      expect(await screen.findByTestId("text-card-error")).toHaveTextContent(DECLINED);
+      expect(back()).not.toBeNull();
+    });
+
+    it("hides the back control once a PIX order exists", async () => {
+      vi.stubGlobal(
+        "fetch",
+        serve({
+          orders: [
+            {
+              status: 201,
+              body: {
+                order: { id: ORDER_ID, status: "pending", amount: "105.00" },
+                orderAccessToken: "ord-tok",
+                payment: { id: "pay_1", status: "PENDING", value: 105, pixQrCode: "x", pixPayload: "PIX-PAYLOAD" },
+              },
+            },
+          ],
+          checkStatus: [{ status: 200, body: { status: "pending", paymentStatus: "PENDING" } }],
+        }),
+      );
+      const { user } = setup({ buyer: guest });
+      await pay(user);
+
+      expect(await screen.findByText("PIX Gerado com Sucesso!")).toBeInTheDocument();
+      expect(back()).toBeNull();
+    });
+
+    it("after a 202 (unknown outcome): no back control, and the card submit stays locked after close and reopen", async () => {
+      const f = serve({
+        orders: [{ status: 202, body: unconfirmedBody }],
+        checkStatus: [{ status: 200, body: { status: "pending", paymentStatus: null } }],
+      });
+      vi.stubGlobal("fetch", f);
+      const { user, close, reopen, onEditBuyer } = setup({ buyer: guest });
+      await fillCard(user);
+      await pay(user);
+
+      expect(await screen.findByTestId("text-payment-unconfirmed")).toHaveTextContent(UNCONFIRMED);
+      expect(back()).toBeNull();
+      close();
+      reopen();
+      await user.click(cardTab());
+      expect(back()).toBeNull();
+      await fillCard(user);
+      expect(submit()).toBeDisabled();
+      await user.click(screen.getByRole("tab", { name: /PIX/ }));
+      expect(back()).toBeNull();
+      expect(onEditBuyer).not.toHaveBeenCalled();
+      expect(cardChargeLockFor(event.id)).not.toBeNull();
+      expect(orderCalls(f)).toHaveLength(1);
+    });
+
+    it.each([
+      ["a non-JSON 504", { status: 504, html: "<html>504</html>" } as Reply],
+      ["a network failure", "network" as Reply],
+    ])("after %s: no back control, card submit locked, also on a new mount", async (_label, reply) => {
+      const f = serve({ orders: [reply] });
+      vi.stubGlobal("fetch", f);
+      const { user, remount } = setup({ buyer: guest });
+      await fillCard(user);
+      await pay(user);
+
+      expect(await screen.findByTestId("text-payment-unconfirmed")).toHaveTextContent(UNCONFIRMED);
+      expect(submit()).toBeDisabled();
+      expect(back()).toBeNull();
+      remount();
+      await user.click(cardTab());
+      expect(back()).toBeNull();
+      expect(submit()).toBeDisabled();
+      expect(orderCalls(f)).toHaveLength(1);
     });
   });
 });

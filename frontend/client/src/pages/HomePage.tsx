@@ -16,6 +16,7 @@ import { eventDescriptionPlainText } from "@/lib/eventDescriptionHtml";
 import { useFreeSubscribe } from "@/hooks/useFreeSubscribe";
 import {
   EventRegistrationDialog,
+  type BuyerFieldError,
   type RegistrationConfirmation,
 } from "@/components/EventRegistrationDialog";
 import type { GuestBuyer } from "@/lib/guestBuyer";
@@ -74,6 +75,8 @@ export default function HomePage() {
     message?: string;
     /** The order was refused with a 409 identity_conflict (guest). */
     conflict?: boolean;
+    /** The order was refused with a 400 invalid_buyer (guest): shown at the input it names. */
+    buyerError?: BuyerFieldError;
   } | null>(null);
   const [checkoutAnswers, setCheckoutAnswers] = useState<Record<string, string>>({});
   // Guest checkout: who is buying, kept so a reopened dialog is prefilled.
@@ -526,6 +529,18 @@ export default function HomePage() {
             setSelectedEvent(null);
             setRegistrationPrompt({ event: conflicted, message, conflict: true });
           }}
+          onInvalidBuyer={(buyerError) => {
+            const refused = selectedEvent;
+            setIsPaymentModalOpen(false);
+            setSelectedEvent(null);
+            setRegistrationPrompt({ event: refused, buyerError });
+          }}
+          onEditBuyer={() => {
+            const editing = selectedEvent;
+            setIsPaymentModalOpen(false);
+            setSelectedEvent(null);
+            setRegistrationPrompt({ event: editing });
+          }}
           onSuccess={() => {
             // A guest has no profile: the modal's own success screen said it all.
             if (!isAuthenticated && !authResolving) {
@@ -549,6 +564,7 @@ export default function HomePage() {
         error={registrationPrompt?.message}
         identityConflict={registrationPrompt?.conflict === true}
         buyer={guestBuyer}
+        buyerError={registrationPrompt?.buyerError}
         initialAnswers={checkoutAnswers}
         confirmLabel="Continuar para pagamento"
         onCancel={() => setRegistrationPrompt(null)}

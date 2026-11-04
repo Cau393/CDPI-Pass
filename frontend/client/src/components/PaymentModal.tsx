@@ -13,6 +13,7 @@ import { publicEventLocationLabel } from "@shared/eventModality";
 import { isFreeEvent } from "@/lib/eventCta";
 import { parseApiError, parseApiErrorMessage } from "@/lib/eventForm";
 import type { GuestBuyer } from "@/lib/guestBuyer";
+import { isGuestBuyerField, type GuestBuyerField } from "@shared/guestBuyerField";
 import { identityRequiredMissing, refreshAfterStaleRegistration, RELOAD_PAGE_MESSAGE } from "@/lib/eventRegistration";
 import { CardPaymentForm, type CardPaymentFormHandle } from "@/components/CardPaymentForm";
 import { CheckoutSuccess } from "@/components/CheckoutSuccess";
@@ -43,6 +44,13 @@ interface PaymentModalProps {
   buyer?: GuestBuyer;
   /** A 409 identity_conflict (guest): the page reopens the registration dialog with `message`. */
   onIdentityConflict?: (message: string) => void;
+  /**
+   * A 400 invalid_buyer (guest, refused before any charge): the page reopens the registration dialog
+   * prefilled, with `message` under `field` (null when the server named no known input).
+   */
+  onInvalidBuyer?: (rejection: { message: string; field: GuestBuyerField | null }) => void;
+  /** Guest only: "Voltar e editar dados" back to the registration dialog, offered while no order or charge exists. */
+  onEditBuyer?: () => void;
   onSuccess: () => void;
 }
 
@@ -123,6 +131,8 @@ export default function PaymentModal({
   onIdentityRequired,
   buyer,
   onIdentityConflict,
+  onInvalidBuyer,
+  onEditBuyer,
   onSuccess,
 }: PaymentModalProps) {
   const { toast } = useToast();
@@ -293,6 +303,11 @@ export default function PaymentModal({
       onIdentityConflict(parseApiErrorMessage(error));
       return;
     }
+    if (parsed.code === "invalid_buyer" && onInvalidBuyer) {
+      const field = (parsed.body as { field?: unknown } | undefined)?.field;
+      onInvalidBuyer({ message: parseApiErrorMessage(error), field: isGuestBuyerField(field) ? field : null });
+      return;
+    }
     const missing = identityRequiredMissing(error);
     if (missing) {
       // Reopen the dialog with the refetched event, not the captured one.
@@ -406,6 +421,20 @@ export default function PaymentModal({
       </Dialog>
     );
   }
+
+  // Going back to edit is safe only while nothing may have been charged or created: no request in
+  // flight, no card-charge lock for the event (R37, read from the module too), no order or poll here.
+  const canEditBuyer =
+    isGuest &&
+    onEditBuyer != null &&
+    !submitting &&
+    !cardLocked &&
+    cardChargeLockFor(event.id) == null &&
+    !poll &&
+    !pollNotice &&
+    !paymentData &&
+    !cardOutcome &&
+    !paid;
 
   const pollNoticeText = pollNotice ? (
     <p role="status" className="text-sm font-medium text-gray-700" data-testid="text-payment-poll-status">
@@ -629,6 +658,17 @@ export default function PaymentModal({
                 <p role="status" className="text-center text-sm font-medium text-gray-700" data-testid="text-payment-in-flight">
                   Não feche nem recarregue esta página
                 </p>
+              ) : null}
+              {canEditBuyer ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11 w-full"
+                  onClick={onEditBuyer}
+                  data-testid="button-payment-edit-buyer"
+                >
+                  Voltar e editar dados
+                </Button>
               ) : null}
             </>
           ) : (
