@@ -646,6 +646,10 @@ released for every JSON non-5xx answer, and `submitting` disables the form only 
   unchanged (characterization test).
 - R48 `RegisterPage`: 409 `guest_account_claim` is a persistent inline notice (server message, inbox/spam hint, login link keeping
   `?next=`); every other error toasts `parseApiErrorMessage`, never the raw `409: {json}`.
+- R49 (review, 2026-11-04): `invalid_buyer` reopens the dialog only for a guest buyer. A logged-in buyer whose session the
+  server did not accept gets the server message in the card alert or the destructive toast (`1338a17`).
+- R50 (review): every inline field error in the registration dialog has an `id` and `role="alert"`; its input carries
+  `aria-describedby` and `aria-invalid` (`b28244c`; `DocumentFields` is shared with `ForgotEmailPage`).
 
 **Verification (head `ee1578a`).** `pnpm check` exit 0; `test:backend` 619 passed | 276 skipped; `test:frontend` 605 passed | 4
 skipped. Red first: server 12 failed (10 `parseGuestBuyer` field, 2 resolver body), dialog 7, `PaymentModal` 7, pages 5 (real dialog
