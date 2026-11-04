@@ -2,6 +2,12 @@
 
 One entry per mistake or wrong assumption that cost time. Each entry: date · symptom · root cause · prevention (rule or check). Newest first. When a prevention changes how code must be written, it also gets a one-line rule in `frontend/.claude/rules/*.md`.
 
+## 2026-11-04 — a stacked PR showed "conflicting" on GitHub while git merged it cleanly (deploy B, #30)
+
+- **Symptom:** right after #27 merged, PR #30 (the guest stack) showed `CONFLICTING`/`DIRTY` and no CI ran. Locally, `git merge-tree` against the deploy branch was clean.
+- **Root cause:** #27 merged with a merge commit, so the stack had two merge bases (`174b560` and #27's head `766d44f`). Git's recursive merge combines the bases and gives exactly the stack's tree. GitHub checks against one base, so Stage 1 lines that later stages edited, and the vault files the stack had already merged, show as conflicts. GitHub does not run `pull_request` workflows on a conflicting PR.
+- **Prevention:** after the owner merges a lower PR of a stack, merge the deploy branch into the next stacked branch before opening (or re-checking) its PR. It is a no-op merge (same tree), and the merged commit becomes the single merge base. Check it with `git merge-base --all` (one line).
+
 ## 2026-11-04 — guest checkout: a bad CPF trapped the buyer on the payment screen (ADR-017 Stage 5 fix)
 
 - **Symptom:** on staging, a logged-out buyer typed `123.456.789-00` in "Complete sua inscrição", reached "Finalizar Compra", and every submit answered 400 `invalid_buyer` "CPF inválido" (a toast for PIX, the card alert for card). The payment screen has no CPF field and no way back; only X, which drops everything. Signup with an e-mail that has guest tickets toasted the raw `409: {"code":"guest_account_claim",…}` as "Erro no cadastro".
