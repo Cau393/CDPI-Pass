@@ -765,6 +765,17 @@ describe("EventRegistrationDialog", () => {
         expect(screen.queryByTestId("text-registration-buyer-error")).toBeNull();
       });
 
+      it("announces the server CPF error: role alert, linked to the input with aria-describedby and aria-invalid", async () => {
+        renderDialog(paidOnline, { buyer: camila, buyerError: { field: "cpf", message: "CPF inválido" } });
+
+        const error = await screen.findByTestId("text-cpf-error");
+        expect(error).toHaveAttribute("role", "alert");
+        expect(error.id).not.toBe("");
+        const cpf = screen.getByLabelText("CPF");
+        expect(cpf).toHaveAttribute("aria-describedby", error.id);
+        expect(cpf).toHaveAttribute("aria-invalid", "true");
+      });
+
       it("lets the buyer fix the field the server named and continue", async () => {
         const user = userEvent.setup();
         const { onConfirm } = renderDialog(paidOnline, {

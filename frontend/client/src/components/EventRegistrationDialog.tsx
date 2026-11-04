@@ -373,11 +373,17 @@ export function EventRegistrationDialog({
                     autoComplete="name"
                     className="h-11"
                     aria-invalid={Boolean(fieldErrors.name)}
+                    aria-describedby={fieldErrors.name ? "guest-name-error" : undefined}
                     data-testid="input-guest-name"
                     {...form.register("name")}
                   />
                   {fieldErrors.name ? (
-                    <p className="text-sm font-medium text-destructive" data-testid="text-guest-name-error">
+                    <p
+                      id="guest-name-error"
+                      role="alert"
+                      className="text-sm font-medium text-destructive"
+                      data-testid="text-guest-name-error"
+                    >
                       {fieldErrors.name.message}
                     </p>
                   ) : null}
@@ -390,11 +396,17 @@ export function EventRegistrationDialog({
                     autoComplete="email"
                     className="h-11"
                     aria-invalid={Boolean(fieldErrors.email)}
+                    aria-describedby={fieldErrors.email ? "guest-email-error" : undefined}
                     data-testid="input-guest-email"
                     {...form.register("email")}
                   />
                   {fieldErrors.email ? (
-                    <p className="text-sm font-medium text-destructive" data-testid="text-guest-email-error">
+                    <p
+                      id="guest-email-error"
+                      role="alert"
+                      className="text-sm font-medium text-destructive"
+                      data-testid="text-guest-email-error"
+                    >
                       {fieldErrors.email.message}
                     </p>
                   ) : null}
@@ -410,13 +422,19 @@ export function EventRegistrationDialog({
                         value={field.value}
                         onChange={field.onChange}
                         aria-invalid={fieldState.invalid}
+                        aria-describedby={fieldErrors.phone ? "guest-phone-error" : undefined}
                         data-testid="input-guest-phone"
                         className="w-full"
                       />
                     )}
                   />
                   {fieldErrors.phone ? (
-                    <p className="text-sm font-medium text-destructive" data-testid="text-guest-phone-error">
+                    <p
+                      id="guest-phone-error"
+                      role="alert"
+                      className="text-sm font-medium text-destructive"
+                      data-testid="text-guest-phone-error"
+                    >
                       {fieldErrors.phone.message}
                     </p>
                   ) : null}
@@ -455,6 +473,7 @@ export function EventRegistrationDialog({
                 {addressError ? (
                   <p
                     id="registration-address-error"
+                    role="alert"
                     className="text-sm font-medium text-destructive"
                   >
                     {addressError}
