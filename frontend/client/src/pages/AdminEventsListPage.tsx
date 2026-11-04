@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Copy, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Link2, Search } from "lucide-react";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -10,6 +10,12 @@ import {
   BreadcrumbPage,
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -22,6 +28,8 @@ import {
 import type { Event } from "@shared/schema";
 import { eventDescriptionPlainText } from "@/lib/eventDescriptionHtml";
 import { useToast } from "@/hooks/use-toast";
+import { buildTaggedEventUrl } from "@/lib/leadTag";
+import { LEAD_TAGS, LEAD_TAG_LABELS } from "@shared/leadTag";
 
 const PAGE_SIZE = 10;
 
@@ -118,26 +126,63 @@ export default function AdminEventsListPage({
         </TableCell>
         <TableCell className="hidden tabular-nums sm:table-cell">{formatRowDate(ev)}</TableCell>
         <TableCell className="hidden max-w-[220px] truncate md:table-cell">{ev.location}</TableCell>
-        <TableCell className="hidden w-[52px] p-1 md:table-cell">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-            aria-label={`Copiar event_id (${ev.title})`}
-            title="Copiar UUID do evento (event_id)"
-            data-testid={`copy-event-id-${ev.id}`}
-            onClick={(e) => {
-              e.preventDefault();
-              void navigator.clipboard.writeText(ev.id);
-              toast({
-                title: "Copiado",
-                description: "O event_id foi copiado para a área de transferência.",
-              });
-            }}
-          >
-            <Copy className="h-4 w-4" />
-          </Button>
+        <TableCell className="hidden w-[1%] whitespace-nowrap p-1 md:table-cell">
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+              aria-label={`Copiar event_id (${ev.title})`}
+              title="Copiar UUID do evento (event_id)"
+              data-testid={`copy-event-id-${ev.id}`}
+              onClick={(e) => {
+                e.preventDefault();
+                void navigator.clipboard.writeText(ev.id);
+                toast({
+                  title: "Copiado",
+                  description: "O event_id foi copiado para a área de transferência.",
+                });
+              }}
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 gap-1 text-muted-foreground hover:text-foreground"
+                  aria-label={`Copiar link (${ev.title})`}
+                  title="Copiar link do evento com a origem do lead"
+                  data-testid={`copy-link-${ev.id}`}
+                >
+                  <Link2 className="h-4 w-4" />
+                  Copiar link
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {LEAD_TAGS.map((tag) => (
+                  <DropdownMenuItem
+                    key={tag}
+                    data-testid={`copy-link-${tag}-${ev.id}`}
+                    onSelect={() => {
+                      void navigator.clipboard.writeText(
+                        buildTaggedEventUrl(window.location.origin, ev.id, tag),
+                      );
+                      toast({
+                        title: "Copiado",
+                        description: `O link (${LEAD_TAG_LABELS[tag]}) foi copiado para a área de transferência.`,
+                      });
+                    }}
+                  >
+                    {LEAD_TAG_LABELS[tag]}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </TableCell>
       </TableRow>
     ));
@@ -203,7 +248,7 @@ export default function AdminEventsListPage({
               <TableHead>Título</TableHead>
               <TableHead className="hidden sm:table-cell">Data</TableHead>
               <TableHead className="hidden md:table-cell">Local</TableHead>
-              <TableHead className="hidden w-[52px] md:table-cell" aria-hidden />
+              <TableHead className="hidden w-[1%] md:table-cell" aria-hidden />
             </TableRow>
           </TableHeader>
           <TableBody>{tableBodyRows}</TableBody>
