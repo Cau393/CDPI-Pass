@@ -115,6 +115,8 @@ async function createEvent(
 }
 
 const SEEDED_NAME = "Fulana Sigilosa de Tal";
+// Random per run: a fixed CPF here collided with lookupEmail.integration.test.ts (its "no account" CPF) when the files ran in parallel in CI.
+const SEEDED_CPF = `${randomInt(100, 1000)}.${randomInt(100, 1000)}.${randomInt(100, 1000)}-${String(randomInt(0, 100)).padStart(2, "0")}`;
 const SEEDED_EMAIL = `sigilosa-${randomUUID().slice(0, 8)}@example.test`;
 let userId: string;
 
@@ -138,8 +140,8 @@ describe.skipIf(!enabled)("GET /api/integrations/dashboard/online-events (real P
     userId = randomUUID();
     await pool.query(
       `INSERT INTO users (id, email, email_verified, password, name, cpf, phone)
-       VALUES ($1,$2,true,'x',$3,'111.444.777-35','5511999999999')`,
-      [userId, SEEDED_EMAIL, SEEDED_NAME],
+       VALUES ($1,$2,true,'x',$3,$4,'5511999999999')`,
+      [userId, SEEDED_EMAIL, SEEDED_NAME, SEEDED_CPF],
     );
     createdUserIds.push(userId);
     const { registerRoutes } = await import("../../routes");
@@ -252,7 +254,7 @@ describe.skipIf(!enabled)("GET /api/integrations/dashboard/online-events (real P
     const res = await get({ auth: bearer() });
     expect(res.text).not.toContain(SEEDED_NAME);
     expect(res.text).not.toContain(SEEDED_EMAIL);
-    expect(res.text).not.toContain("111.444.777-35");
+    expect(res.text).not.toContain(SEEDED_CPF);
     expect(res.text).not.toContain(userId);
   });
 
