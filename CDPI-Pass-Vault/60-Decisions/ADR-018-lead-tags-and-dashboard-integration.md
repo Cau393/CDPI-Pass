@@ -59,7 +59,8 @@ Sheets-based events; the owner wants the CDPI Pass online events next to them, w
   - Response: `{ events: [{ id, title, date, counts: { email, parceiros, patrocinado, consultores, none }, total }] }`.
     `date` is a UTC ISO string. No PII, only event ids and titles and aggregates. `Cache-Control: no-store`.
   - The count unit is one paid `orders` row, the same as the admin participants page (which filters
-    `status='paid'`). An integration test compares the two.
+    `status='paid'`). The integration test checks the counts against its own SQL that re-implements that
+    rule, not against the participants page itself.
   - The request logger logs method, path, status and up to 80 characters of the response body; it never reads
     headers, so the token cannot reach the logs, and the response body holds no PII.
 
@@ -84,14 +85,17 @@ Sheets-based events; the owner wants the CDPI Pass online events next to them, w
 1. **Staging.** `pnpm db:push` (additive), then a manual run: open `/event/<id>?tag=parceiros`, revisit untagged,
    subscribe, and check the participants page shows Origem "Parceiros". Then `curl` the endpoint: 200 with
    counts using the token, 401 without it.
-2. **Prod migration, before the code deploy.** Neon backup branch first. `db:diff` must show exactly these two
-   statements (file `frontend/sql/orders_lead_tag.sql`), run in **one transaction** with `lock_timeout` 5s:
+2. **Prod migration, before the code deploy.** Neon backup branch first. `db:diff` must show the two `lead_tag`
+   statements below plus the known A7 `DROP INDEX "orders_asaas_payment_id_unique"`, which must **never** be run.
+   Prod gets only `frontend/sql/orders_lead_tag.sql` (these two statements), in **one transaction** with
+   `lock_timeout` 5s:
    ```sql
    ALTER TABLE "orders" ADD COLUMN "lead_tag" varchar(20);
    ALTER TABLE "orders" ADD CONSTRAINT "orders_lead_tag_chk"
      CHECK ("lead_tag" IS NULL OR "lead_tag" IN ('email','parceiros','patrocinado','consultores'));
    ```
-   Afterwards a Neon compare against the backup must equal exactly that column and check.
+   After the migration, a Neon schema compare of prod against the backup branch must show exactly the new
+   column and the new CHECK, and nothing else.
    **Never `db:push` prod:** prod has the A7 index `orders_asaas_payment_id_unique` that `schema.ts` lacks, and
    push would drop it.
 3. **Token.** The owner generates a value (`openssl rand -hex 32`) and sets `DASHBOARD_API_TOKEN` in the EC2
@@ -103,7 +107,12 @@ Sheets-based events; the owner wants the CDPI Pass online events next to them, w
    the column needs the dashboard feed switched off first (the grouped query reads it).
 
 ## Risks and notes
-- A courtesy opened straight from `/cortesia?code=` without a tagged event visit counts as "Direto". Accepted;
+
+- Adding a tag later: widen the CHECK `orders_lead_tag_chk` on prod **before** deploying the code that emits
+  the new tag, otherwise purchases carrying it fail the constraint and return a 500.
+- The client builds the cookie and storage keys only from a safe event id (`/^[A-Za-z0-9_-]{1,64}$/`) and
+  captures `?tag=` keyed by the server's `event.id` after the event loads, so a crafted route param cannot
+  inject cookie attributes or oversize the Path=/ cookie.- A courtesy opened straight from `/cortesia?code=` without a tagged event visit counts as "Direto". Accepted;
   the admin shares the tagged event URL.
 - A shared device can carry a 30-day tag to another person. Accepted attribution noise; the cookie holds no PII.
 - Abandoned pending PIX retries create new rows. Only the paid row counts, with the tag current at that attempt.
@@ -116,12 +125,12 @@ Sheets-based events; the owner wants the CDPI Pass online events next to them, w
 ## Deployment checklist
 - [ ] Staging: `db:push`, tagged-link manual run, participants shows Origem, `curl` 200 / 401
 - [ ] Prod: Neon backup branch created
-- [ ] Prod: `db:diff` shows exactly the two statements above
+- [ ] Prod: `db:diff` shows the two statements above plus only the known A7 DROP INDEX (never run)
 - [ ] Prod: the two ALTERs run in one transaction with `lock_timeout` 5s, before the code deploy
-- [ ] Prod: Neon compare against the backup equals exactly the column + check
+- [ ] Prod: Neon compare against the backup shows exactly the column + check
 - [ ] Owner set `DASHBOARD_API_TOKEN` in EC2 `frontend/.env`
 - [ ] PR into `hotfix-frontend-update` green; owner merged
-- [ ] Live `curl`: 401 without the token, 200 with it; counts match the participants page for one event
+- [ ] Live `curl`: 401 without the token, 200 with it; counts match the participants page for one event (manual check)
 - [ ] Neon read-only `GROUP BY lead_tag` shows tagged rows after traffic
 
 ## Tests
