@@ -112,7 +112,8 @@ Sheets-based events; the owner wants the CDPI Pass online events next to them, w
   the new tag, otherwise purchases carrying it fail the constraint and return a 500.
 - The client builds the cookie and storage keys only from a safe event id (`/^[A-Za-z0-9_-]{1,64}$/`) and
   captures `?tag=` keyed by the server's `event.id` after the event loads, so a crafted route param cannot
-  inject cookie attributes or oversize the Path=/ cookie.- A courtesy opened straight from `/cortesia?code=` without a tagged event visit counts as "Direto". Accepted;
+  inject cookie attributes or oversize the Path=/ cookie.
+- A courtesy opened straight from `/cortesia?code=` without a tagged event visit counts as "Direto". Accepted;
   the admin shares the tagged event URL.
 - A shared device can carry a 30-day tag to another person. Accepted attribution noise; the cookie holds no PII.
 - Abandoned pending PIX retries create new rows. Only the paid row counts, with the tag current at that attempt.
