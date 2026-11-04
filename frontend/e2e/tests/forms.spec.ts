@@ -1,7 +1,7 @@
 // Port of the reference p3-e2e.mjs (steps 2-7, 12) and p4-signup-e2e.mjs (steps 3-7).
 import { test, expect, expectNoHorizontalScroll } from "../support/fixtures";
 import { createEvent, fmtCpf, question, scalar } from "../support/db";
-import { clickEventCta, createAccount, fillSignup, login, makeUser, orderCount, submitAndVerify, waitForRegistrationDialog } from "../support/ui";
+import { clickEventCta, createAccount, fillSignup, login, makeUser, orderCount, submitSignup, waitForRegistrationDialog } from "../support/ui";
 import { ADDRESS, completeRegistrationDialog, newPassport, paymentMethods, uniqueCpf } from "../support/flows";
 import { FOREIGN_PAID_CHECKOUT_ENABLED } from "../../shared/foreignCheckout";
 
@@ -75,7 +75,7 @@ test.describe("event registration forms", () => {
     const u = makeUser("p4");
     await page.goto(`/register?next=${encodeURIComponent(`/event/${pres.id}`)}`);
     await fillSignup(page, u);
-    await submitAndVerify(page, u.email);
+    await submitSignup(page);
     await page.waitForURL(new RegExp(`/event/${pres.id}`), { timeout: 20_000 });
 
     await clickEventCta(page, free.id);

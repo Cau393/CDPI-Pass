@@ -1,9 +1,9 @@
 import { test, expect, expectNoHorizontalScroll } from "../support/fixtures";
 import { createEvent, scalar } from "../support/db";
-import { fillSignup, makeUser, submitAndVerify } from "../support/ui";
+import { fillSignup, makeUser, submitSignup } from "../support/ui";
 
 test.describe("signup (ADR-016 four fields)", () => {
-  test("BR: top-bar Cadastre-se keeps ?next=, 4 fields, e-mail code, back to the event", async ({ page }, info) => {
+  test("BR: top-bar Cadastre-se keeps ?next=, 4 fields, no e-mail code, back to the event logged in", async ({ page }, info) => {
     const ev = await createEvent("presencialFree");
     const u = makeUser("br");
     await page.goto(`/event/${ev.id}`);
@@ -17,9 +17,10 @@ test.describe("signup (ADR-016 four fields)", () => {
 
     await fillSignup(page, u);
     await expectNoHorizontalScroll(page, "signup form");
-    await submitAndVerify(page, u.email);
+    await submitSignup(page);
     await page.waitForURL(new RegExp(`/event/${ev.id}`), { timeout: 20_000 });
-    await expectNoHorizontalScroll(page, "event page after verify");
+    expect(await page.evaluate(() => localStorage.getItem("token")), "signup logs the user in").toBeTruthy();
+    await expectNoHorizontalScroll(page, "event page after signup");
 
     const row = await scalar<string>(
       `SELECT coalesce(cpf,'-') || ' ' || coalesce(address,'-') || ' ' || phone || ' ' || occupation FROM users WHERE lower(email)=lower($1)`,
@@ -34,7 +35,7 @@ test.describe("signup (ADR-016 four fields)", () => {
     await page.goto(`/register?next=${encodeURIComponent(`/event/${ev.id}`)}`);
     await fillSignup(page, { ...u, country: "PY", phoneDisplayDigits: "981123456" });
     await expectNoHorizontalScroll(page, "foreigner signup form");
-    await submitAndVerify(page, u.email);
+    await submitSignup(page);
     await page.waitForURL(new RegExp(`/event/${ev.id}`), { timeout: 20_000 });
     const row = await scalar<string>(
       `SELECT phone || ' ' || coalesce(cpf,'-') || ' ' || is_foreigner FROM users WHERE lower(email)=lower($1)`,

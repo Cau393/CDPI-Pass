@@ -45,11 +45,12 @@ function sentBody() {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   search = "";
   setLocation.mockReset();
   fetchMock.mockReset();
   fetchMock.mockResolvedValue(
-    new Response(JSON.stringify({ email: "maria@example.com" }), {
+    new Response(JSON.stringify({ message: "ok", token: "jwt-new", user: { id: "u1", email: "maria@example.com", name: "Maria Silva", emailVerified: false } }), {
       status: 201,
       headers: { "Content-Type": "application/json" },
     }),
@@ -82,7 +83,7 @@ describe("RegisterPage — minimal signup (ADR-016 Phase 4)", () => {
     }
   });
 
-  it("sends exactly the four fields and goes to e-mail verification keeping ?next=", async () => {
+  it("sends exactly the four fields, stores the token and goes to ?next= without any verification step", async () => {
     search = "next=%2Fevent%2Fabc";
     const user = userEvent.setup();
     renderPage();
@@ -97,7 +98,19 @@ describe("RegisterPage — minimal signup (ADR-016 Phase 4)", () => {
       phone: "5561987654321",
       password: "secret1",
     });
-    expect(setLocation).toHaveBeenCalledWith("/verify-email?email=maria%40example.com&next=%2Fevent%2Fabc");
+    expect(localStorage.getItem("token")).toBe("jwt-new");
+    expect(setLocation).toHaveBeenCalledWith("/event/abc");
+  });
+
+  it("goes to / when there is no next", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await fillSignup(user, "maria@example.com", "61987654321");
+    await user.click(screen.getByTestId("button-register"));
+
+    await waitFor(() => expect(setLocation).toHaveBeenCalledWith("/"));
+    expect(localStorage.getItem("token")).toBe("jwt-new");
   });
 
   it("lets a foreign visitor sign up with a Paraguay phone and no document", async () => {

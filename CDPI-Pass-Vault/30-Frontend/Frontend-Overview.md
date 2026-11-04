@@ -20,7 +20,7 @@
 | `/login`, `/register` | Login / Register. Register (ADR-016 Phase 4) asks only **Nome Completo**, **E-mail** + confirmation, **Telefone** (`PhoneInputE164`, any country), **Senha** + confirmation and the terms; it keeps `?next=`. No CPF, passport, birth date, address or work fields: the registration dialog asks the document/address at the first paid or in-person inscription. Profile shows the CPF/passport read-only (empty until given), the `Nao aplicavel` work defaults and a missing address as empty inputs, and leaves empty optional fields out of `PUT /api/profile`. Paid checkout for a foreigner offers only an international card (no PIX, boleto, or parcelamento) |
 | `/forgot-password`, `/reset-password` | Password recovery |
 | `/forgot-email` | ForgotEmailPage ("Esqueci meu e-mail"): CPF (or passport via "Sou estrangeiro", `DocumentFields`) -> masked account e-mail from `POST /api/auth/lookup-email`, with links to `/login` and `/forgot-password`. Not found shows "Não encontramos uma conta com este CPF." plus a hint that recent accounts may have no CPF yet (ADR-016) and a link to `/register`. Linked from LoginPage and ForgotPasswordPage. Rule: public lookups by identity document return only masked data, have their own rate limit, and never reveal name/id/full e-mail |
-| `/verify-email` | VerifyCodePage (6-digit code) |
+| `/verify-email` | VerifyEmailPage: confirms a signed e-mail link (`GET /api/auth/verify-email?token=`). The 6-digit code page is gone (ADR-017 Stage 1): Register stores the token and follows `?next=`, Login no longer branches on `emailVerified` |
 | `/cortesia` | CourtesyRedeemPage (manual code, or the attendee form after the guest chooses to redeem) |
 
 ### User

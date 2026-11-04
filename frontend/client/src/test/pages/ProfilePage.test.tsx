@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -325,5 +325,35 @@ describe("ProfilePage — online access buttons", () => {
 
     expect(await screen.findByTestId("button-view-qr-o1")).toBeInTheDocument();
     expect(screen.queryByTestId("button-meeting-o1")).not.toBeInTheDocument();
+  });
+});
+
+describe("ProfilePage — no e-mail verification gate", () => {
+  it("renders no unverified badge or resend button for an unverified user", async () => {
+    renderPage();
+
+    await screen.findByTestId("text-user-name");
+    expect(screen.queryByText("Email não verificado")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("button-resend-verification")).not.toBeInTheDocument();
+  });
+
+  it("stores the fresh token returned by a password change", async () => {
+    apiRequest.mockImplementation(async (method: string, url: string) => {
+      if (method === "PUT" && url === "/api/profile/password") {
+        return jsonResponse({ message: "ok", token: "jwt-after-password" });
+      }
+      if (String(url).startsWith("/api/orders")) return jsonResponse(ORDERS);
+      return jsonResponse({});
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("tab-security"));
+    await user.type(await screen.findByTestId("input-current-password"), "oldsecret");
+    await user.type(screen.getByTestId("input-new-password"), "newsecret");
+    await user.type(screen.getByTestId("input-confirm-password"), "newsecret");
+    await user.click(screen.getByTestId("button-change-password"));
+
+    await waitFor(() => expect(localStorage.getItem("token")).toBe("jwt-after-password"));
   });
 });

@@ -25,7 +25,7 @@ export default function VerifyEmailPage() {
       }
 
       try {
-        const response = await apiRequest("GET", `/api/auth/verify-email?token=${token}`);
+        const response = await apiRequest("GET", `/api/auth/verify-email?token=${encodeURIComponent(token)}`);
         const data = await response.json();
         
         setStatus("success");

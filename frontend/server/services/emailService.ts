@@ -115,32 +115,6 @@ class EmailService {
     }
   }
 
-  async sendVerificationEmail(email: string, userId: string): Promise<boolean> {
-    // Generate a 6-digit code
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
-    // Set an expiration time (15 minutes from now)
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-
-    // Store the code and its expiration in the database
-    await storage.updateUser(userId, {
-        emailVerificationCode: verificationCode,
-        emailVerificationCodeExpiresAt: expiresAt,
-    });
-
-    const html = `
-      <h1>Confirme seu email - CDPI Pass</h1>
-      <p>Seu código de verificação é:</p>
-      <h2><b>${verificationCode}</b></h2>
-      <p>Este código expira em 15 minutos.</p>
-      ${EMAIL_CONTACT_FOOTER_HTML}
-    `;
-    const text = `Seu código de verificação para o CDPI Pass é: ${verificationCode}
-
-${EMAIL_CONTACT_LINE}`;
-
-    return this.sendEmail(email, "Seu Código de Verificação - CDPI Pass", html, text);
-    }
-
   async sendTicketEmail(email: string, data: TicketEmailData): Promise<boolean> {
     const html = buildTicketEmailHtml(data);
     const text = buildTicketEmailText(data);

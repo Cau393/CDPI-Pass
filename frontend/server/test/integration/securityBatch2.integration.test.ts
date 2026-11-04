@@ -1,5 +1,6 @@
 /**
- * Hardening batch 2 (security backlog #14, #15, #16 and the courtesy race) against the
+ * Hardening batch 2 (security backlog #14, #15, the courtesy race; #16 reversed by ADR-017
+ * Stage 1, plus the session checks that replace it) against the
  * REAL Express routes and a REAL PostgreSQL. Skipped unless VERIFY_DATABASE_URL is set.
  *
  * NEVER point VERIFY_DATABASE_URL at Neon (staging or production): this test
@@ -118,9 +119,7 @@ async function createEvent(opts: { modality: "presencial" | "online"; isFree: bo
 
 type TestUser = { id: string; token: string; email: string };
 
-const VERIFICATION_CODE = "123456";
-
-/** A complete account (document, birth date, address), verified or still waiting for its code. */
+/** A complete account (document, birth date, address), with or without a verified e-mail. */
 async function createUser(opts: { verified: boolean; isAdmin?: boolean }): Promise<TestUser> {
   const id = randomUUID();
   const email = `sec-${id.slice(0, 8)}@example.test`;
@@ -128,29 +127,31 @@ async function createUser(opts: { verified: boolean; isAdmin?: boolean }): Promi
   // 777: other integration files use 888/999 and run in parallel on the same database.
   const cpf = `777.${String(n).padStart(3, "0")}.${String(n).padStart(3, "0")}-88`;
   await pool.query(
-    `INSERT INTO users (id, email, email_verified, email_verification_code, email_verification_code_expires_at, password, name, cpf, phone, birth_date, address, occupation, partner_company, area_of_activity, is_admin)
-     VALUES ($1,$2,$3,$4,$5,'x','Participante Teste',$6,'5511999999999',$7,'Rua de teste, 123','Nao aplicavel','Nao aplicavel','Nao aplicavel',$8)`,
-    [
-      id,
-      email,
-      opts.verified,
-      opts.verified ? null : VERIFICATION_CODE,
-      // UTC wall time, as Drizzle writes it: a Date here would be stored in the local zone
-      // and read back hours off on a machine that is not on UTC.
-      opts.verified ? null : new Date(Date.now() + 3600_000).toISOString(),
-      cpf,
-      new Date("1990-01-01"),
-      opts.isAdmin ?? false,
-    ],
+    `INSERT INTO users (id, email, email_verified, password, name, cpf, phone, birth_date, address, occupation, partner_company, area_of_activity, is_admin)
+     VALUES ($1,$2,$3,'x','Participante Teste',$4,'5511999999999',$5,'Rua de teste, 123','Nao aplicavel','Nao aplicavel','Nao aplicavel',$6)`,
+    [id, email, opts.verified, cpf, new Date("1990-01-01"), opts.isAdmin ?? false],
   );
   createdUserIds.push(id);
   return { id, token: jwt.sign({ userId: id }, JWT_SECRET), email };
 }
 
-/** The code typed on /verify-email, through the real route. */
-async function verify(user: TestUser): Promise<void> {
-  const res = await api("POST", "/api/auth/verify-code", { body: { email: user.email, code: VERIFICATION_CODE } });
-  expect(res.status, JSON.stringify(res.body)).toBe(200);
+/** A password account created through the real signup route, then logged in. */
+async function signUpAndLogIn(password = "senha-antiga"): Promise<TestUser & { password: string }> {
+  const email = `sec-auth-${randomUUID().slice(0, 8)}@example.test`;
+  const reg = await api("POST", "/api/auth/register", {
+    body: { name: "Conta Sessao", email, phone: "5511987654321", password },
+  });
+  expect(reg.status, JSON.stringify(reg.body)).toBe(201);
+  const { rows } = await pool.query(`SELECT id FROM users WHERE email = $1`, [email]);
+  createdUserIds.push(rows[0].id);
+  const login = await api("POST", "/api/auth/login", { body: { email, password } });
+  expect(login.status, JSON.stringify(login.body)).toBe(200);
+  return { id: rows[0].id, token: login.body.token, email, password };
+}
+
+/** The link token e-mailed by forgot-password (emailService.sendPasswordResetEmail). */
+function resetToken(userId: string): string {
+  return jwt.sign({ userId, type: "password-reset" }, JWT_SECRET, { expiresIn: "30m" });
 }
 
 async function courtesyCode(eventId: string, createdBy: string, ticketCount = 5): Promise<string> {
@@ -228,51 +229,137 @@ describe.skipIf(!enabled)("hardening batch 2 (real routes + real DB)", () => {
     });
   });
 
-  describe("a verified e-mail is required to sign up for an event (#16)", () => {
-    it("free subscribe: 403 EMAIL_NOT_VERIFIED and no order, then 201 after the code", async () => {
+  describe("an account without an e-mail code can sign up for an event (#16 reversed, ADR-017)", () => {
+    it("free subscribe: 201 for an unverified account", async () => {
       const eventId = await createEvent({ modality: "online", isFree: true });
       const user = await createUser({ verified: false });
 
-      const blocked = await api("POST", `/api/events/${eventId}/subscribe`, { token: user.token, body: { answers: {} } });
-      expect(blocked.status).toBe(403);
-      expect(blocked.body.code).toBe("EMAIL_NOT_VERIFIED");
-      expect(await orderCount(eventId)).toBe(0);
-
-      await verify(user);
       const res = await api("POST", `/api/events/${eventId}/subscribe`, { token: user.token, body: { answers: {} } });
-      expect(res.status).toBe(201);
+
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      expect(await orderCount(eventId)).toBe(1);
     });
 
-    it("paid order: 403 before any Asaas call, then 201 after the code", async () => {
+    it("paid order: 201 and one Asaas call for an unverified account", async () => {
       const eventId = await createEvent({ modality: "presencial", isFree: false });
       const user = await createUser({ verified: false });
       const before = asaasCalls.length;
 
-      const blocked = await api("POST", "/api/orders", { token: user.token, body: { eventId, paymentMethod: "pix" } });
-      expect(blocked.status).toBe(403);
-      expect(blocked.body.code).toBe("EMAIL_NOT_VERIFIED");
-      expect(asaasCalls.length).toBe(before);
-      expect(await orderCount(eventId)).toBe(0);
-
-      await verify(user);
       const res = await api("POST", "/api/orders", { token: user.token, body: { eventId, paymentMethod: "pix" } });
-      expect(res.status).toBe(201);
+
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      expect(asaasCalls.length).toBe(before + 1);
     });
 
-    it("courtesy redeem: 403 and the link keeps its ticket, then 201 after the code", async () => {
+    it("courtesy redeem and Meus Ingressos: 201 and 200 for an unverified account", async () => {
       const eventId = await createEvent({ modality: "online", isFree: false });
       const admin = await createUser({ verified: true, isAdmin: true });
       const guest = await createUser({ verified: false });
       const code = await courtesyCode(eventId, admin.id);
 
-      const blocked = await api("POST", "/api/courtesy/redeem", { token: guest.token, body: onlineCourtesy(code, guest.email) });
-      expect(blocked.status).toBe(403);
-      expect(blocked.body.code).toBe("EMAIL_NOT_VERIFIED");
-      expect(await orderCount(eventId)).toBe(0);
-
-      await verify(guest);
       const res = await api("POST", "/api/courtesy/redeem", { token: guest.token, body: onlineCourtesy(code, guest.email) });
-      expect(res.status).toBe(201);
+      const orders = await api("GET", "/api/orders", { token: guest.token });
+
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      expect(orders.status).toBe(200);
+      expect(orders.body.orders.map((o: { eventId: string }) => o.eventId)).toContain(eventId);
+    });
+  });
+
+  describe("sessions once signup has no e-mail code (ADR-017 Stage 1)", () => {
+    it("the code endpoints are gone; the e-mail link endpoint stays", async () => {
+      const user = await createUser({ verified: false });
+
+      const verifyCode = await api("POST", "/api/auth/verify-code", { body: { email: user.email, code: "123456" } });
+      const resendCode = await api("POST", "/api/auth/resend-code", { body: { email: user.email } });
+      const resendLink = await api("POST", "/api/auth/resend-verification", { token: user.token });
+      const link = await api("GET", "/api/auth/verify-email");
+
+      expect([verifyCode.status, resendCode.status, resendLink.status]).toEqual([404, 404, 404]);
+      expect(link.status).toBe(400);
+    });
+
+    it("a password reset ends the sessions issued before it; a token without pv still works", async () => {
+      const user = await signUpAndLogIn();
+      const legacy = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
+      expect((await api("GET", "/api/auth/me", { token: user.token })).status).toBe(200);
+
+      const reset = await api("POST", "/api/auth/reset-password", {
+        body: { token: resetToken(user.id), newPassword: "senha-nova" },
+      });
+      const oldSession = await api("GET", "/api/auth/me", { token: user.token });
+      const relogin = await api("POST", "/api/auth/login", { body: { email: user.email, password: "senha-nova" } });
+
+      expect(reset.status, JSON.stringify(reset.body)).toBe(200);
+      expect(oldSession.status).toBe(401);
+      expect(relogin.status).toBe(200);
+      expect((await api("GET", "/api/auth/me", { token: relogin.body.token })).status).toBe(200);
+      // Issued before the pv claim existed: accepted, so the deploy logs no one out.
+      expect((await api("GET", "/api/auth/me", { token: legacy })).status).toBe(200);
+    });
+
+    it("a reset or e-mail link token used as a Bearer session is 401", async () => {
+      const user = await createUser({ verified: true });
+      const link = jwt.sign({ userId: user.id, type: "email-verification" }, JWT_SECRET, { expiresIn: "7d" });
+
+      expect((await api("GET", "/api/auth/me", { token: resetToken(user.id) })).status).toBe(401);
+      expect((await api("GET", "/api/auth/me", { token: link })).status).toBe(401);
+      expect((await api("GET", "/api/orders", { token: resetToken(user.id) })).status).toBe(401);
+    });
+
+    it("reset-password rejects a password under 6 characters and keeps the old one", async () => {
+      const user = await signUpAndLogIn();
+
+      const short = await api("POST", "/api/auth/reset-password", {
+        body: { token: resetToken(user.id), newPassword: "12345" },
+      });
+      const notString = await api("POST", "/api/auth/reset-password", {
+        body: { token: resetToken(user.id), newPassword: 1234567 },
+      });
+
+      expect(short.status).toBe(400);
+      expect(notString.status).toBe(400);
+      expect((await api("POST", "/api/auth/login", { body: { email: user.email, password: user.password } })).status).toBe(200);
+    });
+
+    it("reset-password marks the e-mail verified (the owner opened the link)", async () => {
+      const user = await signUpAndLogIn();
+      const before = await pool.query(`SELECT email_verified FROM users WHERE id = $1`, [user.id]);
+
+      const reset = await api("POST", "/api/auth/reset-password", {
+        body: { token: resetToken(user.id), newPassword: "senha-nova" },
+      });
+      const after = await pool.query(`SELECT email_verified FROM users WHERE id = $1`, [user.id]);
+
+      expect(before.rows[0].email_verified).toBe(false);
+      expect(reset.status).toBe(200);
+      expect(after.rows[0].email_verified).toBe(true);
+    });
+
+    it("changing the password returns a new session and ends the old one", async () => {
+      const user = await signUpAndLogIn();
+
+      const change = await api("PUT", "/api/profile/password", {
+        token: user.token,
+        body: { currentPassword: user.password, newPassword: "senha-trocada" },
+      });
+
+      expect(change.status, JSON.stringify(change.body)).toBe(200);
+      expect(typeof change.body.token).toBe("string");
+      expect((await api("GET", "/api/auth/me", { token: change.body.token })).status).toBe(200);
+      expect((await api("GET", "/api/auth/me", { token: user.token })).status).toBe(401);
+    });
+
+    it("changing the password answers 400, not 500, for a password that is not a string", async () => {
+      const user = await signUpAndLogIn();
+
+      const res = await api("PUT", "/api/profile/password", {
+        token: user.token,
+        body: { currentPassword: user.password, newPassword: ["a", "b", "c", "d", "e", "f"] },
+      });
+
+      expect(res.status).toBe(400);
+      expect((await api("GET", "/api/auth/me", { token: user.token })).status).toBe(200);
     });
   });
 

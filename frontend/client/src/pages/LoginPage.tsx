@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation, useSearch } from "wouter";
-import { authEntryHref, getValidatedNextPath, verifyEmailHref } from "@/lib/authRedirect";
+import { authEntryHref, getValidatedNextPath } from "@/lib/authRedirect";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,13 +37,8 @@ export default function LoginPage() {
       localStorage.setItem("token", data.token);
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
 
-      if (data.user.emailVerified) {
-        toast({ title: "Login realizado com sucesso!" });
-        setLocation(getValidatedNextPath(nextRaw));
-      } else {
-        toast({ title: "Verificação necessária", description: "Por favor, verifique seu e-mail." });
-        setLocation(verifyEmailHref(data.user.email, nextRaw));
-      }
+      toast({ title: "Login realizado com sucesso!" });
+      setLocation(getValidatedNextPath(nextRaw));
     },
     onError: (error: Error) => {
       toast({

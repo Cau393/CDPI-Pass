@@ -17,7 +17,7 @@ export function makeUser(tag: string, over: Partial<NewUser> = {}): NewUser {
   };
 }
 
-/** Creates a verified 4-field account through the API (the shape ADR-016 signup produces). */
+/** Creates a 4-field account (left unverified: the e-mail gate is gone) through the API (the shape ADR-016 signup produces). */
 export async function createAccount(u: NewUser, opts: { admin?: boolean } = {}) {
   const res = await fetch(`${cfg.baseUrl}/api/auth/register`, {
     method: "POST",
@@ -25,7 +25,7 @@ export async function createAccount(u: NewUser, opts: { admin?: boolean } = {}) 
     body: JSON.stringify({ name: u.name, email: u.email, phone: u.phone, password: PASSWORD }),
   });
   if (res.status !== 201) throw new Error(`register ${res.status}`);
-  await sql(`UPDATE users SET email_verified = true, is_admin = $2 WHERE lower(email) = lower($1)`, [u.email, opts.admin === true]);
+  await sql(`UPDATE users SET is_admin = $2 WHERE lower(email) = lower($1)`, [u.email, opts.admin === true]);
 }
 
 export async function login(page: Page, email: string, password = PASSWORD) {
@@ -56,14 +56,10 @@ export async function fillSignup(
   await page.getByTestId("checkbox-terms").click();
 }
 
-/** Submits the signup form, reads the e-mail code from the database and verifies. */
-export async function submitAndVerify(page: Page, email: string) {
+/** Submits the signup form and waits until the page leaves /register (signup logs the user in). */
+export async function submitSignup(page: Page) {
   await page.getByTestId("button-register").click();
-  await page.waitForURL(/\/verify-email\?/, { timeout: 20_000 });
-  const code = await scalar<string>(`SELECT email_verification_code FROM users WHERE lower(email) = lower($1)`, [email]);
-  expect(code, `no verification code for ${email}`).toMatch(/^\d{6}$/);
-  await page.locator("#code").fill(code!);
-  await page.getByRole("button", { name: "Verificar" }).click();
+  await page.waitForURL((url) => url.pathname !== "/register", { timeout: 20_000 });
 }
 
 /** Opens an event page and clicks its main call to action. */
