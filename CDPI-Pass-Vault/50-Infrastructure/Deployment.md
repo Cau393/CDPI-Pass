@@ -8,6 +8,8 @@ Prod: **https://cdpipass.com.br** on an AWS EC2 instance.
 - Express serves the built SPA in production (single origin, no separate static host).
 - Client `VITE_*` keys are inlined at build time from `frontend/.env` on the box (`envDir` in `vite.config.ts`; Vite's default would be `client/`). The build fails without `VITE_TURNSTILE_SITE_KEY`, so the deploy stops before the cutover (ADR-017).
 - nginx (`infra/nginx/cdpipass.com.br.conf`) is not applied by the deploy: the owner copies it and reloads nginx by hand. `proxy_read_timeout 120s` on the proxy blocks covers the 90 s card POST.
+  - The live config matches the repo's Turnstile CSP (`challenges.cloudflare.com` in `script-src` + `frame-src`), applied 2026-11-04 with a backup at `~/nginx-cdpipass.bak-2026-11-04`.
+- Open on EC2 (2026-11-04): the box reports "System restart required". Reboot in a quiet window, after checking that `pm2 startup` + `pm2 save` bring both apps back.
 
 ## PM2 processes (`ecosystem.config.cjs`)
 | App | Script | Notes |
