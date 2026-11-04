@@ -239,3 +239,17 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Symptom 2:** `refuterItems` "still saves a form whose question order changed" failed locally on the Docker Postgres (`expected …831 to be greater than …845`), also on untouched prod code.
 - **Root cause 2:** the colima VM clock runs about 20 ms ahead of the host. The test compares a DB-default `updated_at` (container clock) with one written by JS (host clock). In CI, the service container shares the host clock.
 - **Prevention:** a non-session JWT always carries a `type` claim, and a Bearer is checked only through `sessionUserFromToken`. Any route that changes `users.password` returns a fresh `signSessionToken` to the caller. For a green local integration run, use a host Postgres 17 (Homebrew `initdb -U postgres --auth=trust`, `pg_ctl -o "-p 55434 -c listen_addresses=localhost"`, the cluster the e2e harness expects), then `VERIFY_DATABASE_URL=postgresql://postgres@localhost:55434/cdpi`, or measure the skew first. The Stage 1 run: Docker 143/144, host 144/144. Rules added to `security.md` and `testing.md`.
+
+## 2026-10-30 — a zod 4 migration was planned for a CVE that had been rejected
+
+- **Symptom:** the deps handoff asked the owner to choose between accepting CVE-2023-54404 in `.trivyignore.yaml` and migrating to zod 4 now, from #27's CI log of 2026-10-28 13:06 UTC.
+- **Root cause:** the CNA rejected the CVE at 22:17 UTC the same day, and trivy's database dropped it. A CI log is a snapshot of the scanner database on that day. The plan was written from the log, without re-scanning.
+- **Fix:** re-scanned with today's database and read the NVD record (`vulnStatus: Rejected`). The PR shrank to `body-parser` + `multer`. The owner chose no zod change, and the zod 4 migration stays a backlog item ([[70-Operations/Security-Backlog|Security Backlog]] #28).
+- **Prevention:** before planning a fix or an accept for a scanner finding, re-run trivy with a fresh database. Check the CVE's NVD `vulnStatus` (Rejected or Disputed) and the GHSA `withdrawn_at`. The same pass found the reverse case: `body-parser` looked like routine hygiene but crashes the process from one anonymous request. Test reachability with the advisory's own regression payload, not a guessed one; two guessed payloads did not trigger the crash.
+
+## 2026-11-02 — a test password on a feature branch failed gitleaks on every PR
+
+- **Symptom:** PR #28 (deps only) went red in "Secrets in git history (gitleaks)": `generic-api-key` in `guestCheckout.integration.test.ts`, a file that PR does not touch.
+- **Root cause:** CI runs `gitleaks git --log-opts="--all"` on a full-history checkout, so it scans every pushed branch. A high-entropy fixture password (`newPassword: "…"`) committed on the guest-stack branches on 2026-10-28 has failed every PR since that push, and no later edit removes it from history.
+- **Fix:** one exact fingerprint (`commit:file:rule:line`) in a root `.gitleaksignore`. A path or rule allowlist would weaken the scan for real secrets.
+- **Prevention:** run `gitleaks git --log-opts="--all" --redact .` before asking the owner to push any branch, not only the PR branch. Keep test passwords low-entropy (for example `test-password-1`). When the security job fails at an early step, the later steps (trivy) were skipped: re-run them locally before calling the PR green.

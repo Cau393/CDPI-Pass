@@ -1,0 +1,9 @@
+# Accepted gitleaks findings, one exact fingerprint each (commit:file:rule:line),
+# read by the CI "Secrets in git history (gitleaks)" step. CI scans every
+# branch's history (--log-opts=--all), so a pushed commit cannot be fixed by a
+# later edit; only a fingerprint here clears it. Never add a path or rule
+# wildcard. Details: CDPI-Pass-Vault/70-Operations/Security-Backlog.md #28.
+
+# Test fixture password for a throwaway integration-test user ("Stage 2 guest
+# checkout red tests"), not a credential.
+e0fd52428e78ee90bac07a45cd7296da03d6bfc5:frontend/server/test/integration/guestCheckout.integration.test.ts:generic-api-key:737
