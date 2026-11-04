@@ -581,8 +581,15 @@ https://docs.asaas.com/reference/create-new-customer (customer notifications).
 
 **Deploy notes (deploy B)** (the owner gates; nothing below was run on prod)
 Gates (a) to (d), in order:
-- [ ] (a) **Schema on prod**, the 2 additive statements (`users.password` DROP NOT NULL; `orders.placed_as_guest` boolean default false
+- [x] (a) **Schema on prod**, the 2 additive statements (`users.password` DROP NOT NULL; `orders.placed_as_guest` boolean default false
       not null): `pnpm db:diff` against prod first, expect exactly those two, apply them, `pnpm db:diff` again = 0 statements. Before the code.
+      **Done 2026-11-04 ~18:24 UTC (owner OK for the exact statements).** Backup branch `backup-pre-adr017-guest-2026-11-04`
+      (`br-dry-grass-ac2d5hou`, prod LSN `0/27E9A900`). The two statements ran in one transaction with `SET LOCAL lock_timeout = '5s'`.
+      Instead of `db:diff`, which needs the prod URL, the Neon schema compare was used, so no credential was needed. Before the
+      migration, staging vs prod (public schema) differed only by these 2 columns plus `orders_asaas_payment_id_unique` (A7,
+      prod-only, from `frontend/sql/`, not in `schema.ts`). After it, prod vs the backup differs by exactly the 2 columns. Live
+      `/api/events` was 200 afterwards and login answered 401 for an unknown user. Staging still lacks the A7 index. `schema.ts`
+      does not model it, so never `db:push` to prod.
 - [ ] (b) **Turnstile keys together:** `VITE_TURNSTILE_SITE_KEY` (build) and `TURNSTILE_SECRET_KEY` (server) set at the same time, with the
       Cloudflare widget "Hostname Management" = the prod hostnames. Both go in `~/CDPI-Pass/frontend/.env` on EC2 before the merge (the
       running code ignores them). Since the deploy-B prep (2026-10-29) `vite.config.ts` reads env files from `frontend/` (`envDir`); before,
