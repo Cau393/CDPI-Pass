@@ -33,6 +33,7 @@ import { isUsersEmailUniqueViolation } from "./utils/usersEmailUnique";
 import { isEventFull } from "./utils/eventSalesPolicy";
 import { eq, ne, desc, sql, asc, count, and, isNull, or, inArray, gte } from "drizzle-orm";
 import type { RegistrationAnswer } from "@shared/eventRegistrationForm";
+import type { LeadTag } from "@shared/leadTag";
 import { s3Service } from "./services/s3Service";
 import { buildUndoCheckInPatch } from "./utils/undoCheckInUpdate";
 import { validateCourtesyTicketCountUpdate } from "./utils/courtesyTicketCountUpdate";
@@ -118,7 +119,7 @@ export interface IStorage {
     page: number,
     limit: number,
     options?: { includeGuestOrders?: boolean },
-  ): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }>;
+  ): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers" | "leadTag">[]; total: number }>;
   /** Pending orders a user opened for an event since `since` (guest checkout cap, ADR-017; guest and session orders are counted apart). */
   countPendingOrdersSince(params: { userId: string; eventId: string; since: Date; placedAsGuest: boolean }): Promise<number>;
   /** True when the user owns at least one order placed through guest checkout (ADR-017). */
@@ -227,6 +228,8 @@ export interface IStorage {
     /** The attendee, never the redeeming account; `email` only for online events. */
     holder: { cpf: string | null; foreignDocument: string | null; email: string | null };
     registrationAnswers: RegistrationAnswer[];
+    /** ADR-018 lead tag (already parsed); null = direct. */
+    leadTag?: LeadTag | null;
     attendee: InsertCourtesyAttendee;
   }): Promise<
     | { ok: false; reason: CourtesyRedeemRejection }
@@ -478,7 +481,7 @@ export class DatabaseStorage implements IStorage {
     page: number = 1,
     limit: number = 10,
     options: { includeGuestOrders?: boolean } = {},
-  ): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }> {
+  ): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers" | "leadTag">[]; total: number }> {
     const offset = (page - 1) * limit;
     // ADR-017: guest orders stay hidden until the account's e-mail is verified.
     const ownerFilter =
@@ -1027,6 +1030,8 @@ export class DatabaseStorage implements IStorage {
     userId: string;
     holder: { cpf: string | null; foreignDocument: string | null; email: string | null };
     registrationAnswers: RegistrationAnswer[];
+    /** ADR-018 lead tag (already parsed); null = direct. */
+    leadTag?: LeadTag | null;
     attendee: InsertCourtesyAttendee;
   }): Promise<
     | { ok: false; reason: CourtesyRedeemRejection }
@@ -1090,6 +1095,7 @@ export class DatabaseStorage implements IStorage {
           courtesyLinkId: params.linkId,
           courtesyAttendeeId: attendee.id,
           registrationAnswers: params.registrationAnswers,
+          leadTag: params.leadTag ?? null,
           createdAt: new Date(),
           updatedAt: new Date(),
         })

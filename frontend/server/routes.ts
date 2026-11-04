@@ -133,6 +133,7 @@ import { ownerCanSeeOrder } from "./utils/orderVisibility";
 import { myTicketsUrlFor } from "./utils/myTicketsUrl";
 import { refreshOrderPayment } from "./utils/refreshOrderPayment";
 import { maskEmail } from "@shared/maskEmail";
+import { parseLeadTag } from "@shared/leadTag";
 import { getJwtSecret } from "./utils/requiredSecret";
 import multer from 'multer';
 import csv from 'csv-parser';
@@ -1530,6 +1531,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           attendeeIsForeigner: courtesyAttendees.isForeigner,
           attendeeAddress: courtesyAttendees.address,
           registrationAnswers: orders.registrationAnswers,
+          leadTag: orders.leadTag,
           email: users.email,
           phone: users.phone,
           ticketId: orders.id,
@@ -1598,6 +1600,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           address: isCourtesyRow ? (r.attendeeAddress ?? null) : (r.userAddress ?? null),
           isForeigner: (isCourtesyRow ? r.attendeeIsForeigner : r.userIsForeigner) === true,
           registrationAnswers: merged.answers,
+          leadTag: r.leadTag ?? null,
           amntUsed: used,
           maxUses: maxU,
           checkedIn: used > 0,
@@ -2521,6 +2524,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/orders", authenticateTokenOrGuest, guestCheckoutLimiter, cardAttemptIpLimiter, cardAttemptEmailLimiter, async (req: any, res) => {
     try {
       const { eventId, paymentMethod, promoCode } = req.body ?? {};
+      // ADR-018: unknown or junk value is a plain "no tag", never an error.
+      const leadTag = parseLeadTag(req.body?.leadTag);
 
       // ADR-017: a guest solves the challenge, and so does every card submit (also with a session):
       // the inline card form is the card-testing surface.
@@ -2683,6 +2688,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         courtesyLinkId: promoLinkId,
         registrationAnswers: registration.answers,
         placedAsGuest,
+        leadTag,
       });
 
       // Set as soon as the card charge request returns, whatever it holds: from then on the order
@@ -3030,6 +3036,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: "paid",
           registrationAnswers: registration.answers,
           placedAsGuest,
+          leadTag: parseLeadTag(req.body?.leadTag),
         },
       });
       if (!created.ok && created.reason === "event_full") {
@@ -3830,7 +3837,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/courtesy/redeem", authenticateToken, async (req: any, res) => {
     try {
       const userId = req.user.id;
-      const { code, ...userData } = req.body ?? {};
+      // leadTag must never reach userData (it is not a user field).
+      const { code, leadTag: rawLeadTag, ...userData } = req.body ?? {};
+      const leadTag = parseLeadTag(rawLeadTag);
 
       // Get courtesy link
       const link = await storage.getCourtesyLinkByCode(code);
@@ -3920,6 +3929,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // no document, so by the attendee's e-mail.
         holder: { cpf: attendeeCpf, foreignDocument, email: online ? userData.email : null },
         registrationAnswers: registration.answers,
+        leadTag,
         attendee: {
           name: nameNorm,
           email: userData.email,
