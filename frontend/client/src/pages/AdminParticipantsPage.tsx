@@ -35,6 +35,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { downloadDataUrl } from "@/lib/downloadDataUrl";
 import { exportParticipantsToXlsx } from "@/lib/exportParticipantsExcel";
+import { leadTagLabel } from "@shared/leadTag";
 import type { Event } from "@shared/schema";
 import type { RegistrationAnswer, RegistrationField } from "@shared/eventRegistrationForm";
 
@@ -59,6 +60,8 @@ interface Participant {
   qrCodeUsed: boolean;
   hasQrCode: boolean;
   checkedInAt: string | null;
+  /** ADR-018 lead tag of the ticket's order; null = direct. */
+  leadTag: string | null;
 }
 
 interface ParticipantsResponse {
@@ -424,6 +427,7 @@ export default function AdminParticipantsPage() {
             : "Não confirmou presença",
           orderStatus: p.orderStatus,
           registrationAnswers: p.registrationAnswers,
+          leadTag: p.leadTag,
         })),
         participantsRes?.registrationForm ?? [],
         selectedEvent.title,
@@ -500,6 +504,7 @@ export default function AdminParticipantsPage() {
                   <TableHead>E-mail</TableHead>
                   <TableHead>Telefone</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Origem</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
@@ -507,7 +512,7 @@ export default function AdminParticipantsPage() {
                 {loading ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 6 }).map((__, j) => (
+                      {Array.from({ length: 7 }).map((__, j) => (
                         <TableCell key={j}>
                           <Skeleton className="h-4 w-full" />
                         </TableCell>
@@ -517,7 +522,7 @@ export default function AdminParticipantsPage() {
                 ) : filteredParticipants.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={6}
+                      colSpan={7}
                       className="h-24 text-center text-muted-foreground"
                     >
                       {debouncedSearch.trim()
@@ -562,6 +567,7 @@ export default function AdminParticipantsPage() {
                           )}
                         </div>
                       </TableCell>
+                      <TableCell data-testid={`origin-${p.ticketId}`}>{leadTagLabel(p.leadTag)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex flex-wrap justify-end gap-2">
                           {p.hasQrCode && (

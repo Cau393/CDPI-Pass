@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { leadTagLabel } from "@shared/leadTag";
 import { isLegacyFieldId, type RegistrationAnswer, type RegistrationField } from "@shared/eventRegistrationForm";
 
 export type ParticipantExportRow = {
@@ -15,6 +16,8 @@ export type ParticipantExportRow = {
   presenca: string;
   orderStatus: "paid" | "courtesy" | "cancelled";
   registrationAnswers: RegistrationAnswer[];
+  /** ADR-018 lead tag of the order; null or unknown reads as "Direto". */
+  leadTag: string | null;
 };
 
 const FIXED_HEADERS = [
@@ -30,6 +33,9 @@ const FIXED_HEADERS = [
   "Status",
   "Área de atuação",
 ] as const;
+
+/** Always the last column, after the question columns, so every other position is unchanged. */
+const ORIGIN_HEADER = "Origem";
 
 /** Rótulos de Status para Excel: apenas pagamento e cortesia (demais ficam em branco). */
 export function statusLabelForExcel(
@@ -51,7 +57,7 @@ export function buildParticipantSheet(
   registrationForm: readonly RegistrationField[],
 ): string[][] {
   const questions = questionColumns(participants, registrationForm);
-  const taken = new Set<string>(FIXED_HEADERS);
+  const taken = new Set<string>([...FIXED_HEADERS, ORIGIN_HEADER]);
   const questionHeaders = questions.map(({ label }) => {
     let header = label;
     for (let n = 2; taken.has(header); n++) header = `${label} (${n})`;
@@ -74,10 +80,11 @@ export function buildParticipantSheet(
       statusLabelForExcel(p.orderStatus),
       p.areaDeAtuacao,
       ...questions.map(({ fieldId }) => answers.get(fieldId) ?? ""),
+      leadTagLabel(p.leadTag),
     ];
   });
 
-  return [[...FIXED_HEADERS, ...questionHeaders], ...rows];
+  return [[...FIXED_HEADERS, ...questionHeaders, ORIGIN_HEADER], ...rows];
 }
 
 function questionColumns(

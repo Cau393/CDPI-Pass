@@ -460,7 +460,7 @@ describe("useFreeSubscribe — lead tag", () => {
   });
 
   it("sends the stored tag, read at submit time", async () => {
-    localStorage.setItem(key, "parceiros");
+    localStorage.setItem(`cdpi:lt:${event.id}`, "parceiros");
     expect((await subscribedBody()).leadTag).toBe("parceiros");
   });
 
