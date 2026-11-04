@@ -100,6 +100,34 @@ describe("captureLeadTagFromUrl", () => {
   });
 });
 
+describe("unsafe event ids (cookie name comes from a raw route param)", () => {
+  const unsafe = ["abc;Domain=evil.test", "a=b", "has space", "x".repeat(65), "x".repeat(3900), ""];
+
+  it.each(unsafe)("writes nothing and reads null for %j", (bad) => {
+    const cookieSet = vi.spyOn(document, "cookie", "set");
+    const lsSet = vi.spyOn(Storage.prototype, "setItem");
+    captureLeadTagFromUrl(bad, "?tag=email");
+    expect(cookieSet).not.toHaveBeenCalled();
+    expect(lsSet).not.toHaveBeenCalled();
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
+    expect(getLeadTag(bad)).toBeNull();
+  });
+
+  it("getLeadTag ignores even a pre-existing value under an unsafe id", () => {
+    const bad = "a=b";
+    localStorage.setItem(`cdpi:lt:${bad}`, "email");
+    expect(getLeadTag(bad)).toBeNull();
+  });
+
+  it("accepts a 64-char id and a legacy non-uuid id", () => {
+    captureLeadTagFromUrl("a".repeat(64), "?tag=email");
+    expect(getLeadTag("a".repeat(64))).toBe("email");
+    captureLeadTagFromUrl("legacy_Event-1", "?tag=parceiros");
+    expect(getLeadTag("legacy_Event-1")).toBe("parceiros");
+  });
+});
+
 describe("getLeadTag precedence", () => {
   it("URL > cookie > localStorage > sessionStorage > memory", () => {
     captureLeadTagFromUrl(A, "?tag=consultores"); // memory

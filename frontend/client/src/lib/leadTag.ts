@@ -9,6 +9,14 @@ const COOKIE_MAX_AGE_SECONDS = 2592000; // 30 days
 
 const memory = new Map<string, LeadTag>();
 
+/**
+ * The event id arrives from a raw route param (wouter only decodeURI's it), so `;`, `=`, spaces or
+ * a huge value could reach the cookie name: attribute injection, or an oversized Path=/ cookie that
+ * breaks every request. Event ids are uuids; the charset guard also keeps legacy ids working.
+ */
+const SAFE_EVENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+export const isSafeEventId = (id: string): boolean => SAFE_EVENT_ID.test(id);
+
 const cookieName = (eventId: string) => `cdpi_lt_${eventId}`;
 const storageKey = (eventId: string) => `cdpi:lt:${eventId}`;
 
@@ -18,6 +26,7 @@ export function resetLeadTagMemoryForTests(): void {
 }
 
 export function captureLeadTagFromUrl(eventId: string, search: string): void {
+  if (!isSafeEventId(eventId)) return; // no cookie/storage key is ever built from it
   const tag = parseLeadTag(new URLSearchParams(search).get("tag"));
   if (!tag) return; // an untagged or invalid visit never erases a stored tag
 
@@ -51,6 +60,7 @@ function readCookie(eventId: string): unknown {
 
 /** First valid tag of: URL (this event's page only), cookie, localStorage, sessionStorage, memory. */
 export function getLeadTag(eventId: string): LeadTag | null {
+  if (!isSafeEventId(eventId)) return null;
   const readers: Array<() => unknown> = [
     () =>
       location.pathname === `/event/${eventId}`

@@ -1,6 +1,8 @@
 /**
  * ADR-018 lead tags: where a ticket's buyer came from (`?tag=` on the event link).
  * The ONLY tag list in the codebase; server, client and the DB CHECK all follow it.
+ * Adding a tag: widen the CHECK `orders_lead_tag_chk` on prod BEFORE deploying the code that emits
+ * it, or every purchase carrying the new tag fails the constraint and returns a 500.
  */
 export const LEAD_TAGS = ["email", "parceiros", "patrocinado", "consultores"] as const;
 

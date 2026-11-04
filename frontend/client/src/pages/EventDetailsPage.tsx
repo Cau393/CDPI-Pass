@@ -71,8 +71,6 @@ export default function EventDetailsPage() {
     const params = new URLSearchParams(window.location.search);
     setPromoCode(params.get("promo"));
     setCourtesyCode(params.get("cortesia"));
-    // ADR-018: remember ?tag= for this event (the URL keeps it, so a reload re-captures).
-    if (id) captureLeadTagFromUrl(id, window.location.search);
   }, [id]);
 
   // ✅ Fetch main event details
@@ -80,6 +78,13 @@ export default function EventDetailsPage() {
     queryKey: [`/api/events/${id}`],
     enabled: !!id,
   });
+
+  // ADR-018: remember ?tag= once the event resolved, keyed by the server's event.id (the key the
+  // order senders read), never the raw route param. The URL keeps ?tag=, so a reload re-captures.
+  const resolvedEventId = event?.id;
+  useEffect(() => {
+    if (resolvedEventId) captureLeadTagFromUrl(resolvedEventId, window.location.search);
+  }, [resolvedEventId]);
 
   const { data: userOrdersData } = useQuery<{ orders: Order[] }>({
     queryKey: ["/api/orders", "event-details-gate"],
