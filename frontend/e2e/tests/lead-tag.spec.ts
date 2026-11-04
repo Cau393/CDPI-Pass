@@ -75,6 +75,30 @@ test.describe("lead tags", () => {
     }
   });
 
+  test("last tagged link wins: ?tag=email then ?tag=consultores then bare revisit: Origem is Consultores", async ({ page, browser }) => {
+    const ev = await createEvent("onlineFree", { titleSuffix: "lt5" });
+    const g = newGuest("lt5");
+    await page.goto(`/event/${ev.id}?tag=email`);
+    await expect(page.getByTestId("button-event-cta")).toBeVisible();
+    await page.goto(`/event/${ev.id}?tag=consultores`);
+    await expect(page.getByTestId("button-event-cta")).toBeVisible();
+    await page.goto(`/event/${ev.id}`);
+    expect(new URL(page.url()).search).toBe("");
+    await subscribeAsGuest(page, g);
+    await expect.poll(() => orderCount(g.email, ev.id, "paid"), { timeout: 15_000 }).toBe("1");
+    expect(await storedTag(g.email, ev.id)).toBe("consultores");
+
+    const { admin, context } = await adminPage(browser, page);
+    try {
+      const row = await originOnParticipantsPage(admin, ev.id, g.email);
+      await expect(row).toContainText("Consultores");
+      await expect(row).not.toContainText("E-mail");
+      await expect(row).not.toContainText("Direto");
+    } finally {
+      await context.close();
+    }
+  });
+
   // Hostile storage. The app's own auth code reads localStorage("token") unguarded, so a wholesale
   // throwing localStorage would crash unrelated pages; instead the lead-tag keys (`cdpi:lt:*`) throw on
   // localStorage (and on sessionStorage with `sessionStorageToo`), and document.cookie is a no-op.
