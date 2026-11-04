@@ -16,12 +16,37 @@ type Account = {
   areaOfActivity?: string | null;
 };
 const authState: { user: Account | undefined } = { user: undefined };
+const turnstileState: { configured: boolean; onToken?: (t: string | null) => void; resets: number } = {
+  configured: false,
+  resets: 0,
+};
+vi.mock("../../components/TurnstileWidget", async () => {
+  const React = await import("react");
+  return {
+    isTurnstileConfigured: () => turnstileState.configured,
+    TurnstileWidget: React.forwardRef(function Widget(
+      { onToken }: { onToken: (t: string | null) => void },
+      ref: React.ForwardedRef<{ reset: () => void }>,
+    ) {
+      turnstileState.onToken = onToken;
+      React.useImperativeHandle(ref, () => ({
+        reset: () => {
+          turnstileState.resets += 1;
+          onToken(null);
+        },
+      }));
+      return <div data-testid="turnstile-widget" />;
+    }),
+  };
+});
 vi.mock("../../hooks/useAuth", () => ({
   useAuth: () => ({ user: authState.user, isAuthenticated: true }),
 }));
 
 import { EventRegistrationDialog } from "../../components/EventRegistrationDialog";
 import { getQueryFn } from "../../lib/queryClient";
+import type { GuestBuyer } from "../../lib/guestBuyer";
+import type { GuestBuyerField } from "@shared/guestBuyerField";
 
 const cargo: RegistrationField = {
   id: "q-cargo",
@@ -77,7 +102,16 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-type DialogProps = { open?: boolean; error?: string | null; missing?: SystemField[] };
+type DialogProps = {
+  open?: boolean;
+  error?: string | null;
+  missing?: SystemField[];
+  pending?: boolean;
+  turnstile?: boolean;
+  identityConflict?: boolean;
+  buyer?: GuestBuyer | null;
+  buyerError?: { message: string; field: GuestBuyerField | null } | null;
+};
 
 function renderDialog(event: DialogEvent, props: DialogProps = {}) {
   const queryClient = new QueryClient({
@@ -150,7 +184,7 @@ describe("EventRegistrationDialog", () => {
     await user.click(screen.getByRole("button", { name: "Continuar" }));
 
     await waitFor(() => {
-      expect(onConfirm).toHaveBeenCalledWith({ "q-cargo": "Farmacêutica" });
+      expect(onConfirm).toHaveBeenCalledWith({ answers: { "q-cargo": "Farmacêutica" } });
     });
   });
 
@@ -252,6 +286,21 @@ describe("EventRegistrationDialog", () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
+  it("does not save a CPF with a bad checksum on the account (ADR-017 Stage 5 fix)", async () => {
+    const fetchMock = mockIdentity();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const { onConfirm } = renderDialog(paidInPerson);
+    await user.type(screen.getByLabelText("CPF"), "12345678900");
+    await user.type(screen.getByLabelText("Endereço"), "Rua das Flores 10, Recife, Brasil");
+    await user.type(screen.getByLabelText(/Cargo/), "Farmacêutica");
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+
+    expect(screen.getByTestId("text-cpf-error").textContent).toBe("CPF inválido");
+    expect(identityBodies(fetchMock)).toEqual([]);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
   it("asks only the custom questions on a free online event", async () => {
     const fetchMock = mockIdentity();
     vi.stubGlobal("fetch", fetchMock);
@@ -262,7 +311,7 @@ describe("EventRegistrationDialog", () => {
     await user.type(screen.getByLabelText(/Cargo/), "Farmacêutica");
     await user.click(screen.getByRole("button", { name: "Continuar" }));
 
-    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith({ "q-cargo": "Farmacêutica" }));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith({ answers: { "q-cargo": "Farmacêutica" } }));
     expect(identityBodies(fetchMock)).toEqual([]);
   });
 
@@ -297,9 +346,11 @@ describe("EventRegistrationDialog", () => {
 
       await waitFor(() =>
         expect(onConfirm).toHaveBeenCalledWith({
-          "legacy-occupation": "Diretora",
-          "legacy-partner-company": "Clínica Aurora",
-          "legacy-area-of-activity": "Pesquisa",
+          answers: {
+            "legacy-occupation": "Diretora",
+            "legacy-partner-company": "Clínica Aurora",
+            "legacy-area-of-activity": "Pesquisa",
+          },
         }),
       );
     });
@@ -481,4 +532,313 @@ describe("EventRegistrationDialog", () => {
     renderDialog(freeOnline, { error: "Escolha uma das opções da pergunta: Área" });
     expect(screen.getByRole("alert")).toHaveTextContent("Escolha uma das opções da pergunta: Área");
   });
+
+  describe("guest mode (no account)", () => {
+    beforeEach(() => {
+      authState.user = undefined;
+      turnstileState.configured = false;
+      turnstileState.resets = 0;
+    });
+
+    const fillContact = async (
+      user: ReturnType<typeof userEvent.setup>,
+      over: { name?: string; email?: string; phone?: string } = {},
+    ) => {
+      await user.type(screen.getByTestId("input-guest-name"), over.name ?? "Camila Souza");
+      await user.type(screen.getByTestId("input-guest-email"), over.email ?? "Camila@Example.com");
+      await user.click(screen.getByTestId("input-guest-phone"));
+      await user.keyboard("{End}");
+      await user.type(screen.getByTestId("input-guest-phone"), over.phone ?? "11987654321");
+    };
+
+    it("shows the contact block and the event questions, and no document on a free online event", () => {
+      renderDialog(freeOnline);
+      expect(screen.getByText("Seus dados")).toBeTruthy();
+      expect(screen.getByTestId("input-guest-name")).toBeTruthy();
+      expect(screen.getByTestId("input-guest-email")).toBeTruthy();
+      expect(screen.getByTestId("input-guest-phone")).toBeTruthy();
+      expect(screen.getByLabelText(/Cargo/)).toBeTruthy();
+      expect(screen.queryByLabelText("CPF")).toBeNull();
+      expect(screen.queryByLabelText("Endereço")).toBeNull();
+    });
+
+    it("confirms a free online buyer with no document or address and never PUTs the identity", async () => {
+      const fetchMock = mockIdentity();
+      vi.stubGlobal("fetch", fetchMock);
+      const user = userEvent.setup();
+      const { onConfirm } = renderDialog(freeOnline);
+      await fillContact(user);
+      await user.type(screen.getByLabelText(/Cargo/), "Farmacêutica");
+      await user.click(screen.getByRole("button", { name: "Continuar" }));
+      await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+      const arg = onConfirm.mock.calls[0][0];
+      expect(arg.answers).toEqual({ "q-cargo": "Farmacêutica" });
+      expect(arg.buyer).toEqual({
+        name: "Camila Souza",
+        email: "camila@example.com",
+        phone: expect.stringMatching(/^\d{8,15}$/),
+      });
+      expect(arg.turnstileToken).toBeUndefined();
+      expect(identityBodies(fetchMock)).toEqual([]);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("requires the CPF and address on a free in-person event and sends them in the buyer", async () => {
+      const inPerson: DialogEvent = { ...freeOnline, modality: "presencial", registrationForm: [] };
+      const user = userEvent.setup();
+      const { onConfirm } = renderDialog(inPerson);
+      await fillContact(user);
+      await user.click(screen.getByRole("button", { name: "Continuar" }));
+      expect(onConfirm).not.toHaveBeenCalled();
+      await user.type(screen.getByLabelText("CPF"), "52998224725");
+      await user.type(screen.getByLabelText("Endereço"), "Rua das Flores 10, Recife, Brasil");
+      await user.click(screen.getByRole("button", { name: "Continuar" }));
+      await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+      expect(onConfirm.mock.calls[0][0].buyer).toMatchObject({
+        cpf: "529.982.247-25",
+        address: "Rua das Flores 10, Recife, Brasil",
+      });
+      expect(onConfirm.mock.calls[0][0].buyer.foreignDocument).toBeUndefined();
+    });
+
+    it("takes a passport instead of a CPF for a foreign visitor on a free in-person event", async () => {
+      const inPerson: DialogEvent = { ...freeOnline, modality: "presencial", registrationForm: [] };
+      const user = userEvent.setup();
+      const { onConfirm } = renderDialog(inPerson);
+      await fillContact(user);
+      await user.click(screen.getByTestId("checkbox-foreigner"));
+      await user.type(screen.getByTestId("input-foreign-document"), "ab1234567");
+      await user.type(screen.getByLabelText("Endereço"), "10 Downing Street, London, UK");
+      await user.click(screen.getByRole("button", { name: "Continuar" }));
+      await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+      const buyer = onConfirm.mock.calls[0][0].buyer;
+      expect(buyer).toMatchObject({ isForeigner: true, foreignDocument: "AB1234567" });
+      expect(buyer.cpf).toBeUndefined();
+    });
+
+    it.runIf(!FOREIGN_PAID_CHECKOUT_ENABLED)("blocks a typed foreigner on a paid event", async () => {
+      const user = userEvent.setup();
+      const { onConfirm } = renderDialog(paidOnline);
+      await fillContact(user);
+      await user.click(screen.getByTestId("checkbox-foreigner"));
+      await user.type(screen.getByTestId("input-foreign-document"), "AB1234567");
+      expect(screen.getByRole("alert").textContent).toMatch(/estrangeiros/i);
+      expect((screen.getByRole("button", { name: "Continuar" }) as HTMLButtonElement).disabled).toBe(true);
+      expect(onConfirm).not.toHaveBeenCalled();
+    });
+
+    it("blocks an invalid name, e-mail and phone with inline errors", async () => {
+      const user = userEvent.setup();
+      const { onConfirm } = renderDialog(freeOnline);
+      await user.type(screen.getByLabelText(/Cargo/), "Farmacêutica");
+      await user.type(screen.getByTestId("input-guest-name"), "Al");
+      await user.type(screen.getByTestId("input-guest-email"), "not-an-email");
+      await user.click(screen.getByRole("button", { name: "Continuar" }));
+      expect(onConfirm).not.toHaveBeenCalled();
+      expect(screen.getByTestId("text-guest-name-error")).toBeTruthy();
+      expect(screen.getByTestId("text-guest-email-error")).toBeTruthy();
+      expect(screen.getByTestId("text-guest-phone-error")).toBeTruthy();
+    });
+
+    it("rejects a name with markup or a link", async () => {
+      const user = userEvent.setup();
+      const { onConfirm } = renderDialog(freeOnline);
+      await fillContact(user, { name: "<b>Camila</b> Souza" });
+      await user.type(screen.getByLabelText(/Cargo/), "Farmacêutica");
+      await user.click(screen.getByRole("button", { name: "Continuar" }));
+      expect(onConfirm).not.toHaveBeenCalled();
+      expect(screen.getByTestId("text-guest-name-error")).toBeTruthy();
+    });
+
+    it("renders no Turnstile widget unless the caller asks for one", () => {
+      turnstileState.configured = true;
+      renderDialog(freeOnline);
+      expect(screen.queryByTestId("turnstile-widget")).toBeNull();
+    });
+
+    it("holds the submit until the Turnstile token arrives, then sends it", async () => {
+      turnstileState.configured = true;
+      const user = userEvent.setup();
+      const { onConfirm } = renderDialog(freeOnline, { turnstile: true });
+      expect(screen.getByTestId("turnstile-widget")).toBeTruthy();
+      await fillContact(user);
+      await user.type(screen.getByLabelText(/Cargo/), "Farmacêutica");
+      expect((screen.getByRole("button", { name: "Continuar" }) as HTMLButtonElement).disabled).toBe(true);
+      act(() => turnstileState.onToken?.("tok-1"));
+      await user.click(screen.getByRole("button", { name: "Continuar" }));
+      await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+      expect(onConfirm.mock.calls[0][0].turnstileToken).toBe("tok-1");
+    });
+
+    it("omits the token and does not wait when no site key is configured", async () => {
+      turnstileState.configured = false;
+      const user = userEvent.setup();
+      const { onConfirm } = renderDialog(freeOnline, { turnstile: true });
+      await fillContact(user);
+      await user.type(screen.getByLabelText(/Cargo/), "Farmacêutica");
+      await user.click(screen.getByRole("button", { name: "Continuar" }));
+      await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+      expect("turnstileToken" in onConfirm.mock.calls[0][0]).toBe(false);
+    });
+
+    it("resets the widget when a pending request ends", () => {
+      turnstileState.configured = true;
+      const { rerender } = renderDialog(freeOnline, { turnstile: true, pending: true });
+      expect(turnstileState.resets).toBe(0);
+      rerender({ turnstile: true, pending: false });
+      expect(turnstileState.resets).toBe(1);
+    });
+
+    it("shows the server message with both recovery links on an identity conflict", () => {
+      window.history.pushState({}, "", "/event/abc?promo=X");
+      renderDialog(freeOnline, {
+        error: "Estes dados não conferem com um cadastro existente.",
+        identityConflict: true,
+      });
+      expect(screen.getByRole("alert").textContent).toContain("Estes dados não conferem");
+      expect(screen.getByRole("link", { name: "Esqueci meu e-mail" }).getAttribute("href")).toBe("/forgot-email");
+      expect(screen.getByRole("link", { name: "Entrar" }).getAttribute("href")).toBe(
+        `/login?next=${encodeURIComponent("/event/abc?promo=X")}`,
+      );
+    });
+
+    it("shows no recovery links without a conflict", () => {
+      renderDialog(freeOnline, { error: "Algo deu errado" });
+      expect(screen.queryByRole("link", { name: "Esqueci meu e-mail" })).toBeNull();
+    });
+
+    it("prefills the contact data and document from a passed buyer", async () => {
+      const inPerson: DialogEvent = { ...freeOnline, modality: "presencial", registrationForm: [] };
+      renderDialog(inPerson, {
+        buyer: {
+          name: "Camila Souza",
+          email: "camila@example.com",
+          phone: "5511987654321",
+          cpf: "529.982.247-25",
+          address: "Rua das Flores 10, Recife, Brasil",
+        },
+      });
+      await waitFor(() =>
+        expect((screen.getByTestId("input-guest-name") as HTMLInputElement).value).toBe("Camila Souza"),
+      );
+      expect((screen.getByTestId("input-guest-email") as HTMLInputElement).value).toBe("camila@example.com");
+      expect((screen.getByLabelText("CPF") as HTMLInputElement).value).toBe("529.982.247-25");
+      expect((screen.getByLabelText("Endereço") as HTMLInputElement).value).toBe("Rua das Flores 10, Recife, Brasil");
+    });
+
+    // ADR-017 Stage 5 fix: the CPF checksum on the client, and a server invalid_buyer sent back to its input.
+    describe("identity correction", () => {
+      const camila: GuestBuyer = {
+        name: "Camila Souza",
+        email: "camila@example.com",
+        phone: "5511987654321",
+        cpf: "529.982.247-25",
+      };
+      const freeInPerson: DialogEvent = { ...freeOnline, modality: "presencial", registrationForm: [] };
+
+      it("blocks a CPF with a bad checksum inline, keeps it editable, and continues once fixed", async () => {
+        const user = userEvent.setup();
+        const { onConfirm } = renderDialog(paidOnline);
+        await fillContact(user);
+        await user.type(screen.getByLabelText("CPF"), "12345678900");
+        await user.click(screen.getByRole("button", { name: "Continuar" }));
+
+        expect(screen.getByTestId("text-cpf-error").textContent).toBe("CPF inválido");
+        expect(onConfirm).not.toHaveBeenCalled();
+        const cpf = screen.getByLabelText("CPF") as HTMLInputElement;
+        expect(cpf.disabled).toBe(false);
+        await user.clear(cpf);
+        await user.type(cpf, "52998224725");
+        await user.click(screen.getByRole("button", { name: "Continuar" }));
+        await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+        expect(onConfirm.mock.calls[0][0].buyer.cpf).toBe("529.982.247-25");
+      });
+
+      it("shows a server invalid_buyer under the CPF, focused, with what was typed", async () => {
+        renderDialog(paidOnline, { buyer: camila, buyerError: { field: "cpf", message: "CPF inválido" } });
+
+        expect((await screen.findByTestId("text-cpf-error")).textContent).toBe("CPF inválido");
+        const cpf = screen.getByLabelText("CPF") as HTMLInputElement;
+        await waitFor(() => expect(document.activeElement).toBe(cpf));
+        expect(cpf.value).toBe("529.982.247-25");
+        expect((screen.getByTestId("input-guest-email") as HTMLInputElement).value).toBe("camila@example.com");
+        expect(screen.queryByTestId("text-registration-buyer-error")).toBeNull();
+      });
+
+      it("announces the server CPF error: role alert, linked to the input with aria-describedby and aria-invalid", async () => {
+        renderDialog(paidOnline, { buyer: camila, buyerError: { field: "cpf", message: "CPF inválido" } });
+
+        const error = await screen.findByTestId("text-cpf-error");
+        expect(error).toHaveAttribute("role", "alert");
+        expect(error.id).not.toBe("");
+        const cpf = screen.getByLabelText("CPF");
+        expect(cpf).toHaveAttribute("aria-describedby", error.id);
+        expect(cpf).toHaveAttribute("aria-invalid", "true");
+      });
+
+      it("lets the buyer fix the field the server named and continue", async () => {
+        const user = userEvent.setup();
+        const { onConfirm } = renderDialog(paidOnline, {
+          buyer: camila,
+          buyerError: { field: "cpf", message: "CPF inválido" },
+        });
+        const cpf = await screen.findByLabelText("CPF");
+        await waitFor(() => expect((cpf as HTMLInputElement).value).toBe("529.982.247-25"));
+        await user.clear(cpf);
+        await user.type(cpf, "11144477735");
+        await user.click(screen.getByRole("button", { name: "Continuar" }));
+
+        await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+        expect(onConfirm.mock.calls[0][0].buyer).toMatchObject({ email: "camila@example.com", cpf: "111.444.777-35" });
+      });
+
+      it("shows a server invalid_buyer on the e-mail under the e-mail, focused", async () => {
+        renderDialog(paidOnline, { buyer: camila, buyerError: { field: "email", message: "Email inválido" } });
+
+        expect((await screen.findByTestId("text-guest-email-error")).textContent).toBe("Email inválido");
+        await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("input-guest-email")));
+      });
+
+      it("shows a passport invalid_buyer under the passport, focused (foreign visitor)", async () => {
+        const message = "Documento estrangeiro deve ter 5 a 32 letras ou números";
+        renderDialog(freeInPerson, {
+          buyer: { name: "Juan Pérez", email: "juan@example.com", phone: "595981123456", isForeigner: true, foreignDocument: "AB1", address: "Av. Mariscal López 1234, Asunción" },
+          buyerError: { field: "foreignDocument", message },
+        });
+
+        expect((await screen.findByTestId("text-foreign-document-error")).textContent).toBe(message);
+        await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("input-foreign-document")));
+      });
+
+      it("shows an invalid_buyer without a field as an alert at the top of the dialog", async () => {
+        renderDialog(paidOnline, {
+          buyer: camila,
+          buyerError: { field: null, message: "Informe seus dados para continuar." },
+        });
+
+        const alert = await screen.findByTestId("text-registration-buyer-error");
+        expect(alert.textContent).toBe("Informe seus dados para continuar.");
+        expect(alert.getAttribute("role")).toBe("alert");
+        expect(alert.compareDocumentPosition(screen.getByTestId("input-guest-name")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      });
+
+      it("shows an invalid_buyer on an input the dialog does not show as the top alert", async () => {
+        renderDialog(paidOnline, {
+          buyer: camila,
+          buyerError: { field: "address", message: "Endereço deve ter pelo menos 10 caracteres" },
+        });
+
+        expect((await screen.findByTestId("text-registration-buyer-error")).textContent).toBe(
+          "Endereço deve ter pelo menos 10 caracteres",
+        );
+      });
+    });
+
+    it("never shows the guest block to a logged-in account", () => {
+      authState.user = { ...newAccount };
+      renderDialog(freeOnline);
+      expect(screen.queryByTestId("input-guest-name")).toBeNull();
+    });
+  });
+
 });

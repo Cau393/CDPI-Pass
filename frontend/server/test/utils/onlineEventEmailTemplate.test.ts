@@ -195,3 +195,26 @@ describe("buildOnlineEventEmailText", () => {
     expect(text).toContain("Sua presença foi confirmada!");
   });
 });
+
+describe("online e-mail for a guest buyer (ADR-017)", () => {
+  const link = "https://cdpipass.test/verify-email?token=abc.def.ghi";
+
+  it("renders a Ver em Meus Ingressos link in the HTML and the URL in the text when myTicketsUrl is set", () => {
+    const html = buildOnlineEventEmailHtml({ ...base, confirmationKind: "paid", myTicketsUrl: link });
+    const text = buildOnlineEventEmailText({ ...base, confirmationKind: "paid", myTicketsUrl: link });
+
+    expect(html).toContain("Ver em Meus Ingressos");
+    expect(html).toContain(`href="${link}"`);
+    expect(text).toContain(link);
+  });
+
+  it("has no such link when myTicketsUrl is absent or null", () => {
+    for (const myTicketsUrl of [undefined, null]) {
+      const html = buildOnlineEventEmailHtml({ ...base, confirmationKind: "paid", myTicketsUrl });
+      const text = buildOnlineEventEmailText({ ...base, confirmationKind: "paid", myTicketsUrl });
+
+      expect(html).not.toContain("Ver em Meus Ingressos");
+      expect(text).not.toContain("verify-email");
+    }
+  });
+});

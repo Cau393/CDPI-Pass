@@ -286,10 +286,11 @@ describe.skipIf(!enabled)("free events and sales-closed (real routes + real DB)"
       expect(r.rows[0].n).toBe(0);
     });
 
-    it("requires authentication", async () => {
+    it("without a session or buyer → 400", async () => {
       const eventId = await createEvent({ isFree: true, price: "0.00" });
       const res = await api("POST", `/api/events/${eventId}/subscribe`);
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("invalid_buyer");
     });
 
     it("refuses a duplicate inscription for the same user", async () => {

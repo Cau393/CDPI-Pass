@@ -19,3 +19,34 @@ export function lookupEmailRateLimitMax(env: NodeJS.ProcessEnv = process.env): n
   if (env.NODE_ENV !== "production" && Number.isInteger(override) && override > 0) return override;
   return 10;
 }
+
+/**
+ * Requests per client address per 15 minutes on guest checkout (POST /api/orders and
+ * POST /api/events/:id/subscribe without a session). Tests raise it with
+ * GUEST_CHECKOUT_RATE_LIMIT_MAX; production ignores it.
+ */
+export function guestCheckoutRateLimitMax(env: NodeJS.ProcessEnv = process.env): number {
+  const override = Number(env.GUEST_CHECKOUT_RATE_LIMIT_MAX);
+  if (env.NODE_ENV !== "production" && Number.isInteger(override) && override > 0) return override;
+  return 30;
+}
+
+/**
+ * Card submits per e-mail per hour on POST /api/orders (card testing guard, with or
+ * without a session). Tests raise it with CARD_ATTEMPT_EMAIL_RATE_LIMIT_MAX; production ignores it.
+ */
+export function cardAttemptEmailRateLimitMax(env: NodeJS.ProcessEnv = process.env): number {
+  const override = Number(env.CARD_ATTEMPT_EMAIL_RATE_LIMIT_MAX);
+  if (env.NODE_ENV !== "production" && Number.isInteger(override) && override > 0) return override;
+  return 5;
+}
+
+/**
+ * Card submits per client address per hour on POST /api/orders. Tests raise it with
+ * CARD_ATTEMPT_IP_RATE_LIMIT_MAX; production ignores it.
+ */
+export function cardAttemptIpRateLimitMax(env: NodeJS.ProcessEnv = process.env): number {
+  const override = Number(env.CARD_ATTEMPT_IP_RATE_LIMIT_MAX);
+  if (env.NODE_ENV !== "production" && Number.isInteger(override) && override > 0) return override;
+  return 10;
+}

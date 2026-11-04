@@ -296,3 +296,31 @@ export function parseApiErrorMessage(err: unknown): string {
     return err.message;
   }
 }
+
+export interface ParsedApiError {
+  status: number | null;
+  code?: string;
+  message?: string;
+  /** The parsed JSON body when it is an object; undefined for text or HTML. */
+  body?: unknown;
+}
+
+/**
+ * Parses the `"<status>: <text>"` message `apiRequest` throws. Anything else (a
+ * network `TypeError`, a plain Error) has no HTTP status: `status` is null.
+ */
+export function parseApiError(err: unknown): ParsedApiError {
+  if (!(err instanceof Error)) return { status: null };
+  const m = /^(\d+):\s*([\s\S]*)$/.exec(err.message);
+  if (!m) return { status: null };
+  const status = Number(m[1]);
+  try {
+    const body: unknown = JSON.parse(m[2]);
+    if (typeof body !== "object" || body === null || Array.isArray(body)) return { status };
+    const record = body as { code?: unknown; message?: unknown; error?: unknown };
+    const message = typeof record.message === "string" ? record.message : typeof record.error === "string" ? record.error : undefined;
+    return { status, code: typeof record.code === "string" ? record.code : undefined, message, body };
+  } catch {
+    return { status };
+  }
+}

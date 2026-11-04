@@ -1,6 +1,6 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { AsaasService, asaasBaseUrl } from "../../services/asaasService";
-import { AsaasApiError } from "../../utils/asaasErrors";
+import { AsaasApiError, CardChargeOutcomeUnknownError, CardDeclinedError } from "../../utils/asaasErrors";
 
 const FOREIGN_PAYMENT = {
   name: "Participante Estrangeira",
@@ -12,6 +12,69 @@ const FOREIGN_PAYMENT = {
   description: "Ingresso",
   orderExternalReference: "order-1",
 };
+
+// Fake card data: Luhn-valid, distinctive so a leak is unambiguous.
+const PAN = "4539578763621486";
+const CCV = "7391";
+const TOKEN = "tok-leak-check-5d41402a";
+
+const CARD_PAYMENT = {
+  customer: { name: "Comprador Teste", email: "comprador@example.test", cpfCnpj: "52998224725", phone: "11987654321" },
+  reuseCustomer: false,
+  value: 150,
+  dueDate: new Date("2026-12-05T00:00:00Z"),
+  installmentCount: 1 as 1 | 2 | 3,
+  description: "Ingresso para Evento",
+  externalReference: "order-card-1",
+  card: { holderName: "COMPRADOR TESTE", number: PAN, expiryMonth: "12", expiryYear: "2031", ccv: CCV },
+  holder: {
+    name: "Comprador Teste",
+    email: "comprador@example.test",
+    cpfCnpj: "52998224725",
+    postalCode: "01310100",
+    addressNumber: "100",
+    phone: "11987654321",
+  },
+  remoteIp: "203.0.113.9",
+};
+
+interface Call {
+  url: string;
+  method: string;
+  body?: any;
+}
+
+/** Fetch stub for the card flow; `paymentsResponse` answers POST /payments. */
+function stubCardFetch(paymentsResponse: () => Response): Call[] {
+  const calls: Call[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      const call = {
+        url: String(url),
+        method: init?.method ?? "GET",
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      };
+      calls.push(call);
+      if (call.url.includes("/customers?")) return jsonResponse(200, { data: [{ id: "cus_found" }] });
+      if (call.url.endsWith("/customers")) return jsonResponse(200, { id: "cus_new" });
+      if (call.url.endsWith("/payments")) return paymentsResponse();
+      return jsonResponse(404, {});
+    }),
+  );
+  return calls;
+}
+
+const CONFIRMED_PAYMENT = () =>
+  jsonResponse(200, {
+    id: "pay_card_1",
+    status: "CONFIRMED",
+    value: 150,
+    netValue: 145,
+    installment: null,
+    billingType: "CREDIT_CARD",
+    creditCard: { creditCardNumber: "1486", creditCardBrand: "VISA", creditCardToken: TOKEN },
+  });
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -82,6 +145,42 @@ describe("AsaasService requests", () => {
     expect(payment.paymentLink).toBe("https://sandbox.asaas.com/i/pay_1");
   });
 
+  it("a guest never reuses a customer: no lookup, a new customer with the typed name and phone", async () => {
+    const calls: Array<{ url: string; method: string; body?: any }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        if (String(url).includes("/customers?")) return jsonResponse(200, { data: [{ id: "cus_account" }] });
+        if (String(url).endsWith("/customers")) return jsonResponse(200, { id: "cus_new" });
+        return jsonResponse(200, { id: "pay_1", invoiceUrl: "https://sandbox.asaas.com/i/pay_1", value: 105 });
+      }),
+    );
+
+    await new AsaasService().createForeignCardPayment({ ...FOREIGN_PAYMENT, reuseCustomer: false });
+
+    expect(calls.some((c) => c.url.includes("/customers?"))).toBe(false);
+    const created = calls.find((c) => c.url.endsWith("/customers") && c.method === "POST")!;
+    expect(created.body).toMatchObject({ name: FOREIGN_PAYMENT.name, phone: FOREIGN_PAYMENT.phone });
+    expect(calls.find((c) => c.url.endsWith("/payments"))!.body.customer).toBe("cus_new");
+  });
+
+  it("a session request reuses the customer found by externalReference", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push(`${init?.method ?? "GET"} ${String(url)}`);
+        if (String(url).includes("/customers?")) return jsonResponse(200, { data: [{ id: "cus_account" }] });
+        return jsonResponse(200, { id: "pay_1", invoiceUrl: "https://sandbox.asaas.com/i/pay_1", value: 105 });
+      }),
+    );
+
+    await new AsaasService().createForeignCardPayment({ ...FOREIGN_PAYMENT, reuseCustomer: true });
+
+    expect(calls.some((c) => c.startsWith("POST") && c.endsWith("/customers"))).toBe(false);
+  });
+
   it("never logs the raw Asaas response", async () => {
     vi.stubGlobal(
       "fetch",
@@ -99,5 +198,307 @@ describe("AsaasService requests", () => {
     await new AsaasService().createForeignCardPayment(FOREIGN_PAYMENT).catch(() => {});
 
     expect(logged.join("\n")).not.toMatch(/PYA1234567|inválido/);
+  });
+});
+
+describe("AsaasService.createCardPayment (ADR-017 Stage 3)", () => {
+  it("posts a single card payment with value, creditCard, holder info and remoteIp", async () => {
+    const calls = stubCardFetch(CONFIRMED_PAYMENT);
+
+    await new AsaasService().createCardPayment(CARD_PAYMENT);
+
+    const charge = calls.find((c) => c.method === "POST" && c.url.endsWith("/payments"))!;
+    expect(charge.body).toMatchObject({
+      customer: "cus_new",
+      billingType: "CREDIT_CARD",
+      value: 150,
+      description: "Ingresso para Evento",
+      externalReference: "order-card-1",
+      remoteIp: "203.0.113.9",
+      creditCard: { holderName: "COMPRADOR TESTE", number: PAN, expiryMonth: "12", expiryYear: "2031", ccv: CCV },
+      creditCardHolderInfo: CARD_PAYMENT.holder,
+    });
+    // The date passed in (the +7 day one of the PIX/boleto branch), not today.
+    expect(charge.body.dueDate).toBe("2026-12-05");
+    expect(charge.body).not.toHaveProperty("installmentCount");
+    expect(charge.body).not.toHaveProperty("totalValue");
+  });
+
+  it("posts a 3x plan with installmentCount and totalValue and no value", async () => {
+    const calls = stubCardFetch(CONFIRMED_PAYMENT);
+
+    await new AsaasService().createCardPayment({ ...CARD_PAYMENT, installmentCount: 3 });
+
+    const charge = calls.find((c) => c.method === "POST" && c.url.endsWith("/payments"))!;
+    expect(charge.body).toMatchObject({ billingType: "CREDIT_CARD", installmentCount: 3, totalValue: 150 });
+    expect(charge.body).not.toHaveProperty("value");
+  });
+
+  it("reuseCustomer false never looks a customer up and creates one with the given contact", async () => {
+    const calls = stubCardFetch(CONFIRMED_PAYMENT);
+
+    await new AsaasService().createCardPayment({ ...CARD_PAYMENT, reuseCustomer: false });
+
+    expect(calls.some((c) => c.method === "GET")).toBe(false);
+    const created = calls.find((c) => c.method === "POST" && c.url.endsWith("/customers"))!;
+    expect(created.body).toMatchObject(CARD_PAYMENT.customer);
+  });
+
+  it("reuseCustomer true finds the customer by CPF instead of creating one", async () => {
+    const calls = stubCardFetch(CONFIRMED_PAYMENT);
+
+    await new AsaasService().createCardPayment({ ...CARD_PAYMENT, reuseCustomer: true });
+
+    expect(calls.some((c) => c.method === "GET" && c.url.includes("/customers?"))).toBe(true);
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/customers"))).toBe(false);
+    expect(calls.find((c) => c.url.endsWith("/payments"))!.body.customer).toBe("cus_found");
+  });
+
+  it("returns only id, status, value and installment: no creditCard object, no token", async () => {
+    stubCardFetch(CONFIRMED_PAYMENT);
+
+    const result = await new AsaasService().createCardPayment(CARD_PAYMENT);
+
+    expect(result).toEqual({ id: "pay_card_1", status: "CONFIRMED", value: 150, installment: null });
+    expect(JSON.stringify(result)).not.toContain(TOKEN);
+  });
+
+  it("keeps the installment id of a plan", async () => {
+    stubCardFetch(() =>
+      jsonResponse(200, { id: "pay_card_2", status: "CONFIRMED", value: 50, installment: "ins_1" }),
+    );
+
+    const result = await new AsaasService().createCardPayment({ ...CARD_PAYMENT, installmentCount: 3 });
+
+    expect(result).toEqual({ id: "pay_card_2", status: "CONFIRMED", value: 50, installment: "ins_1" });
+  });
+
+  it("turns an Asaas 400 on POST /payments into a CardDeclinedError carrying only codes", async () => {
+    stubCardFetch(() =>
+      jsonResponse(400, { errors: [{ code: "invalid_creditCard", description: `Cartão ${PAN} recusado` }] }),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(CardDeclinedError);
+    expect(failure.status).toBe(400);
+    expect(failure.codes).toEqual(["invalid_creditCard"]);
+  });
+
+  it("a 400 on POST /customers is a plain AsaasApiError, not a decline", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(400, { errors: [{ code: "invalid_object", description: "x" }] })));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(AsaasApiError);
+    expect(failure).not.toBeInstanceOf(CardDeclinedError);
+  });
+
+  it("a 500 on POST /payments is an unknown outcome, not a decline", async () => {
+    stubCardFetch(() => jsonResponse(500, {}));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(CardChargeOutcomeUnknownError);
+    expect(failure).not.toBeInstanceOf(CardDeclinedError);
+    expect(failure.status).toBe(500);
+  });
+
+  it.each([401, 403, 404, 429])(
+    "a %i on POST /payments is a definite rejection: a plain AsaasApiError, not an unknown outcome",
+    async (status) => {
+      stubCardFetch(() => jsonResponse(status, {}));
+      vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+      expect(failure).toBeInstanceOf(AsaasApiError);
+      expect(failure).not.toBeInstanceOf(CardChargeOutcomeUnknownError);
+      expect(failure).not.toBeInstanceOf(CardDeclinedError);
+      expect(failure.status).toBe(status);
+    },
+  );
+
+  it("a 408 on POST /payments is still an unknown outcome", async () => {
+    stubCardFetch(() => jsonResponse(408, {}));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(CardChargeOutcomeUnknownError);
+    expect(failure.status).toBe(408);
+  });
+
+  it("only the card charge request carries a 90 s timeout signal; an abort is an unknown outcome", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const signals: Record<string, unknown> = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        signals[`${init?.method ?? "GET"} ${String(url).replace(/^.*\/v3/, "")}`] = init?.signal;
+        if (String(url).endsWith("/customers")) return jsonResponse(200, { id: "cus_new" });
+        throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      }),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(CardChargeOutcomeUnknownError);
+    expect(failure.status).toBeNull();
+    expect(timeoutSpy).toHaveBeenCalledTimes(1);
+    expect(timeoutSpy).toHaveBeenCalledWith(90_000);
+    expect(signals["POST /payments"]).toBeInstanceOf(AbortSignal);
+    expect(signals["POST /customers"]).toBeUndefined();
+  });
+
+  it.each(["null", "{}", '{"id":""}'])("a 200 with an odd body (%s) is an unknown outcome, not a thrown TypeError", async (raw) => {
+    stubCardFetch(() => new Response(raw, { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(CardChargeOutcomeUnknownError);
+  });
+
+  it("a network error on POST /payments is an unknown outcome whose surfaces hold no PAN or CVV", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).endsWith("/customers")) return jsonResponse(200, { id: "cus_new" });
+      throw new TypeError(`fetch failed ${PAN} ${CCV}`);
+    }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(CardChargeOutcomeUnknownError);
+    expect(failure.status).toBeNull();
+    const surfaces = [failure.message, String(failure), JSON.stringify(failure), failure.stack].join("\n");
+    expect(surfaces).not.toContain(PAN);
+    expect(surfaces).not.toContain(CCV);
+  });
+
+  it("a failure of POST /customers is not an unknown outcome (nothing was charged)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(503, {})));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(AsaasApiError);
+    expect(failure).not.toBeInstanceOf(CardChargeOutcomeUnknownError);
+  });
+
+  it("sends E.164 phones in the national form to the customer and the holder info", async () => {
+    const calls = stubCardFetch(CONFIRMED_PAYMENT);
+
+    await new AsaasService().createCardPayment({
+      ...CARD_PAYMENT,
+      customer: { ...CARD_PAYMENT.customer, phone: "5511987654321" },
+      holder: { ...CARD_PAYMENT.holder, phone: "5511987654321" },
+    });
+
+    expect(calls.find((c) => c.url.endsWith("/customers"))!.body.phone).toBe("11987654321");
+    expect(calls.find((c) => c.url.endsWith("/payments"))!.body.creditCardHolderInfo.phone).toBe("11987654321");
+  });
+
+  it("neither the thrown error nor any console call contains the PAN or CVV", async () => {
+    stubCardFetch(() =>
+      jsonResponse(400, { errors: [{ code: "invalid_creditCard", description: `Cartão ${PAN} ccv ${CCV}` }] }),
+    );
+    const consoleCalls: string[] = [];
+    for (const method of ["log", "info", "warn", "error", "debug"] as const) {
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        consoleCalls.push(
+          args
+            .map((a) => (a instanceof Error ? `${a.message} ${a.stack} ${JSON.stringify(a)}` : JSON.stringify(a) ?? String(a)))
+            .join(" "),
+        );
+      });
+    }
+
+    const failure = await new AsaasService().createCardPayment(CARD_PAYMENT).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(CardDeclinedError);
+    const surfaces = [
+      failure.message,
+      String(failure),
+      JSON.stringify(failure),
+      JSON.stringify(Object.fromEntries(Object.getOwnPropertyNames(failure).map((k) => [k, (failure as any)[k]]))),
+      ...consoleCalls,
+    ].join("\n");
+    expect(surfaces).not.toContain(PAN);
+    expect(surfaces).not.toContain(CCV);
+  });
+
+  it("no console call contains the PAN, CVV or token on a successful charge", async () => {
+    stubCardFetch(CONFIRMED_PAYMENT);
+    const consoleCalls: string[] = [];
+    for (const method of ["log", "info", "warn", "error", "debug"] as const) {
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        consoleCalls.push(args.map((a) => JSON.stringify(a) ?? String(a)).join(" "));
+      });
+    }
+
+    await new AsaasService().createCardPayment(CARD_PAYMENT);
+
+    const logged = consoleCalls.join("\n");
+    expect(logged).not.toContain(PAN);
+    expect(logged).not.toContain(CCV);
+    expect(logged).not.toContain(TOKEN);
+  });
+});
+
+describe("AsaasService.createPayment without the hosted card link", () => {
+  it("posts PIX to /payments and never to /paymentLinks", async () => {
+    const calls: Call[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        if (String(url).includes("/customers?")) return jsonResponse(200, { data: [{ id: "cus_found" }] });
+        if (String(url).includes("/pixQrCode")) return jsonResponse(200, { encodedImage: "img", payload: "pix", expirationDate: "2026-12-01" });
+        return jsonResponse(200, { id: "pay_pix_1", status: "PENDING", value: 150 });
+      }),
+    );
+
+    await new AsaasService().createPayment({
+      customer: CARD_PAYMENT.customer,
+      billingType: "PIX",
+      value: 150,
+      dueDate: new Date("2026-12-01T00:00:00Z"),
+      description: "Ingresso",
+      externalReference: "order-pix-1",
+    });
+
+    expect(calls.some((c) => c.url.includes("/paymentLinks"))).toBe(false);
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/payments"))).toBe(true);
+  });
+
+  it("no longer builds a hosted payment link for CREDIT_CARD", async () => {
+    const calls: Call[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), method: init?.method ?? "GET" });
+        if (String(url).includes("/customers?")) return jsonResponse(200, { data: [{ id: "cus_found" }] });
+        return jsonResponse(200, { id: "pay_x", status: "PENDING", value: 150 });
+      }),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await new AsaasService()
+      .createPayment({
+        customer: CARD_PAYMENT.customer,
+        billingType: "CREDIT_CARD" as any,
+        value: 150,
+        dueDate: new Date("2026-12-01T00:00:00Z"),
+        description: "Ingresso",
+        externalReference: "order-link-1",
+      })
+      .catch(() => {});
+
+    expect(calls.some((c) => c.url.includes("/paymentLinks"))).toBe(false);
   });
 });

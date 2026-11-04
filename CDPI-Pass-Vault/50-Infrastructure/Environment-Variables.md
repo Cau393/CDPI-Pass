@@ -19,6 +19,8 @@ Reference of names + purpose only. **Values live in `frontend/.env` (staging) an
 | `PORT` | server | listen port (5003 in prod) |
 | `NODE_ENV` | everywhere | dev/prod switch |
 | `VITE_RECAPTCHA_SITE_KEY` | client | reCAPTCHA site key |
+| `TURNSTILE_SECRET_KEY` | `server/utils/verifyTurnstile.ts` | Cloudflare Turnstile secret (ADR-017). Unset in production = every guest and card order answers 403 (fail closed); unset elsewhere = check skipped |
+| `VITE_TURNSTILE_SITE_KEY` | `client/src/components/TurnstileWidget.tsx` (build time) | Turnstile site key, inlined by `vite build` from `frontend/.env` (`envDir`, not `client/`). A production build fails without it. Set it together with the secret |
 
 ## Present in .env but effectively unused / aspirational
 `REDIS_URL`, `CELERY_*` (no Redis/Celery in the Node app — queues are Postgres tables), `PGHOST/PGUSER/...` (superseded by `DATABASE_URL`), rate limiting / CORS / logging / cache / password-policy / LGPD flags (most are not read by code — verify before relying on them).

@@ -42,6 +42,36 @@ export class AsaasApiError extends Error {
   }
 }
 
+/**
+ * Asaas refused the card charge (HTTP 400 on POST /payments; the charge is not
+ * saved on their side). Like its parent it keeps only status and error codes:
+ * descriptions can echo card or customer data.
+ */
+export class CardDeclinedError extends AsaasApiError {
+  constructor(codes: string[] = []) {
+    super(400, { errors: codes.map((code) => ({ code, description: "" })) });
+    this.name = "CardDeclinedError";
+  }
+}
+
+/**
+ * The card charge request (POST /payments) failed in a way that does not prove Asaas refused it
+ * (network, timeout, 408, 5xx): the charge may exist. Keeps only the HTTP status and Asaas error
+ * codes of the original failure, never its request data.
+ */
+export class CardChargeOutcomeUnknownError extends Error {
+  readonly status: number | null;
+  readonly codes: string[];
+
+  constructor(cause: unknown) {
+    const status = cause instanceof AsaasApiError ? cause.status : null;
+    super(`Card charge outcome unknown${status ? ` (Asaas ${status})` : ""}`);
+    this.name = "CardChargeOutcomeUnknownError";
+    this.status = status;
+    this.codes = cause instanceof AsaasApiError ? cause.codes : [];
+  }
+}
+
 export interface CheckoutPaymentErrorResponse {
   status: number;
   body: { message: string; code?: string };
@@ -49,6 +79,15 @@ export interface CheckoutPaymentErrorResponse {
 
 /** HTTP answer for a failed charge in `POST /api/orders` (the order is deleted by the caller). */
 export function checkoutPaymentErrorResponse(error: unknown): CheckoutPaymentErrorResponse {
+  if (error instanceof CardDeclinedError) {
+    return {
+      status: 402,
+      body: {
+        code: "card_declined",
+        message: "Pagamento não aprovado. Confira os dados do cartão ou use outro cartão.",
+      },
+    };
+  }
   if (error instanceof AsaasApiError && error.isForeignPayerNotAllowed) {
     return {
       status: 503,
@@ -61,7 +100,7 @@ export function checkoutPaymentErrorResponse(error: unknown): CheckoutPaymentErr
       },
     };
   }
-  if (error instanceof AsaasApiError) {
+  if (error instanceof AsaasApiError || error instanceof CardChargeOutcomeUnknownError) {
     return {
       status: 502,
       body: {

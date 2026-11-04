@@ -1,4 +1,5 @@
-import { formatCpf, validateCpf } from "./validation";
+import { formatCpf } from "./validation";
+import { validateCpf } from "@shared/cpf";
 
 export const FOREIGN_DOCUMENT_PATTERN = /^[A-Z0-9]{5,32}$/;
 

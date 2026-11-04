@@ -15,6 +15,7 @@ export interface PhoneInputE164Props {
   disabled?: boolean;
   className?: string;
   "aria-invalid"?: boolean;
+  "aria-describedby"?: string;
   placeholder?: string;
   "data-testid"?: string;
 }
@@ -67,6 +68,7 @@ export function PhoneInputE164({
   disabled,
   className,
   "aria-invalid": ariaInvalid,
+  "aria-describedby": ariaDescribedBy,
   placeholder,
   "data-testid": dataTestId,
 }: PhoneInputE164Props) {
@@ -87,6 +89,7 @@ export function PhoneInputE164({
       onPaste={handlePaste}
       disabled={disabled}
       aria-invalid={ariaInvalid}
+      aria-describedby={ariaDescribedBy}
       data-testid={dataTestId}
       className={cn(
         "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background",

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { maskEmail } from "../../utils/maskEmail";
+import { maskEmail } from "@shared/maskEmail";
 
 describe("maskEmail", () => {
   it("keeps 2 chars of the local part and of the first domain label", () => {

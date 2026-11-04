@@ -10,18 +10,37 @@ vi.mock("wouter", () => ({
 
 const authState: {
   isAuthenticated: boolean;
+  isLoading?: boolean;
   user?: { cpf: string | null; foreignDocument: string | null; isForeigner: boolean; address: string | null };
 } = { isAuthenticated: false };
 vi.mock("../../hooks/useAuth", () => ({
   useAuth: () => authState,
 }));
 
+const toastSpy = vi.fn();
 vi.mock("../../hooks/use-toast", () => ({
-  useToast: () => ({ toast: vi.fn() }),
+  useToast: () => ({ toast: toastSpy }),
 }));
 
 vi.mock("../../components/PaymentModal", () => ({
-  default: () => <div data-testid="payment-modal" />,
+  default: (props: {
+    buyer?: unknown;
+    onSuccess?: () => void;
+    onInvalidBuyer?: (rejection: { message: string; field: string | null }) => void;
+    onEditBuyer?: () => void;
+  }) => (
+    <div data-testid="payment-modal" data-buyer={JSON.stringify(props.buyer ?? null)}>
+      <button type="button" onClick={() => props.onSuccess?.()}>
+        simular sucesso
+      </button>
+      <button type="button" onClick={() => props.onInvalidBuyer?.({ message: "CPF inválido", field: "cpf" })}>
+        simular invalid_buyer
+      </button>
+      <button type="button" onClick={() => props.onEditBuyer?.()}>
+        simular voltar
+      </button>
+    </div>
+  ),
 }));
 
 import HomePage from "../../pages/HomePage";
@@ -192,6 +211,126 @@ describe("HomePage — main event cover image", () => {
       "Comprar Ingresso",
     );
     expect(screen.getByText("+ taxa de conveniência")).toBeInTheDocument();
+  });
+
+  it("opens the guest dialog, not /login, for a logged-out paid purchase and hands the buyer to the modal", async () => {
+    vi.stubGlobal("fetch", mockApi({ ...baseEvent, price: "100.00", isFree: false }));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("button-buy-main"));
+    await user.type(await screen.findByTestId("input-guest-name"), "Camila Souza");
+    await user.type(screen.getByTestId("input-guest-email"), "camila@example.com");
+    await user.click(screen.getByTestId("input-guest-phone"));
+    await user.keyboard("{End}");
+    await user.type(screen.getByTestId("input-guest-phone"), "11987654321");
+    await user.type(screen.getByLabelText("CPF"), "52998224725");
+    await user.click(screen.getByTestId("button-confirm-registration"));
+
+    const modal = await screen.findByTestId("payment-modal");
+    expect(JSON.parse(modal.getAttribute("data-buyer")!)).toMatchObject({ email: "camila@example.com" });
+    expect(setLocation).not.toHaveBeenCalledWith(expect.stringContaining("/login"));
+
+    toastSpy.mockClear();
+    await user.click(screen.getByText("simular sucesso"));
+    await waitFor(() => expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument());
+    expect(setLocation).not.toHaveBeenCalledWith("/profile");
+    expect(toastSpy).not.toHaveBeenCalled();
+  });
+
+  // ADR-017 Stage 5 fix: the home page wires the same way back to the dialog as the event page.
+  describe("guest identity correction", () => {
+    async function openModal(user: ReturnType<typeof userEvent.setup>) {
+      vi.stubGlobal("fetch", mockApi({ ...baseEvent, price: "100.00", isFree: false }));
+      renderPage();
+      await user.click(await screen.findByTestId("button-buy-main"));
+      await user.type(await screen.findByTestId("input-guest-name"), "Camila Souza");
+      await user.type(screen.getByTestId("input-guest-email"), "camila@example.com");
+      await user.click(screen.getByTestId("input-guest-phone"));
+      await user.keyboard("{End}");
+      await user.type(screen.getByTestId("input-guest-phone"), "11987654321");
+      await user.type(screen.getByLabelText("CPF"), "52998224725");
+      await user.click(screen.getByTestId("button-confirm-registration"));
+      await screen.findByTestId("payment-modal");
+    }
+
+    it("reopens the dialog prefilled with the server message under the CPF on invalid_buyer", async () => {
+      const user = userEvent.setup();
+      await openModal(user);
+      await user.click(screen.getByText("simular invalid_buyer"));
+
+      expect((await screen.findByTestId("text-cpf-error")).textContent).toBe("CPF inválido");
+      expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
+      expect((screen.getByLabelText("CPF") as HTMLInputElement).value).toBe("529.982.247-25");
+      expect((screen.getByTestId("input-guest-email") as HTMLInputElement).value).toBe("camila@example.com");
+    });
+
+    it("“Voltar e editar dados” reopens the dialog prefilled, without an error", async () => {
+      const user = userEvent.setup();
+      await openModal(user);
+      await user.click(screen.getByText("simular voltar"));
+
+      expect(((await screen.findByTestId("input-guest-email")) as HTMLInputElement).value).toBe("camila@example.com");
+      expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("text-cpf-error")).toBeNull();
+    });
+  });
+
+  describe("N2: auth still resolving", () => {
+    afterEach(() => {
+      authState.isLoading = undefined;
+      localStorage.clear();
+    });
+
+    it("token + loading: the paid and the free CTA open no guest dialog", async () => {
+      localStorage.setItem("token", "t");
+      authState.isLoading = true;
+      const user = userEvent.setup();
+      vi.stubGlobal("fetch", mockApi({ ...baseEvent, price: "100.00", isFree: false }));
+      const view = renderPage();
+      expect(await screen.findByTestId("button-buy-main")).toBeDisabled();
+      expect(screen.getByTestId("button-buy-main")).toHaveTextContent("Carregando");
+      await user.click(await screen.findByTestId("button-buy-main"));
+      expect(screen.queryByTestId("input-guest-name")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("payment-modal")).not.toBeInTheDocument();
+      view.unmount();
+
+      vi.stubGlobal("fetch", mockApi(baseEvent));
+      renderPage();
+      await user.click(await screen.findByTestId("button-buy-main"));
+      expect(screen.queryByTestId("input-guest-name")).not.toBeInTheDocument();
+    });
+
+    it("token resolved: the CTA is enabled and the logged-in free path subscribes in place", async () => {
+      authState.isAuthenticated = true;
+      authState.isLoading = false;
+      localStorage.setItem("token", "t");
+      const fetchMock = mockApi(baseEvent);
+      vi.stubGlobal("fetch", fetchMock);
+      const user = userEvent.setup();
+      renderPage();
+      const cta = await screen.findByTestId("button-buy-main");
+      expect(cta).toBeEnabled();
+      await user.click(cta);
+      expect(screen.queryByTestId("input-guest-name")).not.toBeInTheDocument();
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(
+            ([i, init]) => String(i) === `/api/events/${EVENT_ID}/subscribe` && (init as RequestInit)?.method === "POST",
+          ),
+        ).toBe(true),
+      );
+    });
+
+    it("no token + loading: the guest dialog still opens", async () => {
+      authState.isLoading = true;
+      vi.stubGlobal("fetch", mockApi({ ...baseEvent, price: "100.00", isFree: false }));
+      const user = userEvent.setup();
+      renderPage();
+      expect(await screen.findByTestId("button-buy-main")).toBeEnabled();
+      await user.click(await screen.findByTestId("button-buy-main"));
+      expect(await screen.findByTestId("input-guest-name")).toBeInTheDocument();
+    });
   });
 
   it("subscribes in place for a free event and never opens the payment modal", async () => {

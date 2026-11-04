@@ -70,11 +70,18 @@ export function DocumentFields<T extends FieldValues & DocumentShape>({
               setField("foreignDocument", value, true);
             }}
             maxLength={32}
+            aria-invalid={Boolean(errors.foreignDocument)}
+            aria-describedby={errors.foreignDocument ? "foreignDocument-error" : undefined}
             className="h-11 w-full"
             data-testid="input-foreign-document"
           />
           {errors.foreignDocument && (
-            <p className="mt-1 text-sm text-red-600" data-testid="text-foreign-document-error">
+            <p
+              id="foreignDocument-error"
+              role="alert"
+              className="mt-1 text-sm text-red-600"
+              data-testid="text-foreign-document-error"
+            >
               {errors.foreignDocument.message}
             </p>
           )}
@@ -91,11 +98,13 @@ export function DocumentFields<T extends FieldValues & DocumentShape>({
             {...form.register("cpf" as Path<T>)}
             onChange={handleCpfChange}
             maxLength={14}
+            aria-invalid={Boolean(errors.cpf)}
+            aria-describedby={errors.cpf ? "cpf-error" : undefined}
             className="h-11 w-full"
             data-testid="input-cpf"
           />
           {errors.cpf && (
-            <p className="mt-1 text-sm text-red-600" data-testid="text-cpf-error">
+            <p id="cpf-error" role="alert" className="mt-1 text-sm text-red-600" data-testid="text-cpf-error">
               {errors.cpf.message}
             </p>
           )}

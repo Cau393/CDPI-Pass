@@ -3,6 +3,7 @@ import type { Order } from "@shared/schema";
 import { storage, type DuplicatePaidPolicy } from "../storage";
 import { asaasService, type ReceivedAsaasPayment } from "../services/asaasService";
 import { s3Service } from "../services/s3Service";
+import { myTicketsUrlFor } from "./myTicketsUrl";
 import { sendPurchaseConfirmationEmail } from "./sendPurchaseConfirmationEmail";
 import { refundAndNotify } from "./refundReceivedPayment";
 
@@ -54,7 +55,7 @@ export async function finalizeOrderPaidLikeWebhook(
     return { ok: false, code: "not_pending", status: order.status };
   }
 
-  const claim = await storage.claimPaidOrder(order.id, options.duplicatePolicy ?? "refund_then_discard");
+  const claim = await storage.claimPaidOrder(order.id, options.duplicatePolicy ?? "refund_then_discard", paymentMeta.paymentId);
   switch (claim.outcome) {
     case "already_paid":
       return { ok: false, code: "already_paid" };
@@ -67,6 +68,12 @@ export async function finalizeOrderPaidLikeWebhook(
       await refundAndNotify(claim.order, receivedPayment(paymentMeta), "duplicate");
       return { ok: false, code: "duplicate_other_paid" };
     case "paid":
+      // Decided from the row the claim committed, not the snapshot. A card payment link keeps its own
+      // id (not pay_), so only a differing pay_ id is a real mismatch. Ids within one installment
+      // plan differ by design, so an installment payment never warns.
+      if (paymentMeta.paymentId && !paymentMeta.installment && claim.order.asaasPaymentId?.startsWith("pay_") && claim.order.asaasPaymentId !== paymentMeta.paymentId) {
+        console.warn(`PAYMENT_ID_MISMATCH order=${claim.order.id}: paid by another Asaas payment than the one stored; kept the stored id`);
+      }
       await deactivatePaidLink(claim.order);
       try {
         await afterPaid(claim.order, paymentMeta);
@@ -118,6 +125,7 @@ async function afterPaid(order: Order, paymentMeta: PaymentMetaForFinalize): Pro
         qrCodeData: order.qrCodeData || "",
         qrCodeS3Url: order.qr_code_s3_url || "",
         confirmationKind: confirmationKindForPaymentMethod(order.paymentMethod),
+        myTicketsUrl: myTicketsUrlFor(order),
       });
     } catch (error) {
       console.error(`TICKET_EMAIL_FAILED order=${order.id}:`, error);

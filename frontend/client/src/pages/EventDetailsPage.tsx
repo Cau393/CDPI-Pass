@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Calendar, MapPin, Users, Clock, ArrowLeft, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { isAuthResolving } from "@/lib/authResolving";
 import { useToast } from "@/hooks/use-toast";
 import PaymentModal from "@/components/PaymentModal";
 import type { Event, Order } from "@shared/schema";
@@ -16,7 +17,12 @@ import { cn } from "@/lib/utils";
 import EventDescriptionDisplay from "@/components/EventDescriptionDisplay";
 import SiteFooter from "@/components/SiteFooter";
 import { useFreeSubscribe } from "@/hooks/useFreeSubscribe";
-import { EventRegistrationDialog } from "@/components/EventRegistrationDialog";
+import {
+  EventRegistrationDialog,
+  type BuyerFieldError,
+  type RegistrationConfirmation,
+} from "@/components/EventRegistrationDialog";
+import type { GuestBuyer } from "@/lib/guestBuyer";
 import { needsRegistrationDialog } from "@/lib/eventRegistration";
 import type { SystemField } from "@shared/eventRegistrationForm";
 import { FOREIGN_PAID_UNAVAILABLE_MESSAGE, foreignPaidCheckoutBlocked } from "@shared/foreignCheckout";
@@ -30,7 +36,6 @@ import {
   eventPriceLabel,
   isEventSoldOut,
   isFreeEvent,
-  loginRequiredDescription,
 } from "@/lib/eventCta";
 
 // ✅ Extend Event to include promoCode
@@ -41,7 +46,7 @@ interface EventWithPromo extends Event {
 export default function EventDetailsPage() {
   const { id } = useParams();
   const [, setLocation] = useLocation();
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const { toast } = useToast();
 
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -52,8 +57,14 @@ export default function EventDetailsPage() {
   const [registrationPrompt, setRegistrationPrompt] = useState<{
     missing?: SystemField[];
     message?: string;
+    /** The order was refused with a 409 identity_conflict (guest). */
+    conflict?: boolean;
+    /** The order was refused with a 400 invalid_buyer (guest): shown at the input it names. */
+    buyerError?: BuyerFieldError;
   } | null>(null);
   const [checkoutAnswers, setCheckoutAnswers] = useState<Record<string, string>>({});
+  // Guest checkout: who is buying, kept so a reopened dialog is prefilled.
+  const [guestBuyer, setGuestBuyer] = useState<GuestBuyer | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -169,7 +180,7 @@ export default function EventDetailsPage() {
   };
 
   const handleRedeemCourtesy = () => {
-    if (!courtesyCode || courtesyBlocked) return;
+    if (!courtesyCode || courtesyBlocked || authResolving) return;
     if (!isAuthenticated) {
       toast({
         title: "Login necessário",
@@ -190,19 +201,12 @@ export default function EventDetailsPage() {
     } | null>(null);
 
   // ✅ Updated handleBuyTicket to accept event + promo
-  const handleBuyTicket = (selected: Event, code: string | null) => {
-    if (!isAuthenticated) {
-      toast({
-        title: "Login necessário",
-        description: loginRequiredDescription(false),
-        variant: "destructive",
-      });
-      const next = `${window.location.pathname}${window.location.search}`;
-      setLocation(`/login?next=${encodeURIComponent(next)}`);
-      return;
-    }
+  // A session token is stored and useAuth is still loading: the buyer may be logged in already (N2).
+  const authResolving = isAuthResolving(authLoading);
 
+  const handleBuyTicket = (selected: Event, code: string | null) => {
     if (!event) return;
+    if (authResolving) return;
     if (isFreeEvent(event)) return;
     if (foreignPaidCheckoutBlocked(user)) {
       toast({
@@ -215,16 +219,18 @@ export default function EventDetailsPage() {
 
     // Store the event and promo in state
     setSelectedEvent({ ...selected, promoCode: code });
-    if (needsRegistrationDialog(event, user)) {
+    // A guest always sees the dialog: it is where they type who they are.
+    if (!isAuthenticated || needsRegistrationDialog(event, user)) {
       setRegistrationPrompt({});
       return;
     }
     openCheckout({});
   };
 
-  const openCheckout = (answers: Record<string, string>) => {
+  const openCheckout = (answers: Record<string, string>, buyer: GuestBuyer | null = null) => {
     if (!event) return;
     setCheckoutAnswers(answers);
+    setGuestBuyer(buyer);
     setModalData({
       event: event,
       promoCode: promoCode,
@@ -409,20 +415,24 @@ export default function EventDetailsPage() {
                 }}
                 className="bg-primary hover:bg-secondary text-white px-8 py-6 text-lg"
                 disabled={
-                  showCourtesyOffer
+                  authResolving ||
+                  (showCourtesyOffer
                     ? soldOut || hasPaidForEvent || courtesyBlocked
                     : soldOut ||
                       hasPaidForEvent ||
                       salesClosed ||
                       isSubscribePending ||
-                      foreignPaidBlocked
+                      foreignPaidBlocked)
                 }
+                aria-busy={authResolving || undefined}
                 data-testid="button-event-cta"
               >
-                {isSubscribePending && !showCourtesyOffer && (
+                {(authResolving || (isSubscribePending && !showCourtesyOffer)) && (
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                 )}
-                {showCourtesyOffer
+                {authResolving
+                  ? "Carregando..."
+                  : showCourtesyOffer
                   ? courtesyRedeemCtaLabel({
                       isFree,
                       confirmed: hasPaidForEvent,
@@ -476,13 +486,31 @@ export default function EventDetailsPage() {
           promoCode={modalData.promoCode}
           displayPrice={modalData.price}           
           answers={checkoutAnswers}
+          buyer={guestBuyer ?? undefined}
           isOpen={isPaymentModalOpen}
           onClose={() => setIsPaymentModalOpen(false)}
           onIdentityRequired={(missing, message) => {
             setIsPaymentModalOpen(false);
             setRegistrationPrompt({ missing, message });
           }}
+          onIdentityConflict={(message) => {
+            setIsPaymentModalOpen(false);
+            setRegistrationPrompt({ message, conflict: true });
+          }}
+          onInvalidBuyer={(buyerError) => {
+            setIsPaymentModalOpen(false);
+            setRegistrationPrompt({ buyerError });
+          }}
+          onEditBuyer={() => {
+            setIsPaymentModalOpen(false);
+            setRegistrationPrompt({});
+          }}
           onSuccess={() => {
+            // A guest has no profile: the modal's own success screen said it all.
+            if (!isAuthenticated && !authResolving) {
+              setIsPaymentModalOpen(false);
+              return;
+            }
             toast({
               title: "Pagamento iniciado!",
               description:
@@ -498,11 +526,15 @@ export default function EventDetailsPage() {
         event={event}
         missing={registrationPrompt?.missing}
         error={registrationPrompt?.message}
+        identityConflict={registrationPrompt?.conflict === true}
+        buyer={guestBuyer}
+        buyerError={registrationPrompt?.buyerError}
+        initialAnswers={checkoutAnswers}
         confirmLabel="Continuar para pagamento"
         onCancel={() => setRegistrationPrompt(null)}
-        onConfirm={(answers) => {
+        onConfirm={({ answers, buyer }: RegistrationConfirmation) => {
           setRegistrationPrompt(null);
-          openCheckout(answers);
+          openCheckout(answers, buyer ?? null);
         }}
       />
       {registrationDialog}

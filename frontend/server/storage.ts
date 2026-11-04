@@ -29,8 +29,9 @@ import {
   type CommunicateRecipientMode,
 } from "@shared/schema";
 import { db } from "./db";
+import { isUsersEmailUniqueViolation } from "./utils/usersEmailUnique";
 import { isEventFull } from "./utils/eventSalesPolicy";
-import { eq, ne, desc, sql, asc, count, and, isNull, or, inArray } from "drizzle-orm";
+import { eq, ne, desc, sql, asc, count, and, isNull, or, inArray, gte } from "drizzle-orm";
 import type { RegistrationAnswer } from "@shared/eventRegistrationForm";
 import { s3Service } from "./services/s3Service";
 import { buildUndoCheckInPatch } from "./utils/undoCheckInUpdate";
@@ -72,6 +73,14 @@ export interface IStorage {
   getUserByCpf(cpf: string): Promise<User | undefined>;
   getUserByForeignDocument(foreignDocument: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  /** ADR-017 guest buyer: a row with a NULL password; on an e-mail race returns the winner with created=false (the caller must re-check it). */
+  createGuestUser(data: {
+    email: string;
+    name: string;
+    phone: string;
+    document: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null } | null;
+    address: string | null;
+  }): Promise<{ user: User; created: boolean }>;
   updateUser(id: string, updates: Partial<User>): Promise<User | undefined>;
   verifyUserEmail(id: string): Promise<boolean>;
   deleteUser(id: string): Promise<boolean>;
@@ -104,7 +113,16 @@ export interface IStorage {
   // Order operations
   getOrder(id: string): Promise<Order | undefined>;
   /** "Meus ingressos": buyer-facing, so registration answers are not selected (ADR-016). */
-  getOrdersByUser(userId: string, page: number, limit: number): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }>;
+  getOrdersByUser(
+    userId: string,
+    page: number,
+    limit: number,
+    options?: { includeGuestOrders?: boolean },
+  ): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }>;
+  /** Pending orders a user opened for an event since `since` (guest checkout cap, ADR-017; guest and session orders are counted apart). */
+  countPendingOrdersSince(params: { userId: string; eventId: string; since: Date; placedAsGuest: boolean }): Promise<number>;
+  /** True when the user owns at least one order placed through guest checkout (ADR-017). */
+  userHasGuestOrder(userId: string): Promise<boolean>;
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined>;
   /** pending -> paid in one statement; false when the order was no longer pending. */
@@ -113,7 +131,12 @@ export interface IStorage {
    * duplicate check, conditional pending→paid or pending→cancelled, seat and courtesy
    * usage. A throw rolls everything back, so the webhook can answer 500 and be retried.
    */
-  claimPaidOrder(orderId: string, duplicatePolicy: DuplicatePaidPolicy): Promise<ClaimPaidOrderResult>;
+  claimPaidOrder(
+    orderId: string,
+    duplicatePolicy: DuplicatePaidPolicy,
+    /** Asaas payment that paid it: stored in the same write when the order has no payment id yet, never replacing one. */
+    paymentId?: string | null,
+  ): Promise<ClaimPaidOrderResult>;
   /** Expired charge: pending→cancelled only, so a paid order is never cancelled from a stale read. */
   cancelPendingOrder(orderId: string): Promise<boolean>;
   getOrderByAsaasPaymentId(paymentId: string): Promise<Order | undefined>;
@@ -152,9 +175,10 @@ export interface IStorage {
       document?: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null };
       address?: string;
     },
+    options?: { guestOnly?: boolean },
   ): Promise<
     | { ok: true; user: User }
-    | { ok: false; reason: "document_already_set" | "document_taken" | "not_found" }
+    | { ok: false; reason: "document_already_set" | "document_taken" | "not_found" | "not_a_guest" }
   >;
   /** True when another order (not excludeOrderId) is already paid for cpf+event. */
   existsOtherPaidOrderForCpfAndEvent(
@@ -291,6 +315,45 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  /**
+   * ADR-017: the row a guest buyer becomes: no password yet, e-mail unverified. A unique
+   * violation on the e-mail (a concurrent request) returns the row that won; anything
+   * else is rethrown for the resolver to handle.
+   */
+  async createGuestUser(data: {
+    email: string;
+    name: string;
+    phone: string;
+    document: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null } | null;
+    address: string | null;
+  }): Promise<{ user: User; created: boolean }> {
+    try {
+      const [user] = await db
+        .insert(users)
+        .values({
+          email: data.email,
+          name: data.name,
+          phone: data.phone,
+          password: null,
+          emailVerified: false,
+          isForeigner: data.document?.isForeigner ?? false,
+          cpf: data.document?.cpf ?? null,
+          foreignDocument: data.document?.foreignDocument ?? null,
+          address: data.address,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .returning();
+      return { user, created: true };
+    } catch (error) {
+      if (isUsersEmailUniqueViolation(error)) {
+        const winner = await this.getUserByEmail(data.email);
+        if (winner) return { user: winner, created: false };
+      }
+      throw error;
+    }
+  }
+
   async updateUser(id: string, updates: Partial<User>): Promise<User | undefined> {
     const [user] = await db
       .update(users)
@@ -410,8 +473,18 @@ export class DatabaseStorage implements IStorage {
     return order;
   }
 
-  async getOrdersByUser(userId: string, page: number = 1, limit: number = 10): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }> {
+  async getOrdersByUser(
+    userId: string,
+    page: number = 1,
+    limit: number = 10,
+    options: { includeGuestOrders?: boolean } = {},
+  ): Promise<{ orders: Omit<Order, "interestArea" | "registrationAnswers">[]; total: number }> {
     const offset = (page - 1) * limit;
+    // ADR-017: guest orders stay hidden until the account's e-mail is verified.
+    const ownerFilter =
+      options.includeGuestOrders === false
+        ? and(eq(orders.userId, userId), eq(orders.placedAsGuest, false))
+        : eq(orders.userId, userId);
     
     const ordersQuery = db
       .select({
@@ -428,6 +501,7 @@ export class DatabaseStorage implements IStorage {
         courtesyLinkId: orders.courtesyLinkId,
         qrCodeData: orders.qrCodeData,
         qr_code_s3_url: orders.qr_code_s3_url,
+        placedAsGuest: orders.placedAsGuest,
         qrCodeUsed: orders.qrCodeUsed,
         maxUses: orders.maxUses,
         amntUsed: orders.amntUsed,
@@ -450,7 +524,7 @@ export class DatabaseStorage implements IStorage {
       })
       .from(orders)
       .leftJoin(events, eq(orders.eventId, events.id))
-      .where(eq(orders.userId, userId))
+      .where(ownerFilter)
       .orderBy(desc(orders.createdAt))
       .limit(limit)
       .offset(offset);
@@ -458,7 +532,7 @@ export class DatabaseStorage implements IStorage {
     const totalQuery = db
       .select({ value: count() })
       .from(orders)
-      .where(eq(orders.userId, userId));
+      .where(ownerFilter);
 
     const [ordersResult, totalResult] = await Promise.all([ordersQuery, totalQuery]);
     
@@ -468,6 +542,31 @@ export class DatabaseStorage implements IStorage {
     };
   }
   
+
+  async countPendingOrdersSince(params: { userId: string; eventId: string; since: Date; placedAsGuest: boolean }): Promise<number> {
+    const [row] = await db
+      .select({ value: count() })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.userId, params.userId),
+          eq(orders.eventId, params.eventId),
+          eq(orders.status, "pending"),
+          eq(orders.placedAsGuest, params.placedAsGuest),
+          gte(orders.createdAt, params.since),
+        ),
+      );
+    return row.value;
+  }
+
+  async userHasGuestOrder(userId: string): Promise<boolean> {
+    const [row] = await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(and(eq(orders.userId, userId), eq(orders.placedAsGuest, true)))
+      .limit(1);
+    return Boolean(row);
+  }
 
   async createOrder(orderData: InsertOrder): Promise<Order> {
     const [order] = await db
@@ -498,7 +597,11 @@ export class DatabaseStorage implements IStorage {
     return order;
   }
 
-  async claimPaidOrder(orderId: string, duplicatePolicy: DuplicatePaidPolicy): Promise<ClaimPaidOrderResult> {
+  async claimPaidOrder(
+    orderId: string,
+    duplicatePolicy: DuplicatePaidPolicy,
+    paymentId?: string | null,
+  ): Promise<ClaimPaidOrderResult> {
     return db.transaction(async (tx) => {
       const [current] = await tx.select().from(orders).where(eq(orders.id, orderId));
       if (!current) return { outcome: "not_pending", status: null };
@@ -521,7 +624,14 @@ export class DatabaseStorage implements IStorage {
 
       const [paid] = await tx
         .update(orders)
-        .set({ status: "paid", updatedAt: new Date() })
+        // A lost card answer leaves the order without an id; the webhook that pays it fills it in.
+        // COALESCE decides in the UPDATE itself: the order row is not locked above, so a concurrent
+        // writer of the id must win over this one.
+        .set({
+          status: "paid",
+          updatedAt: new Date(),
+          ...(paymentId ? { asaasPaymentId: sql`COALESCE(${orders.asaasPaymentId}, ${paymentId})` } : {}),
+        })
         .where(and(eq(orders.id, orderId), eq(orders.status, "pending")))
         .returning();
       if (!paid) return { outcome: "not_pending", status: null };
@@ -645,27 +755,42 @@ export class DatabaseStorage implements IStorage {
       document?: { isForeigner: boolean; cpf: string | null; foreignDocument: string | null };
       address?: string;
     },
+    options: { guestOnly?: boolean } = {},
   ): Promise<
     | { ok: true; user: User }
-    | { ok: false; reason: "document_already_set" | "document_taken" | "not_found" }
+    | { ok: false; reason: "document_already_set" | "document_taken" | "not_found" | "not_a_guest" }
   > {
+    // guestOnly (ADR-017): an unauthenticated checkout may only write to a row that still
+    // has no password when the UPDATE runs, so a concurrent claim/reset never receives it.
+    const guestGuard = options.guestOnly ? [isNull(users.password)] : [];
     const addressPatch = identity.address !== undefined ? { address: identity.address } : {};
     try {
       if (identity.document) {
         const [claimed] = await db
           .update(users)
           .set({ ...identity.document, ...addressPatch, updatedAt: new Date() })
-          .where(and(eq(users.id, userId), isNull(users.cpf), isNull(users.foreignDocument)))
+          .where(and(eq(users.id, userId), isNull(users.cpf), isNull(users.foreignDocument), ...guestGuard))
           .returning();
         if (claimed) return { ok: true, user: claimed };
 
         const current = await this.getUser(userId);
         if (!current) return { ok: false, reason: "not_found" };
+        if (options.guestOnly && current.password) return { ok: false, reason: "not_a_guest" };
         const { isForeigner, cpf, foreignDocument } = identity.document;
         const sameDocument = isForeigner
           ? current.isForeigner === true && current.foreignDocument === foreignDocument
           : current.isForeigner !== true && current.cpf?.replace(/\D/g, "") === cpf?.replace(/\D/g, "");
         if (!sameDocument) return { ok: false, reason: "document_already_set" };
+      }
+      if (options.guestOnly) {
+        const [updated] = await db
+          .update(users)
+          .set({ ...addressPatch, updatedAt: new Date() })
+          .where(and(eq(users.id, userId), ...guestGuard))
+          .returning();
+        if (updated) return { ok: true, user: updated };
+        const current = await this.getUser(userId);
+        return { ok: false, reason: current ? "not_a_guest" : "not_found" };
       }
       const user = await this.updateUser(userId, addressPatch);
       return user ? { ok: true, user } : { ok: false, reason: "not_found" };

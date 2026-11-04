@@ -37,3 +37,9 @@ export function isUsersForeignDocumentUniqueViolation(error: unknown): boolean {
   const message = `${err?.message ?? ""} ${err?.cause?.message ?? ""}`;
   return message.includes("users_foreign_document");
 }
+
+/** Any Postgres unique violation (23505), whichever constraint. */
+export function isUniqueViolation(error: unknown): boolean {
+  const err = error as { code?: string; cause?: { code?: string } };
+  return (err?.code ?? err?.cause?.code) === "23505";
+}

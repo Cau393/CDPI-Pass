@@ -36,6 +36,7 @@ Priority key: **P1** exploitable now or silent data loss · **P2** broken featur
 | 26 | P3 | pm2 on EC2 was installed with `npm install -g pm2`, the last npm use (owner wants pnpm only) | open; after 2026-10-21: `pnpm add -g pm2`, then `pm2 update` so the running daemon moves to the new binary, then `npm rm -g pm2` |
 | 27 | P3 | `follow-redirects` 1.16.0 (CVE-2026-111755, CVE-2026-111756, HIGH) on the SendGrid e-mail path; Security Scans red from 2026-10-21 | resolved 2026-10-21 (PR #24, deployed `e73304b`); not reachable before the fix |
 | 28 | P1 | `body-parser` 1.20.8 (CVE-2026-111181, HIGH): one unauthenticated gzip POST crashes the app (reachable, reproduced); `multer` 2.4.0 (CVE-2026-113872, HIGH), not reachable; `zod` 3.25.76 (CVE-2023-54404) flagged on 2026-10-28, CVE rejected the same day; then `follow-redirects` 1.16.1 (CVE-2026-116689, HIGH, not reachable) and a gitleaks false positive on the guest-stack branches | resolved, deployed `a8ae661` (PR #28: `body-parser` 1.20.9, `multer` 2.5.0, `follow-redirects` 1.16.2, one `.gitleaksignore` fingerprint); zod: no change (owner, 2026-10-30), zod 4 migration stays open |
+| 29 | P2 | Asaas refund and chargeback events are ignored: a refunded order stays `paid` with a valid ticket (pre-existing for link/PIX/boleto; more likely with the inline card) | open (owner 2026-10-29: own stage after deploy B; manual cancel until then) |
 
 ---
 
@@ -537,6 +538,14 @@ The lockfile on `hotfix-frontend-update` (`a9bbbbb`) did not change. The scanner
   - This branch: only the 3 accepted findings. With `.trivyignore.yaml`: 0.
 - **Lockfile:** `pnpm install --frozen-lockfile` exit 0. The diff is 2 version swaps, no new transitive package. Both releases are dated 2026-10-22, past the 3-day `minimumReleaseAge`.
 - **Gates:** tsc 0; frontend 442 passed / 4 skipped; backend 431 / 142; integration 138 / 4 (host PG17 `:55434`).
+
+### 29. Refund and chargeback events are ignored (found 2026-10-29, ADR-017 Stage 5 rehearsal)
+
+`PAYMENT_REFUNDED`, `PAYMENT_CHARGEBACK_REQUESTED`, `PAYMENT_CHARGEBACK_DISPUTE` and `PAYMENT_AWAITING_CHARGEBACK_REVERSAL` reach `POST /api/webhooks/asaas`, are validated and logged, and change nothing. In the sandbox a refund (`POST /v3/payments/{id}/refund`) left the order `paid`, the ticket valid and `current_attendees` unchanged; check-status still answered "paid". Chargeback cannot be simulated in the sandbox (no endpoint), so it needs a synthetic signed webhook. The routes handle only CONFIRMED / RECEIVED / APPROVED_BY_RISK / OVERDUE / DELETED / REPROVED / CAPTURE_REFUSED. Pre-existing for link, PIX and boleto; more likely with the inline card, where chargebacks exist.
+
+**Fix (own stage after deploy B; owner decision 2026-10-29)**: cancel the order and release the seat and the ticket on refund and chargeback events, with tests built from a signed synthetic webhook. Until then the owner cancels refunded tickets by hand. Event names: https://docs.asaas.com/docs/payment-events
+
+**Follow-ups bundled with this stage**: R1 (a stale `pollNotice` carries into the next order's view in the same modal session) and T3-M2 (extract `useOrderPolling` from `PaymentModal.tsx`); the deferred minors in the SDD `progress.md` "Stage 5" section (H1: `onSuccess` `!authResolving` branches have no direct test; H2-M2: installment N's id stored when its webhook arrives first on a NULL-id order; ProfilePage 409 toast untested). Also parked: admin has no force-cancel while Asaas refuses a delete (runbook in [[60-Decisions/ADR-017-guest-checkout-inline-card]] deploy notes).
 
 ---
 

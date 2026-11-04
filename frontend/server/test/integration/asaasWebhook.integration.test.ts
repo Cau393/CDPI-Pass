@@ -13,6 +13,7 @@ import express from "express";
 import type { Server } from "http";
 import { Pool } from "pg";
 import { randomUUID } from "crypto";
+import jwt from "jsonwebtoken";
 
 const VERIFY_URL = process.env.VERIFY_DATABASE_URL;
 const enabled = Boolean(VERIFY_URL);
@@ -66,6 +67,8 @@ vi.mock("../../services/s3Service", () => ({
 const asaasCalls: string[] = [];
 /** The refunds Asaas accepted. */
 const acceptedRefunds: string[] = [];
+/** How the fake Asaas answers DELETE /payments/{id}: per id; anything absent is a success. */
+const deleteAnswers = new Map<string, "fail" | "not_found" | "already_deleted">();
 
 let server: Server;
 let baseUrl: string;
@@ -81,7 +84,7 @@ async function deliver(body: unknown, token: string | null = WEBHOOK_TOKEN) {
 }
 
 /** A paid in-person event + a Brazilian buyer + one pending order holding `asaasId`. */
-async function pendingOrder(paymentMethod: "pix" | "credit_card", asaasId: string) {
+async function pendingOrder(paymentMethod: "pix" | "credit_card", asaasId: string | null, placedAsGuest = false) {
   const eventId = randomUUID();
   await pool.query(
     `INSERT INTO events (id, title, description, date, location, price, is_active, nps_type, is_free, modality, registration_form, current_attendees)
@@ -100,9 +103,9 @@ async function pendingOrder(paymentMethod: "pix" | "credit_card", asaasId: strin
   createdUserIds.push(userId);
   const orderId = randomUUID();
   await pool.query(
-    `INSERT INTO orders (id, user_id, event_id, status, amount, payment_method, asaas_payment_id, cpf, qr_code_data)
-     VALUES ($1,$2,$3,'pending','632.00',$4,$5,$6,'qr-data')`,
-    [orderId, userId, eventId, paymentMethod, asaasId, cpf],
+    `INSERT INTO orders (id, user_id, event_id, status, amount, payment_method, asaas_payment_id, cpf, qr_code_data, placed_as_guest)
+     VALUES ($1,$2,$3,'pending','632.00',$4,$5,$6,'qr-data',$7)`,
+    [orderId, userId, eventId, paymentMethod, asaasId, cpf, placedAsGuest],
   );
   return { eventId, orderId, email, userId, cpf };
 }
@@ -158,10 +161,19 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
         if (call.endsWith("/bankSlip/refund")) return { requestUrl: "https://sandbox.asaas.com/refund-request/abc", status: "PENDING" };
         return { id: endpoint.split("/")[2], status: "RECEIVED" };
       }
+      const paymentDelete = /^DELETE \/payments\/([^/?]+)$/.exec(call);
+      if (paymentDelete) {
+        const answer = deleteAnswers.get(paymentDelete[1]);
+        if (answer === "fail") throw new AsaasApiError(400, { errors: [{ code: "invalid_action", description: "Só é possível remover cobranças pendentes ou vencidas." }] });
+        if (answer === "not_found") throw new AsaasApiError(404, { errors: [{ code: "invalid_object", description: "Cobrança não encontrada." }] });
+        if (answer === "already_deleted") throw new AsaasApiError(400, { errors: [{ code: "invalid_action", description: "Cobrança já removida." }] });
+        return { deleted: true, id: paymentDelete[1] };
+      }
       const paymentRead = /^GET \/payments\/([^/?]+)$/.exec(call);
       if (paymentRead) {
         const id = paymentRead[1];
         const requested = acceptedRefunds.some((r) => r.startsWith(`POST /payments/${id}/`));
+        if (deleteAnswers.get(id) === "already_deleted") return { id, status: "PENDING", deleted: true, refunds: [] };
         return { id, customer: `cus_${id}`, status: "RECEIVED", refunds: requested ? [{ status: "AWAITING_CRITICAL_ACTION_AUTHORIZATION" }] : [] };
       }
       return {};
@@ -197,6 +209,88 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     expect(asaasCalls.filter((c) => c.startsWith("PUT /paymentLinks/"))).toEqual([]);
   });
 
+  describe("the webhook stores the Asaas payment id of an order that has none (card answer lost, unknown outcome)", () => {
+    const storedId = async (orderId: string) =>
+      (await pool.query(`SELECT asaas_payment_id FROM orders WHERE id = $1`, [orderId])).rows[0].asaas_payment_id as string | null;
+    const confirmed = (orderId: string, id: string) => ({
+      event: "PAYMENT_CONFIRMED",
+      payment: { id, billingType: "CREDIT_CARD", status: "CONFIRMED", value: 637, externalReference: orderId, paymentLink: null },
+    });
+
+    it.each([false, true])("NULL id (placedAsGuest=%s): paid and the payment id stored in the same write", async (guest) => {
+      const { eventId, orderId } = await pendingOrder("credit_card", null, guest);
+      const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+      expect(await deliver(confirmed(orderId, paymentId))).toBe(200);
+      expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+      expect(await storedId(orderId)).toBe(paymentId);
+      const email = (await pool.query(`SELECT u.email FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id = $1`, [orderId])).rows[0].email as string;
+      expect(ticketEmails.filter((to) => to === email)).toHaveLength(1);
+
+      // Asaas redelivers: a no-op (same id, one seat, no second ticket).
+      expect(await deliver(confirmed(orderId, paymentId))).toBe(200);
+      expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+      expect(await storedId(orderId)).toBe(paymentId);
+      expect(ticketEmails.filter((to) => to === email)).toHaveLength(1);
+    });
+
+    it("an equal stored id stays as it is", async () => {
+      const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+      const { eventId, orderId } = await pendingOrder("credit_card", paymentId);
+      expect(await deliver(confirmed(orderId, paymentId))).toBe(200);
+      expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+      expect(await storedId(orderId)).toBe(paymentId);
+    });
+
+    it("a payment-link card order (stored link id) keeps it and is not warned about a pay_ id", async () => {
+      const linkId = `lnk${randomUUID().slice(0, 12)}`;
+      const { eventId, orderId } = await pendingOrder("credit_card", linkId);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(await deliver(confirmed(orderId, `pay_${randomUUID().slice(0, 12)}`))).toBe(200);
+        expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+        expect(await storedId(orderId)).toBe(linkId);
+        expect(warn.mock.calls.map((c) => c.join(" ")).filter((l) => l.includes("PAYMENT_ID_MISMATCH"))).toEqual([]);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("no mismatch warning when the claim discards the order as a duplicate", async () => {
+      const first = await pendingOrder("pix", "pay_first_dup");
+      expect(await deliver({ event: "PAYMENT_RECEIVED", payment: { id: "pay_first_dup", billingType: "PIX", status: "RECEIVED", value: 637, externalReference: first.orderId } })).toBe(200);
+      const kept = `pay_${randomUUID().slice(0, 12)}`;
+      const secondId = await anotherOrder(first, kept);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(await deliver(confirmed(secondId, `pay_${randomUUID().slice(0, 12)}`))).toBe(200);
+        expect((await pool.query(`SELECT status FROM orders WHERE id = $1`, [secondId])).rows[0].status).toBe("cancelled");
+        expect(await storedId(secondId)).toBe(kept);
+        expect(warn.mock.calls.map((c) => c.join(" ")).filter((l) => l.includes("PAYMENT_ID_MISMATCH"))).toEqual([]);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("a different stored id is never overwritten, and the mismatch is warned without the ids", async () => {
+      const kept = `pay_${randomUUID().slice(0, 12)}`;
+      const other = `pay_${randomUUID().slice(0, 12)}`;
+      const { eventId, orderId } = await pendingOrder("credit_card", kept);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(await deliver(confirmed(orderId, other))).toBe(200);
+        expect(await state(orderId, eventId)).toEqual({ status: "paid", attendees: 1 });
+        expect(await storedId(orderId)).toBe(kept);
+        const lines = warn.mock.calls.map((c) => c.join(" ")).filter((l) => l.includes("PAYMENT_ID_MISMATCH"));
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toContain(orderId);
+        expect(lines[0]).not.toContain(kept);
+        expect(lines[0]).not.toContain(other);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  });
+
   it("card bought through the payment link: a new payment with only `paymentLink` finds the order", async () => {
     const linkId = `lnk${randomUUID().slice(0, 12)}`;
     const { eventId, orderId } = await pendingOrder("credit_card", linkId);
@@ -217,6 +311,23 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     expect(asaasCalls.filter((c) => c.includes(`/paymentLinks/${linkId}`))).toEqual([`PUT /paymentLinks/${linkId}`]);
     expect(acceptedRefunds.filter((c) => c.includes(body.payment.id))).toEqual([]);
   });
+
+  it.each(["PAYMENT_REPROVED_BY_RISK_ANALYSIS", "PAYMENT_CREDIT_CARD_CAPTURE_REFUSED"])(
+    "%s on a legacy payment-link order (by link id and externalReference) does not cancel it",
+    async (event) => {
+      const linkId = `lnk${randomUUID().slice(0, 12)}`;
+      const { eventId, orderId } = await pendingOrder("credit_card", linkId);
+
+      const status = await deliver({
+        event,
+        payment: { id: `pay_${randomUUID().slice(0, 12)}`, billingType: "CREDIT_CARD", status: "REFUSED", value: 212.33, externalReference: orderId, paymentLink: linkId },
+      });
+
+      // One failed attempt on the link must not kill the order that can still be bought through it.
+      expect(status).toBe(200);
+      expect(await state(orderId, eventId)).toEqual({ status: "pending", attendees: 0 });
+    },
+  );
 
   it("installments delivered at the same time count one seat and send one ticket", async () => {
     const linkId = `lnk${randomUUID().slice(0, 12)}`;
@@ -485,5 +596,67 @@ describe.skipIf(!enabled)("Asaas webhook (real routes + real DB)", () => {
     expect(await state(orderId, eventId)).toEqual({ status: "cancelled", attendees: 0 });
     expect(asaasCalls.filter((c) => c.startsWith("POST") && c.includes("pay_card_cancelled"))).toEqual([]);
     expect(refundEmails(email)).toHaveLength(0);
+  });
+
+  describe("user cancel of a pending order that holds a direct pay_ id (final review I1)", () => {
+    const tokenFor = (userId: string) => jwt.sign({ userId }, process.env.JWT_SECRET!, { expiresIn: "1h" });
+    const cancel = (userId: string, orderId: string) =>
+      fetch(`${baseUrl}/api/orders/${orderId}/cancel`, { method: "DELETE", headers: { Authorization: `Bearer ${tokenFor(userId)}` } });
+
+    it.each(["credit_card", "pix"] as const)("%s: Asaas refuses the delete -> 409, the order stays pending", async (method) => {
+      const id = `pay_${randomUUID().slice(0, 12)}`;
+      deleteAnswers.set(id, "fail");
+      const { eventId, orderId, userId } = await pendingOrder(method, id);
+      const res = await cancel(userId, orderId);
+      const body = await res.json();
+      expect(res.status).toBe(409);
+      expect(body.message).toMatch(/Não foi possível cancelar agora/);
+      expect(JSON.stringify(body)).not.toMatch(/Só é possível/);
+      expect(await state(orderId, eventId)).toEqual({ status: "pending", attendees: 0 });
+    });
+
+    it("Asaas deletes the payment -> cancelled", async () => {
+      const id = `pay_${randomUUID().slice(0, 12)}`;
+      const { eventId, orderId, userId } = await pendingOrder("credit_card", id);
+      expect((await cancel(userId, orderId)).status).toBe(200);
+      expect(asaasCalls).toContain(`DELETE /payments/${id}`);
+      expect((await state(orderId, eventId)).status).toBe("cancelled");
+    });
+
+    it.each(["not_found", "already_deleted"] as const)("payment already gone at Asaas (%s) -> cancelled", async (answer) => {
+      const id = `pay_${randomUUID().slice(0, 12)}`;
+      deleteAnswers.set(id, answer);
+      const { eventId, orderId, userId } = await pendingOrder("credit_card", id);
+      expect((await cancel(userId, orderId)).status).toBe(200);
+      expect((await state(orderId, eventId)).status).toBe("cancelled");
+    });
+
+    it("a payment-link id and a NULL id keep cancelling locally", async () => {
+      const link = await pendingOrder("credit_card", `lnk${randomUUID().slice(0, 12)}`);
+      const none = await pendingOrder("credit_card", null);
+      expect((await cancel(link.userId, link.orderId)).status).toBe(200);
+      expect((await cancel(none.userId, none.orderId)).status).toBe(200);
+    });
+  });
+
+  describe("cancel-type webhooks fall back to externalReference only for a NULL-id pending order (final review M3)", () => {
+    it.each(["PAYMENT_REPROVED_BY_RISK_ANALYSIS", "PAYMENT_DELETED"])("%s cancels a pending order whose stored id is NULL", async (event) => {
+      const { eventId, orderId } = await pendingOrder("credit_card", null);
+      expect(await deliver({ event, payment: { id: `pay_${randomUUID().slice(0, 12)}`, billingType: "CREDIT_CARD", status: "REFUSED", externalReference: orderId } })).toBe(200);
+      expect((await state(orderId, eventId)).status).toBe("cancelled");
+    });
+
+    it("an order holding a different stored id is untouched", async () => {
+      const { eventId, orderId } = await pendingOrder("credit_card", "pay_stored_other");
+      expect(await deliver({ event: "PAYMENT_REPROVED_BY_RISK_ANALYSIS", payment: { id: "pay_unrelated_1", externalReference: orderId } })).toBe(200);
+      expect((await state(orderId, eventId)).status).toBe("pending");
+    });
+
+    it("a paid NULL-id order is untouched", async () => {
+      const { eventId, orderId } = await pendingOrder("credit_card", null);
+      await deliver({ event: "PAYMENT_CONFIRMED", payment: { id: `pay_${randomUUID().slice(0, 12)}`, billingType: "CREDIT_CARD", status: "CONFIRMED", value: 637, externalReference: orderId } });
+      expect(await deliver({ event: "PAYMENT_REPROVED_BY_RISK_ANALYSIS", payment: { id: "pay_late_reprove", externalReference: orderId } })).toBe(200);
+      expect((await state(orderId, eventId)).status).toBe("paid");
+    });
   });
 });

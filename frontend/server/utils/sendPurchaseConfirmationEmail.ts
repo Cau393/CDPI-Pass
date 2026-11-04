@@ -15,8 +15,10 @@ export async function sendPurchaseConfirmationEmail(opts: {
   qrCodeData?: string | null;
   qrCodeS3Url?: string | null;
   confirmationKind: TicketConfirmationKind;
+  /** Guest buyers only (ADR-017): see myTicketsUrlFor. */
+  myTicketsUrl?: string | null;
 }): Promise<boolean> {
-  const { to, userName, event, orderId, confirmationKind } = opts;
+  const { to, userName, event, orderId, confirmationKind, myTicketsUrl } = opts;
 
   if (isOnlineEvent(event)) {
     if (!event.meetingUrl) {
@@ -33,6 +35,7 @@ export async function sendPurchaseConfirmationEmail(opts: {
       orderId,
       confirmationKind,
       customHtml: event.confirmationEmailHtml,
+      myTicketsUrl,
     });
   }
 
@@ -46,5 +49,6 @@ export async function sendPurchaseConfirmationEmail(opts: {
     qrCodeS3Url: opts.qrCodeS3Url || "",
     confirmationKind,
     customHtml: event.confirmationEmailHtml,
+    myTicketsUrl,
   });
 }

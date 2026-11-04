@@ -5,7 +5,7 @@ import jwt from "jsonwebtoken";
 // owner of the e-mail resets the password (pv claim), and the link tokens
 // signed with the same secret (password-reset, email-verification) must never
 // open a session.
-const users = new Map<string, { id: string; password: string; isAdmin?: boolean }>();
+const users = new Map<string, { id: string; password: string | null; isAdmin?: boolean }>();
 vi.mock("../../storage", () => ({
   storage: { getUser: vi.fn(async (id: string) => users.get(id)) },
 }));
@@ -13,7 +13,7 @@ vi.mock("../../storage", () => ({
 const JWT_SECRET = "session-token-unit-secret";
 process.env.JWT_SECRET = JWT_SECRET;
 
-const { passwordVersion, sessionUserFromToken, signSessionToken } = await import("../../middleware/auth");
+const { hasPassword, passwordVersion, sessionUserFromToken, signSessionToken } = await import("../../middleware/auth");
 
 beforeEach(() => {
   users.clear();
@@ -33,6 +33,21 @@ describe("signSessionToken", () => {
 
   it("gives a different version once the password hash changes", () => {
     expect(passwordVersion("$2a$10$hash-one")).not.toBe(passwordVersion("$2a$10$hash-two"));
+  });
+
+  it("treats a guest row (NULL password) as the empty hash, so its token round-trips", async () => {
+    expect(passwordVersion(null)).toBe(passwordVersion(""));
+    users.set("g1", { id: "g1", password: null });
+
+    await expect(sessionUserFromToken(signSessionToken(users.get("g1")!))).resolves.toMatchObject({ id: "g1" });
+  });
+});
+
+describe("hasPassword", () => {
+  it("is true only for a non-empty string", () => {
+    expect(hasPassword({ password: "$2a$10$hash-one" })).toBe(true);
+    expect(hasPassword({ password: null })).toBe(false);
+    expect(hasPassword({ password: "" })).toBe(false);
   });
 });
 

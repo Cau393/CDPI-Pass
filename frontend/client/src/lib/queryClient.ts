@@ -17,9 +17,10 @@ export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
+  extraHeaders?: Record<string, string>,
 ): Promise<Response> {
   const token = localStorage.getItem("token");
-  const headers: HeadersInit = {};
+  const headers: Record<string, string> = { ...extraHeaders };
   let body: BodyInit | undefined = undefined;
   
   // Check if data is not an instance of FormData before setting the Content-Type header

@@ -59,3 +59,6 @@ Asaas requires `cpfCnpj` to create a customer (https://docs.asaas.com/reference/
 - A document entered wrongly is write-once. Correcting it is a support action ([[70-Operations/Operator-Guides]]).
 - The participants Excel gains `Endereço`, `Estrangeiro` and one column per question (archived ones suffixed "(removida)"). `CPF` becomes `CPF / Passaporte`.
 - Foreign paid checkout still depends on the open ADR-014 items: an Asaas production foreign-payer enablement, and a sandbox `invoiceUrl` probe.
+
+## Update 2026-10-29 (ADR-017 Stage 4)
+- The event-page registration dialog also serves **logged-out guests**: a visitor gives name, e-mail, phone, the identity fields and the event questions in the same dialog (`onConfirm({ answers, buyer?, turnstileToken? })`), with Turnstile; no account is required. The identity rules above (`missingIdentityFields`, `resolveRegistrationAnswers`) still apply. See [[60-Decisions/ADR-017-guest-checkout-inline-card]].

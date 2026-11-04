@@ -129,9 +129,40 @@ describe("finalizeOrderPaidLikeWebhook", () => {
     await finalizeOrderPaidLikeWebhook(baseOrder(), pixMeta);
     await finalizeOrderPaidLikeWebhook(baseOrder(), { billingType: "CREDIT_CARD" }, { duplicatePolicy: "reject_only" });
     expect(claimPaidOrder.mock.calls).toEqual([
-      ["order-uuid", "refund_then_discard"],
-      ["order-uuid", "reject_only"],
+      ["order-uuid", "refund_then_discard", pixMeta.paymentId],
+      ["order-uuid", "reject_only", undefined],
     ]);
+  });
+
+  it("PAYMENT_ID_MISMATCH: warned for a differing stored pay_ id, not for a payment-link id", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      claimPaidOrder.mockResolvedValue({ outcome: "paid", order: baseOrder({ status: "paid", asaasPaymentId: "pay-stored" }) });
+      await finalizeOrderPaidLikeWebhook(baseOrder(), { billingType: "PIX", value: 100, paymentId: "pay_other" });
+      expect(warn.mock.calls.filter(([l]) => String(l).includes("PAYMENT_ID_MISMATCH"))).toHaveLength(0);
+
+      claimPaidOrder.mockResolvedValue({ outcome: "paid", order: baseOrder({ status: "paid", asaasPaymentId: "pay_stored" }) });
+      await finalizeOrderPaidLikeWebhook(baseOrder(), { billingType: "PIX", value: 100, paymentId: "pay_other" });
+      expect(warn.mock.calls.filter(([l]) => String(l).includes("PAYMENT_ID_MISMATCH"))).toHaveLength(1);
+
+      warn.mockClear();
+      claimPaidOrder.mockResolvedValue({ outcome: "paid", order: baseOrder({ status: "paid", asaasPaymentId: "lnk123" }) });
+      await finalizeOrderPaidLikeWebhook(baseOrder(), { billingType: "CREDIT_CARD", value: 100, paymentId: "pay_other" });
+      expect(warn.mock.calls.filter(([l]) => String(l).includes("PAYMENT_ID_MISMATCH"))).toHaveLength(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("PAYMENT_ID_MISMATCH: not warned when the payment is an installment (ids within a plan differ by design)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      claimPaidOrder.mockResolvedValue({ outcome: "paid", order: baseOrder({ status: "paid", asaasPaymentId: "pay_stored" }) });
+      await finalizeOrderPaidLikeWebhook(baseOrder(), { billingType: "CREDIT_CARD", value: 100, paymentId: "pay_other", installment: "ins_1" });
+      expect(warn.mock.calls.filter(([l]) => String(l).includes("PAYMENT_ID_MISMATCH"))).toHaveLength(0);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("a lost claim (another delivery won) sends nothing and refunds nothing", async () => {

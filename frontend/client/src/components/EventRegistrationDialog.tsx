@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
@@ -16,6 +16,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DocumentFields } from "@/components/DocumentFields";
+import { PhoneInputE164 } from "@/components/nps/PhoneInputE164";
+import { TurnstileWidget, isTurnstileConfigured, type TurnstileHandle } from "@/components/TurnstileWidget";
 import { RegistrationFields } from "@/components/RegistrationFields";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
@@ -27,7 +29,10 @@ import {
   registrationQuestionsFor,
   type RegistrationQuestions,
 } from "@/lib/eventRegistration";
-import { refineAccountDocument, type Event } from "@shared/schema";
+import type { GuestBuyer } from "@/lib/guestBuyer";
+import { validateCpf } from "@shared/cpf";
+import type { GuestBuyerField } from "@shared/guestBuyerField";
+import { accountEmailSchema, CPF_FORMAT, refineAccountDocument, type Event } from "@shared/schema";
 import type { SystemField } from "@shared/eventRegistrationForm";
 import {
   FOREIGN_PAID_CHECKOUT_ENABLED,
@@ -42,9 +47,37 @@ type IdentityValues = {
   cpf: string;
   foreignDocument: string;
   address: string;
+  // Guest mode only (no account): who is buying.
+  name: string;
+  email: string;
+  phone: string;
 };
 
+/** What the dialog hands back (R32). `buyer` is present iff the dialog ran in guest mode. */
+export interface RegistrationConfirmation {
+  answers: Record<string, string>;
+  buyer?: GuestBuyer;
+  /** Present only when a Turnstile token was solved. */
+  turnstileToken?: string;
+}
+
+/** A 400 `invalid_buyer` from the order (ADR-017 Stage 5 fix): `field` is the input the server named, if any. */
+export interface BuyerFieldError {
+  message: string;
+  field: GuestBuyerField | null;
+}
+
 const ACCOUNT_REFRESH_FAILED = "Não foi possível atualizar seus dados. Tente novamente.";
+
+/** The input each `invalid_buyer` field points at, to focus it. */
+const BUYER_FIELD_INPUT_ID: Record<GuestBuyerField, string> = {
+  name: "guest-name",
+  email: "guest-email",
+  phone: "guest-phone",
+  cpf: "cpf",
+  foreignDocument: "foreignDocument",
+  address: "registration-address",
+};
 
 /**
  * Inscription questions (ADR-016): the document and address the event needs
@@ -55,6 +88,10 @@ const ACCOUNT_REFRESH_FAILED = "Não foi possível atualizar seus dados. Tente n
  *
  * What was typed lives here, not in the dialog content, so reopening after a
  * 400 identity_required keeps it.
+ *
+ * Guest mode (ADR-017): no account when it opens. It then also asks who is
+ * buying (name, e-mail, phone), never saves an identity, and returns the typed
+ * data as `buyer` for the caller to send with the order or the subscription.
  */
 export function EventRegistrationDialog({
   open,
@@ -63,6 +100,11 @@ export function EventRegistrationDialog({
   pending = false,
   error,
   missing,
+  turnstile = false,
+  identityConflict = false,
+  buyer: prefillBuyer,
+  buyerError,
+  initialAnswers,
   onCancel,
   onConfirm,
 }: {
@@ -74,8 +116,18 @@ export function EventRegistrationDialog({
   error?: string | null;
   /** From a 400 identity_required: asked even if the cached account has it. */
   missing?: readonly SystemField[];
+  /** Guest mode: render the Turnstile challenge and hold the submit until it is solved. */
+  turnstile?: boolean;
+  /** The request error is a 409 identity_conflict: offer the way out (e-mail lookup, login). */
+  identityConflict?: boolean;
+  /** Guest mode: the last buyer typed, to prefill a reopened dialog. */
+  buyer?: GuestBuyer | null;
+  /** Guest mode: the order's 400 invalid_buyer, shown under the input it names (focused) or at the top. */
+  buyerError?: BuyerFieldError | null;
+  /** The last answers given, to prefill a reopened dialog. */
+  initialAnswers?: Record<string, string>;
   onCancel: () => void;
-  onConfirm: (answers: Record<string, string>) => void;
+  onConfirm: (confirmation: RegistrationConfirmation) => void;
 }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -84,6 +136,7 @@ export function EventRegistrationDialog({
   const [identityError, setIdentityError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const isBusy = isSaving || pending;
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
 
   // The account as it was when the dialog opened: saving the identity
   // refreshes it, and the questions must not vanish while the dialog is open.
@@ -95,9 +148,22 @@ export function EventRegistrationDialog({
       setAccountAtOpen(user);
       setIdentityError(null);
       setAnswerErrors({});
+      // The widget remounts with the dialog: a token from the last mount is spent.
+      setTurnstileToken(null);
     }
   }
   const questions = event ? registrationQuestionsFor(event, accountAtOpen, missing) : null;
+  const isGuest = accountAtOpen == null;
+
+  const turnstileRef = useRef<TurnstileHandle>(null);
+  const needsTurnstile = turnstile && isTurnstileConfigured();
+  const waitingForTurnstile = needsTurnstile && turnstileToken == null;
+  // Tokens are single use: a fresh challenge after every request ends.
+  const wasPending = useRef(pending);
+  useEffect(() => {
+    if (wasPending.current && !pending) turnstileRef.current?.reset();
+    wasPending.current = pending;
+  }, [pending]);
 
   // Guards onConfirm after an await: closing or unmounting mid-save must not
   // subscribe or open the payment.
@@ -110,13 +176,72 @@ export function EventRegistrationDialog({
   }, [open]);
 
   const form = useForm<IdentityValues>({
-    resolver: zodResolver(identitySchemaFor(questions)),
-    defaultValues: { isForeigner: false, cpf: "", foreignDocument: "", address: "" },
+    resolver: zodResolver(identitySchemaFor(questions, isGuest)),
+    defaultValues: {
+      isForeigner: false,
+      cpf: "",
+      foreignDocument: "",
+      address: "",
+      name: "",
+      email: "",
+      phone: "",
+    },
   });
   // A paid event can't be bought by a foreign visitor yet: saving the passport here
   // would lock the account as foreign (write-once) for a checkout that refuses it.
   const foreignPaidBlocked =
     Boolean(event && !event.isFree) && foreignPaidCheckoutBlocked({ isForeigner: form.watch("isForeigner") });
+
+  // A server invalid_buyer goes under the input it names when the dialog shows that input; else at the top.
+  const isForeignerTyped = form.watch("isForeigner") === true;
+  const shownBuyerFields: Record<GuestBuyerField, boolean> = {
+    name: isGuest,
+    email: isGuest,
+    phone: isGuest,
+    cpf: Boolean(questions?.document) && !isForeignerTyped,
+    foreignDocument: Boolean(questions?.document) && isForeignerTyped,
+    address: Boolean(questions?.address),
+  };
+  const buyerErrorField = buyerError?.field && shownBuyerFields[buyerError.field] ? buyerError.field : null;
+  const buyerAlert = buyerError && !buyerErrorField ? buyerError.message : null;
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // Reopened guest dialog (after identity_required / identity_conflict): fill
+  // blanks from what the caller kept; whatever is already typed wins.
+  useEffect(() => {
+    if (!open) return;
+    if (prefillBuyer) {
+      const fill = (name: keyof IdentityValues, value: string | boolean | undefined) => {
+        if (value === undefined || value === "") return;
+        const current = form.getValues(name);
+        if (typeof value === "boolean" ? !current : !String(current).trim()) form.setValue(name, value as never);
+      };
+      fill("name", prefillBuyer.name);
+      fill("email", prefillBuyer.email);
+      fill("phone", prefillBuyer.phone);
+      fill("isForeigner", prefillBuyer.isForeigner);
+      fill("cpf", prefillBuyer.cpf);
+      fill("foreignDocument", prefillBuyer.foreignDocument);
+      fill("address", prefillBuyer.address);
+    }
+    if (initialAnswers && Object.keys(initialAnswers).length > 0) {
+      setAnswers((prev) => {
+        const next = { ...prev };
+        for (const [fieldId, value] of Object.entries(initialAnswers)) {
+          if (!next[fieldId]?.trim()) next[fieldId] = value;
+        }
+        return next;
+      });
+    }
+  }, [open]);
+
+  // Each opening starts without the last attempt's errors; a server invalid_buyer marks its input
+  // (shown only while the dialog shows that input). The next submit validates afresh.
+  useEffect(() => {
+    if (!open) return;
+    form.clearErrors();
+    if (buyerError?.field) form.setError(buyerError.field, { type: "server", message: buyerError.message });
+  }, [open, buyerError]);
 
   useEffect(() => {
     if (!open || !user) return;
@@ -175,7 +300,7 @@ export function EventRegistrationDialog({
     void form.handleSubmit(async (values) => {
       if (Object.keys(nextAnswerErrors).length > 0) return;
       setIdentityError(null);
-      if (questions.document || questions.address) {
+      if (!isGuest && (questions.document || questions.address)) {
         setIsSaving(true);
         try {
           const saveError = await saveIdentity(values, questions);
@@ -188,12 +313,20 @@ export function EventRegistrationDialog({
         }
       }
       if (!isOpenRef.current) return;
-      onConfirm(registrationAnswersPayload(questions.fields, answers));
+      const confirmation: RegistrationConfirmation = {
+        answers: registrationAnswersPayload(questions.fields, answers),
+      };
+      if (isGuest) {
+        confirmation.buyer = buyerFrom(values, questions);
+        if (needsTurnstile && turnstileToken) confirmation.turnstileToken = turnstileToken;
+      }
+      onConfirm(confirmation);
     })(e);
   };
 
   const shownError = identityError ?? error;
   const addressError = form.formState.errors.address?.message;
+  const fieldErrors = form.formState.errors;
 
   return (
     <Dialog
@@ -202,13 +335,112 @@ export function EventRegistrationDialog({
         if (!next) handleCancel();
       }}
     >
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
+      <DialogContent
+        className="max-h-[90vh] overflow-y-auto"
+        onOpenAutoFocus={(e) => {
+          // Back from the payment step with a server error: start on the input to fix.
+          if (!buyerErrorField) return;
+          const input = formRef.current?.querySelector<HTMLElement>(`#${BUYER_FIELD_INPUT_ID[buyerErrorField]}`);
+          if (!input) return;
+          e.preventDefault();
+          input.focus();
+        }}
+      >
         {event && questions ? (
-          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+          <form ref={formRef} onSubmit={handleSubmit} className="space-y-4" noValidate>
             <DialogHeader>
               <DialogTitle>Complete sua inscrição</DialogTitle>
               <DialogDescription>{event.title}</DialogDescription>
             </DialogHeader>
+
+            {buyerAlert ? (
+              <p
+                role="alert"
+                className="rounded-md border border-destructive/50 p-3 text-sm font-medium text-destructive"
+                data-testid="text-registration-buyer-error"
+              >
+                {buyerAlert}
+              </p>
+            ) : null}
+
+            {isGuest ? (
+              <fieldset className="space-y-3">
+                <legend className="text-sm font-semibold">Seus dados</legend>
+                <div className="space-y-2">
+                  <Label htmlFor="guest-name">Nome completo</Label>
+                  <Input
+                    id="guest-name"
+                    autoComplete="name"
+                    className="h-11"
+                    aria-invalid={Boolean(fieldErrors.name)}
+                    aria-describedby={fieldErrors.name ? "guest-name-error" : undefined}
+                    data-testid="input-guest-name"
+                    {...form.register("name")}
+                  />
+                  {fieldErrors.name ? (
+                    <p
+                      id="guest-name-error"
+                      role="alert"
+                      className="text-sm font-medium text-destructive"
+                      data-testid="text-guest-name-error"
+                    >
+                      {fieldErrors.name.message}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="guest-email">E-mail</Label>
+                  <Input
+                    id="guest-email"
+                    type="email"
+                    autoComplete="email"
+                    className="h-11"
+                    aria-invalid={Boolean(fieldErrors.email)}
+                    aria-describedby={fieldErrors.email ? "guest-email-error" : undefined}
+                    data-testid="input-guest-email"
+                    {...form.register("email")}
+                  />
+                  {fieldErrors.email ? (
+                    <p
+                      id="guest-email-error"
+                      role="alert"
+                      className="text-sm font-medium text-destructive"
+                      data-testid="text-guest-email-error"
+                    >
+                      {fieldErrors.email.message}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="guest-phone">Telefone</Label>
+                  <Controller
+                    name="phone"
+                    control={form.control}
+                    render={({ field, fieldState }) => (
+                      <PhoneInputE164
+                        id="guest-phone"
+                        value={field.value}
+                        onChange={field.onChange}
+                        aria-invalid={fieldState.invalid}
+                        aria-describedby={fieldErrors.phone ? "guest-phone-error" : undefined}
+                        data-testid="input-guest-phone"
+                        className="w-full"
+                      />
+                    )}
+                  />
+                  {fieldErrors.phone ? (
+                    <p
+                      id="guest-phone-error"
+                      role="alert"
+                      className="text-sm font-medium text-destructive"
+                      data-testid="text-guest-phone-error"
+                    >
+                      {fieldErrors.phone.message}
+                    </p>
+                  ) : null}
+                </div>
+              </fieldset>
+            ) : null}
 
             {questions.document ? (
               <div className="space-y-2">
@@ -241,6 +473,7 @@ export function EventRegistrationDialog({
                 {addressError ? (
                   <p
                     id="registration-address-error"
+                    role="alert"
                     className="text-sm font-medium text-destructive"
                   >
                     {addressError}
@@ -256,9 +489,25 @@ export function EventRegistrationDialog({
               onChange={(fieldId, value) => setAnswers((prev) => ({ ...prev, [fieldId]: value }))}
             />
 
+            {turnstile ? <TurnstileWidget ref={turnstileRef} onToken={setTurnstileToken} /> : null}
+
             {shownError ? (
               <p role="alert" className="text-sm font-medium text-destructive">
                 {shownError}
+              </p>
+            ) : null}
+            {identityConflict && shownError ? (
+              <p className="text-sm">
+                <a className="font-medium underline" href="/forgot-email">
+                  Esqueci meu e-mail
+                </a>
+                {" · "}
+                <a
+                  className="font-medium underline"
+                  href={`/login?next=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`}
+                >
+                  Entrar
+                </a>
               </p>
             ) : null}
 
@@ -275,7 +524,7 @@ export function EventRegistrationDialog({
               <Button
                 type="submit"
                 className="min-h-11"
-                disabled={isBusy || foreignPaidBlocked}
+                disabled={isBusy || foreignPaidBlocked || waitingForTurnstile}
                 data-testid="button-confirm-registration"
               >
                 {isBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -289,16 +538,25 @@ export function EventRegistrationDialog({
   );
 }
 
-function identitySchemaFor(questions: RegistrationQuestions | null) {
+function identitySchemaFor(questions: RegistrationQuestions | null, isGuest: boolean) {
   return z
     .object({
       isForeigner: z.boolean(),
       cpf: z.string(),
       foreignDocument: z.string(),
       address: z.string(),
+      name: z.string(),
+      email: z.string(),
+      phone: z.string(),
     })
     .superRefine((data, ctx) => {
-      if (questions?.document) refineAccountDocument(data, ctx);
+      if (isGuest) refineGuestContact(data, ctx);
+      if (questions?.document) {
+        refineAccountDocument(data, ctx);
+        // The server checks the CPF digits too (resolveRegisterIdentity): say it here, not after the payment step.
+        const cpf = data.cpf.trim();
+        if (!data.isForeigner && CPF_FORMAT.test(cpf) && !validateCpf(cpf)) issue(ctx, "cpf", "CPF inválido");
+      }
       if (questions?.address && data.address.trim().length < 10) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -317,4 +575,37 @@ function identityBody(values: IdentityValues, questions: RegistrationQuestions) 
     return { isForeigner: true, foreignDocument: values.foreignDocument, ...address };
   }
   return { cpf: values.cpf, ...address };
+}
+
+const issue = (ctx: z.RefinementCtx, path: string, message: string) =>
+  ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
+
+/** Mirrors the server's `parseGuestBuyer` (name 3-120, no markup or links; e-mail; phone). */
+function refineGuestContact(data: IdentityValues, ctx: z.RefinementCtx) {
+  const name = data.name.trim();
+  if (name.length < 3) issue(ctx, "name", "Nome deve ter pelo menos 3 caracteres");
+  else if (name.length > 120) issue(ctx, "name", "Nome deve ter no máximo 120 caracteres");
+  else if (/[<>]/.test(name) || /https?:\/\/|www\./i.test(name)) issue(ctx, "name", "Nome inválido");
+  const email = accountEmailSchema.safeParse(data.email);
+  if (!email.success) issue(ctx, "email", email.error.errors[0]?.message ?? "Email inválido");
+  if (!/^\d{8,15}$/.test(data.phone)) issue(ctx, "phone", "Informe um telefone válido com DDD");
+}
+
+/** The guest buyer: contact data, plus the document and address only when asked. */
+function buyerFrom(values: IdentityValues, questions: RegistrationQuestions): GuestBuyer {
+  const buyer: GuestBuyer = {
+    name: values.name.trim(),
+    email: accountEmailSchema.parse(values.email),
+    phone: values.phone,
+  };
+  if (questions.document) {
+    if (values.isForeigner) {
+      buyer.isForeigner = true;
+      buyer.foreignDocument = values.foreignDocument;
+    } else {
+      buyer.cpf = values.cpf;
+    }
+  }
+  if (questions.address) buyer.address = values.address.trim();
+  return buyer;
 }

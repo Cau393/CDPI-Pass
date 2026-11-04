@@ -3,6 +3,11 @@ import type { Order } from "@shared/schema";
 import { storage } from "../storage";
 import { asaasService } from "../services/asaasService";
 import { buildCancellationEmailHtml } from "./cancellationEmailTemplate";
+import { ownerCanSeeOrder } from "./orderVisibility";
+import { AsaasApiError } from "./asaasErrors";
+
+export const ASAAS_CANCEL_UNAVAILABLE_MESSAGE =
+  "Não foi possível cancelar agora; tente novamente em alguns minutos.";
 
 export function buildOrderCancelSuccessMessage(handled: "pending" | "paid"): string {
   if (handled === "pending") {
@@ -15,7 +20,8 @@ export type ExecuteOrderCancelFailureCode =
   | "not_found"
   | "already_cancelled"
   | "invalid_status"
-  | "forbidden";
+  | "forbidden"
+  | "asaas_unavailable";
 
 export type ExecuteOrderCancelResult =
   | { ok: true; message: string }
@@ -39,13 +45,18 @@ function mapCancelFailure(
 
 function gateUserCancel(
   order: Order,
-  options: { actor: "admin" | "user"; userId?: string },
+  options: { actor: "admin" | "user"; userId?: string; userEmailVerified?: boolean },
 ): ExecuteOrderCancelResult | null {
   if (options.actor !== "user") {
     return null;
   }
   if (!options.userId || order.userId !== options.userId) {
     return { ok: false, code: "forbidden" };
+  }
+  // ADR-017: a guest order is hidden from its account until the e-mail is verified. Same
+  // answer as a missing order, so existence does not leak.
+  if (!ownerCanSeeOrder(order, { id: options.userId, emailVerified: options.userEmailVerified === true })) {
+    return { ok: false, code: "not_found" };
   }
   if (order.status === "paid") {
     return { ok: false, code: "invalid_status", status: order.status };
@@ -61,14 +72,44 @@ async function cancelPendingViaStorage(orderId: string): Promise<ExecuteOrderCan
   return { ok: true, message: buildOrderCancelSuccessMessage("pending") };
 }
 
-async function cancelAsaasChargeIfNeeded(asaasPaymentId: string | null): Promise<void> {
+/**
+ * A direct `pay_` charge (card, PIX, boleto) may still be confirmed by Asaas, so the order is
+ * discarded locally only when Asaas confirms the removal or says the charge is already gone
+ * (404, or the payment reads deleted). Any other answer keeps the order pending: a charge
+ * Asaas refuses to delete may still be paid. A payment-link id or no id keeps the old
+ * best-effort behaviour. Never logs the Asaas body.
+ */
+async function cancelAsaasChargeIfNeeded(asaasPaymentId: string | null, orderId: string): Promise<boolean> {
   if (!asaasPaymentId) {
-    return;
+    return true;
   }
+  const direct = asaasPaymentId.startsWith("pay_");
   try {
-    await asaasService.cancelPayment(asaasPaymentId);
+    const answer = await asaasService.cancelPayment(asaasPaymentId);
+    if (direct && answer?.deleted === false) {
+      console.error(`ASAAS_CANCEL_REFUSED payment=${asaasPaymentId}: delete answered deleted=false`);
+      return false;
+    }
+    return true;
   } catch (e) {
-    console.error("Erro ao cancelar cobrança Asaas:", e);
+    if (!direct) {
+      console.error("Erro ao cancelar cobrança Asaas:", e);
+      return true;
+    }
+    if (e instanceof AsaasApiError && e.status === 404) {
+      return true;
+    }
+    try {
+      const payment = await asaasService.getPayment(asaasPaymentId, orderId);
+      if (payment?.deleted === true) {
+        return true;
+      }
+    } catch {
+      // Asaas unreachable: treated as not deleted.
+    }
+    const status = e instanceof AsaasApiError ? e.status : "network";
+    console.error(`ASAAS_CANCEL_FAILED payment=${asaasPaymentId} status=${status}: order kept pending`);
+    return false;
   }
 }
 
@@ -101,7 +142,7 @@ async function enqueuePaidCancellationEmail(order: Order): Promise<void> {
 
 export async function executeOrderCancel(
   orderId: string,
-  options: { actor: "admin" | "user"; userId?: string },
+  options: { actor: "admin" | "user"; userId?: string; userEmailVerified?: boolean },
 ): Promise<ExecuteOrderCancelResult> {
   const order = await storage.getOrder(orderId);
   if (!order) {
@@ -122,7 +163,9 @@ export async function executeOrderCancel(
   }
 
   if (order.status === "pending") {
-    await cancelAsaasChargeIfNeeded(order.asaasPaymentId ?? null);
+    if (!(await cancelAsaasChargeIfNeeded(order.asaasPaymentId ?? null, order.id))) {
+      return { ok: false, code: "asaas_unavailable" };
+    }
     return cancelPendingViaStorage(orderId);
   }
 

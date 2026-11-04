@@ -6,6 +6,8 @@ Prod: **https://cdpipass.com.br** on an AWS EC2 instance.
 - No Docker image. The old `frontend/Dockerfile` was never built for production and was deleted on 2026-10-13 (Security-Backlog #21). Production is a git checkout on EC2: `pnpm install --frozen-lockfile`, `pnpm run build`, PM2 (see `.github/workflows/deploy.yml`).
 - `npm run build` = `tsup` (server → `dist/index.js`, worker → `dist/run-email-worker.js`) + `vite build` (SPA → `dist/`).
 - Express serves the built SPA in production (single origin, no separate static host).
+- Client `VITE_*` keys are inlined at build time from `frontend/.env` on the box (`envDir` in `vite.config.ts`; Vite's default would be `client/`). The build fails without `VITE_TURNSTILE_SITE_KEY`, so the deploy stops before the cutover (ADR-017).
+- nginx (`infra/nginx/cdpipass.com.br.conf`) is not applied by the deploy: the owner copies it and reloads nginx by hand. `proxy_read_timeout 120s` on the proxy blocks covers the 90 s card POST.
 
 ## PM2 processes (`ecosystem.config.cjs`)
 | App | Script | Notes |
