@@ -327,7 +327,12 @@ server (`POST /payments` with `creditCard`); the hosted `/paymentLinks` card bra
 - Polling never sees a deleted or reproved card payment (it cancels only on OVERDUE/CANCELED); only the webhook cancels such an order (M9/Q1).
 
 **Deploy notes (deploy B)**
-- Asaas must enable the direct card API (`POST /payments` with `creditCard`) on the production account.
+- ~~Asaas must enable the direct card API (`POST /payments` with `creditCard`) on the production account.~~
+  Corrected 2026-11-04: this prerequisite was written without a doc quote. The Asaas docs
+  (https://docs.asaas.com/docs/cobrancas-via-cartao-de-credito, checked 2026-11-03) require production enablement only
+  for tokenization, which the app does not use: "A tokenização está disponível para testes no Sandbox. Em produção, o
+  recurso depende de habilitação na sua conta." Direct `creditCard` + `creditCardHolderInfo` charges are not
+  listed as needing enablement. Gate (a) closed 2026-11-04 (lesson: quote the doc for every external prerequisite).
 - nginx `proxy_read_timeout` of at least 120 s for `/api/orders`: the card POST times out at 90 s (Asaas asks for
   "timeout mínimo de 60 segundos"), and a shorter proxy timeout turns an unknown outcome into a non-JSON 504.
 - `TURNSTILE_SECRET_KEY` and the hostname allowlist (Stage 2 note) now also gate every card submit.
