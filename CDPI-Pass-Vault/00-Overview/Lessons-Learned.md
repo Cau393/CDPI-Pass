@@ -306,3 +306,10 @@ One entry per mistake or wrong assumption that cost time. Each entry: date · sy
 - **Root cause:** CI runs `gitleaks git --log-opts="--all"` on a full-history checkout, so it scans every pushed branch. A high-entropy fixture password (`newPassword: "…"`) committed on the guest-stack branches on 2026-10-28 has failed every PR since that push, and no later edit removes it from history.
 - **Fix:** one exact fingerprint (`commit:file:rule:line`) in a root `.gitleaksignore`. A path or rule allowlist would weaken the scan for real secrets.
 - **Prevention:** run `gitleaks git --log-opts="--all" --redact .` before asking the owner to push any branch, not only the PR branch. Keep test passwords low-entropy (for example `test-password-1`). When the security job fails at an early step, the later steps (trivy) were skipped: re-run them locally before calling the PR green.
+
+## 2026-11-04 — a new integration test broke an untouched one in CI only
+
+- **Symptom:** PR #31 "Run Tests" failed in `lookupEmail.integration.test.ts` ("answers found:false for a valid CPF with no account" got `found: true`). That file was not changed, and the whole integration folder passed locally.
+- **Root cause:** the new `dashboardOnlineEvents.integration.test.ts` seeded a user with the fixed CPF `111.444.777-35`, which is lookupEmail's "no account" CPF. Integration files run in parallel against one database, so whenever the two overlapped (CI timing), the lookup found the seeded user.
+- **Fix:** the dashboard test seeds a random CPF per run (9154fcd).
+- **Prevention:** integration fixtures never use a fixed CPF, e-mail or id: generate them per run (`makeCpf()`, `randomUUID()`). Before adding a fixed value, grep `server/test/integration/` for it — another file may rely on it being absent.
