@@ -1619,3 +1619,56 @@ describe("PaymentModal — inline card, Turnstile, statuses and polling", () => 
     });
   });
 });
+
+describe("PaymentModal — lead tag", () => {
+  const key = `cdpi:lt:${event.id}`;
+  afterEach(() => {
+    authState.user = undefined;
+    localStorage.clear();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("sends the stored tag with the order", async () => {
+    authState.user = { isForeigner: false };
+    localStorage.setItem(key, "patrocinado");
+    const fetchMock = mockOrders({ status: 201, body: { payment: { pixQrCode: "x" } } });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderModal();
+
+    await user.click(screen.getByTestId("button-confirm-payment"));
+
+    await waitFor(() => {
+      expect(orderBodies(fetchMock)).toEqual([
+        expect.objectContaining({ eventId: event.id, leadTag: "patrocinado" }),
+      ]);
+    });
+  });
+
+  it("omits the key when there is no tag", async () => {
+    authState.user = { isForeigner: false };
+    const fetchMock = mockOrders({ status: 201, body: { payment: { pixQrCode: "x" } } });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderModal();
+
+    await user.click(screen.getByTestId("button-confirm-payment"));
+
+    await waitFor(() => expect(orderBodies(fetchMock)).toHaveLength(1));
+    expect(orderBodies(fetchMock)[0]).not.toHaveProperty("leadTag");
+  });
+
+  it("reads the tag when the buyer pays, not when the modal rendered", async () => {
+    authState.user = { isForeigner: false };
+    const fetchMock = mockOrders({ status: 201, body: { payment: { pixQrCode: "x" } } });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderModal();
+    localStorage.setItem(key, "consultores");
+
+    await user.click(screen.getByTestId("button-confirm-payment"));
+
+    await waitFor(() => expect(orderBodies(fetchMock)[0]).toHaveProperty("leadTag", "consultores"));
+  });
+});

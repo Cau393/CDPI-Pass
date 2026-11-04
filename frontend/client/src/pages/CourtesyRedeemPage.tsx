@@ -25,6 +25,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
 import { COURTESY_CODE_PARAM_REGEX } from "@/lib/authRedirect";
 import { COURTESY_CODE_INVALID_COPY } from "@/lib/eventCta";
+import { leadTagBody } from "@/lib/leadTag";
+import type { LeadTag } from "@shared/leadTag";
 import ContactChannels from "@/components/ContactChannels";
 import SiteFooter from "@/components/SiteFooter";
 import {
@@ -159,7 +161,7 @@ export default function CourtesyRedeemPage() {
   // Redeem courtesy mutation
   const redeemMutation = useMutation({
     mutationFn: async (
-      data: RedemptionFormData & { code: string; answers: Record<string, string> },
+      data: RedemptionFormData & { code: string; answers: Record<string, string>; leadTag?: LeadTag },
     ) => {
       return await apiRequest("POST", "/api/courtesy/redeem", data);
     },
@@ -206,6 +208,8 @@ export default function CourtesyRedeemPage() {
       ...data,
       code,
       answers: registrationAnswersPayload(questions, answers),
+      // The courtesy link carries the event; read the tag now, at submit time.
+      ...(linkData?.event?.id ? leadTagBody(linkData.event.id as string) : {}),
     });
   };
 

@@ -7,6 +7,7 @@ import { CreditCard, QrCode, FileText, Copy, CheckCircle, Clock } from "lucide-r
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { leadTagBody } from "@/lib/leadTag";
 import type { Event } from "@shared/schema";
 import type { SystemField } from "@shared/eventRegistrationForm";
 import { publicEventLocationLabel } from "@shared/eventModality";
@@ -357,6 +358,7 @@ export default function PaymentModal({
         paymentMethod: method,
         promoCode: promoCode, // <-- This is the crucial addition
         answers,
+        ...leadTagBody(event.id), // read now, at submit time
         ...(buyer ? { buyer } : {}),
         ...(cardFields ?? {}),
         ...(needsTurnstile && turnstileToken ? { turnstileToken } : {}),
