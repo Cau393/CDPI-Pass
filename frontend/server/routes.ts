@@ -134,6 +134,8 @@ import { myTicketsUrlFor } from "./utils/myTicketsUrl";
 import { refreshOrderPayment } from "./utils/refreshOrderPayment";
 import { maskEmail } from "@shared/maskEmail";
 import { parseLeadTag } from "@shared/leadTag";
+import { dashboardAuth } from "./utils/dashboardAuth";
+import { loadOnlineEventLeadCounts } from "./utils/dashboardOnlineEvents";
 import { getJwtSecret } from "./utils/requiredSecret";
 import multer from 'multer';
 import csv from 'csv-parser';
@@ -279,6 +281,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     requestWasSuccessful: (_req: any, res: any) => !res.locals.cardTurnstileFailed,
     keyGenerator: (req: any) =>
       `card:${String(req.user?.email ?? req.body?.buyer?.email ?? "").trim().toLowerCase()}`,
+  });
+
+  // ADR-018: feed of the external Masterclass dashboard. Per real IP (req.ip, trust proxy 1) and
+  // mounted BEFORE dashboardAuth, so guessing the token is throttled too.
+  const dashboardLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: "Muitas requisições. Tente novamente em instantes." },
+  });
+
+  app.get("/api/integrations/dashboard/online-events", dashboardLimiter, dashboardAuth, async (_req, res) => {
+    try {
+      res.set("Cache-Control", "no-store");
+      res.json({ events: await loadOnlineEventLeadCounts() });
+    } catch (error) {
+      console.error("GET /api/integrations/dashboard/online-events:", error);
+      res.status(500).json({ message: "Erro ao carregar eventos online" });
+    }
   });
 
   // Auth routes
