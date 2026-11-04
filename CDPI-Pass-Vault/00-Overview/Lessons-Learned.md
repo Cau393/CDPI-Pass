@@ -2,6 +2,11 @@
 
 One entry per mistake or wrong assumption that cost time. Each entry: date · symptom · root cause · prevention (rule or check). Newest first. When a prevention changes how code must be written, it also gets a one-line rule in `frontend/.claude/rules/*.md`.
 
+## 2026-11-04 — a deploy prerequisite was written without the doc quote
+- **Symptom:** ADR-017 said "Asaas must enable the direct card API" for production, which would have blocked the card flow on a step that may not exist.
+- **Root cause:** the prerequisite was written from memory, not from the provider's page. The Asaas docs (https://docs.asaas.com/docs/cobrancas-via-cartao-de-credito, checked 2026-11-03) require production enablement only for card tokenization, which the app does not use: "A tokenização está disponível para testes no Sandbox. Em produção, o recurso depende de habilitação na sua conta." Sending `creditCard` and `creditCardHolderInfo` directly needs no enablement.
+- **Prevention:** for every external-account prerequisite, quote the exact sentence from the provider's docs, with the URL and the check date. No quote, no prerequisite.
+
 ## 2026-10-07 — foreigners got a 500 on "Criar conta"
 - **Symptom:** a Paraguayan attendee (passport, `+595` phone) got `500 {"message":"Erro interno do servidor"}` on registration, right after ADR-014 shipped. Asaas and the `users_foreigner.sql` migration looked like suspects but were not involved.
 - **Root cause:** `PhoneInputE164` sends E.164 digits without `+` (`595981123456`), but every server caller ran `normalizePhoneE164(phone, "BR")`, which parsed those digits as a *Brazilian national* number (`+55595…`), found it invalid and threw. The register route called it inline in `createUser({...})`, so the plain `Error` hit the generic 500. Brazilians never noticed because their digits start with `55`. Some foreign numbers were silently corrupted instead: US `12025550100` was stored as BR `5512025550100`. Every test fixture was Brazilian.
