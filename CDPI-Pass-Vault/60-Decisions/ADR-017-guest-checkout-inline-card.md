@@ -1,7 +1,7 @@
 # ADR-017: Guest checkout, inline card payment and signup without an e-mail code
 
 - **Date**: 2026-10-28
-- **Status**: proposed (draft). Stage 1 is implemented (deploy A); stages 2, 3 and 4 are implemented on stacked local branches (deploy B, after the Stage 5 sandbox rehearsal); stages 5–7 are planned.
+- **Status**: deployed 2026-11-04. Stage 1 = deploy A (#27, `901fff6`); stages 2–5 = deploy B (#30, `9eb8d26`). Stage 6 (guest courtesy redeem) and Stage 7 (share links + lead source) are still planned; refund and chargeback events are Security-Backlog #29.
 
 ## Context
 Buying a ticket took: log in (or sign up and type a 6-digit e-mail code), open the event, check out, then pay
@@ -590,16 +590,25 @@ Gates (a) to (d), in order:
       prod-only, from `frontend/sql/`, not in `schema.ts`). After it, prod vs the backup differs by exactly the 2 columns. Live
       `/api/events` was 200 afterwards and login answered 401 for an unknown user. Staging still lacks the A7 index. `schema.ts`
       does not model it, so never `db:push` to prod.
-- [ ] (b) **Turnstile keys together:** `VITE_TURNSTILE_SITE_KEY` (build) and `TURNSTILE_SECRET_KEY` (server) set at the same time, with the
+- [x] (b) **Turnstile keys together:** `VITE_TURNSTILE_SITE_KEY` (build) and `TURNSTILE_SECRET_KEY` (server) set at the same time, with the
       Cloudflare widget "Hostname Management" = the prod hostnames. Both go in `~/CDPI-Pass/frontend/.env` on EC2 before the merge (the
       running code ignores them). Since the deploy-B prep (2026-10-29) `vite.config.ts` reads env files from `frontend/` (`envDir`); before,
       Vite read only `frontend/client/`, so a key in `frontend/.env` never reached the bundle (proved by a probe build). A production build
       without the site key now fails, which stops the deploy before the cutover. nginx: `infra/nginx/cdpipass.com.br.conf` has
       `proxy_read_timeout 120s` on both proxy blocks (the 60 s default would 504 a 90 s card POST); the owner applies it (`sudo nginx -t`, reload).
-- [ ] (c) **Merge/deploy:** PR into `hotfix-frontend-update` (a push there is the prod deploy); the owner merges and pushes. Stages 2 to 5 go together.
-- [ ] (d) **Human test with a real site key** on the live site, Asaas **prod** account only after the owner says clear (no prod charge before):
+      **Done 2026-11-03 (owner-reported):** widget Managed, hostnames `cdpipass.com.br` + `www`; both keys in the EC2 `frontend/.env`;
+      `proxy_read_timeout 120s` on both blocks. 2026-11-04 after deploy B: nginx CSP (`/etc/nginx/sites-available/cdpipass.com.br`) gained
+      `challenges.cloudflare.com` in `script-src` + `frame-src` (backup `~/nginx-cdpipass.bak-2026-11-04`, `nginx -t` OK, live header
+      verified); dotenv loads the secret.
+- [x] (c) **Merge/deploy:** PR into `hotfix-frontend-update` (a push there is the prod deploy); the owner merges and pushes. Stages 2 to 5 go together.
+      **Done 2026-11-04.** Deploy A: #27 merged `901fff6`, run 41887331366 all green, EC2 `174b560..901fff6`, "Smoke test OK.",
+      "Deploy OK. Live /api/events -> 200". Deploy B: #30 merged `9eb8d26`, run 41888967245 all green, EC2 `901fff6..9eb8d26`, same
+      smoke and live checks; the live bundle carries the Turnstile script URL and the real site key (no test key). #30 first showed
+      CONFLICTING (two merge bases after #27's merge commit); fixed by the no-op merge `f38a535` (lesson `7564d4f`).
+- [x] (d) **Human test with a real site key** on the live site, Asaas **prod** account only after the owner says clear (no prod charge before):
       guest free; guest card approved; card declined then retry; passport buyer gets `foreign_paid_unavailable`. Plus the M5 step: after an unknown
       outcome reconciled to paid, close and reopen the modal and confirm the pay button enables once the Turnstile widget solves.
+      **Done 2026-11-04 ~19:00 UTC (owner-reported "All done" for the whole list).**
 - Test cards for the sandbox/human test: approve `4539578763621486` (the README's `4444...` fails our Luhn check), decline `5184019740373151`, expiry any future date, CVV 123.
 - Staging rows kept (synthetic, reusable): event `SBX S5 Evento pago (cartao)` (R$ 90 + 5 fee, presencial, 2026-12-12) with 15 paid orders,
   1 cancelled PIX and 1 pending guest card order; unused accounts `sbx-s5-spare2@`, `sbx-s5-tsfail@` and `sbx-s5-foreign@example.invalid`
@@ -610,7 +619,8 @@ Gates (a) to (d), in order:
 - A stale cancel event can cancel a NULL-id order that a newer attempt is still charging; the later `PAYMENT_CONFIRMED` is then logged as
   `REFUND_NEEDED`: grep prod logs for it after deploy B and refund by hand.
 - After deploy B, watch the prod logs for risk analysis, 3DS and `PAYMENT_ID_MISMATCH` lines (not provable in the sandbox).
-- The ADR status stays as it is until the owner reports deploy B done.
+- Deploy B done 2026-11-04 (status above). Still open after deploy: the EC2 reports "System restart required" (reboot in a
+  quiet window after checking `pm2 startup` + `pm2 save`), and the log watch above.
 
 **Verification (head `910b29b`, controller)**
 - Gates on 910b29b: `pnpm check` exit 0; `test:backend` 605 passed | 276 skipped; `test:frontend` 575 passed | 4 skipped; integration
