@@ -124,11 +124,11 @@ Sheets-based events; the owner wants the CDPI Pass online events next to them, w
 - There is no `.env.example` in the repo; the Environment-Variables note is the only env documentation.
 
 ## Deployment checklist
-- [ ] Staging: `db:push`, tagged-link manual run, participants shows Origem, `curl` 200 / 401
-- [ ] Prod: Neon backup branch created
-- [ ] Prod: `db:diff` shows the two statements above plus only the known A7 DROP INDEX (never run)
-- [ ] Prod: the two ALTERs run in one transaction with `lock_timeout` 5s, before the code deploy
-- [ ] Prod: Neon compare against the backup shows exactly the column + check
+- [ ] Staging: schema done 2026-11-05 (the same two ALTERs, owner OK; column + CHECK verified); tagged-link manual run, participants shows Origem, `curl` 200 / 401 still open
+- [x] Prod: Neon backup branch `backup-pre-adr018-lead-tag-2026-11-04` (`br-flat-fog-acqdv6as`, LSN 0/27EE0300)
+- [x] Prod: no db:diff/db:push used; the explicit SQL from `frontend/sql/orders_lead_tag.sql` only
+- [x] Prod: the two ALTERs ran in one transaction with `lock_timeout` 5s on 2026-11-05 ~00:57 UTC, before the code deploy (owner OK)
+- [x] Prod: Neon compare against the backup = exactly `lead_tag varchar(20)` + `orders_lead_tag_chk`
 - [ ] Owner set `DASHBOARD_API_TOKEN` in EC2 `frontend/.env`
 - [ ] PR into `hotfix-frontend-update` green; owner merged
 - [ ] Live `curl`: 401 without the token, 200 with it; counts match the participants page for one event (manual check)
