@@ -20,6 +20,7 @@ import {
 import { CheckoutSuccess } from "@/components/CheckoutSuccess";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import type { GuestBuyer } from "@/lib/guestBuyer";
+import { leadTagBody } from "@/lib/leadTag";
 import type { Event } from "@shared/schema";
 import type { SystemField } from "@shared/eventRegistrationForm";
 
@@ -61,6 +62,7 @@ export function useFreeSubscribe() {
     mutationFn: async (input: SubscribeInput) => {
       const body: Record<string, unknown> = { answers: input.answers };
       if (input.buyer) body.buyer = input.buyer;
+      Object.assign(body, leadTagBody(input.event.id));
       if (input.turnstileToken) body.turnstileToken = input.turnstileToken;
       const res = await apiRequest("POST", `/api/events/${input.event.id}/subscribe`, body);
       return res.json() as Promise<SubscribeResponse>;

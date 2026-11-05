@@ -275,6 +275,39 @@ describe("CourtesyRedeemPage — registration questions", () => {
     ).toEqual([]);
   });
 
+  it("sends the lead tag stored for the link's event (not another event's)", async () => {
+    authState.user = { email: "juan@example.com", name: "Juan Pérez", phone: "595981123456" };
+    const fetchMock = mockRedeem({ id: EVENT_ID, title: "Webinar CDPI", modality: "online", registrationForm: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    localStorage.setItem(`cdpi:lt:${EVENT_ID}`, "email");
+    localStorage.setItem("cdpi:lt:other-event", "parceiros");
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(await screen.findByTestId("input-partner-company"), "Laboratorio");
+    await user.type(screen.getByTestId("input-occupation"), "Farmacéutico");
+    await user.click(screen.getByTestId("button-redeem"));
+
+    await waitFor(() => expect(redeemBodies(fetchMock)).toHaveLength(1));
+    expect(redeemBodies(fetchMock)[0]).toHaveProperty("leadTag", "email");
+  });
+
+  it("omits leadTag when the link's event has no stored tag", async () => {
+    authState.user = { email: "juan@example.com", name: "Juan Pérez", phone: "595981123456" };
+    const fetchMock = mockRedeem({ id: EVENT_ID, title: "Webinar CDPI", modality: "online", registrationForm: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    localStorage.setItem("cdpi:lt:other-event", "parceiros");
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(await screen.findByTestId("input-partner-company"), "Laboratorio");
+    await user.type(screen.getByTestId("input-occupation"), "Farmacéutico");
+    await user.click(screen.getByTestId("button-redeem"));
+
+    await waitFor(() => expect(redeemBodies(fetchMock)).toHaveLength(1));
+    expect(redeemBodies(fetchMock)[0]).not.toHaveProperty("leadTag");
+  });
+
   it("redeems an online courtesy with a +595 phone and the answers", async () => {
     authState.user = { email: "juan@example.com", name: "Juan Pérez", phone: "595981123456" };
     const fetchMock = mockRedeem({

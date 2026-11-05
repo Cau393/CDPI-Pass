@@ -434,3 +434,37 @@ describe("useFreeSubscribe — N2: auth still resolving", () => {
     expect(await screen.findByTestId("input-guest-email")).toBeInTheDocument();
   });
 });
+
+describe("useFreeSubscribe — lead tag", () => {
+  const json = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+  async function subscribedBody() {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      json(201, { message: "ok", whatsappGroupUrl: null }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(appQueryClient, "invalidateQueries").mockResolvedValue();
+    const { result } = renderHook(() => useFreeSubscribe(), { wrapper });
+    act(() => result.current.subscribe(event));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`/api/events/${event.id}/subscribe`);
+    return JSON.parse(String(init!.body)) as Record<string, unknown>;
+  }
+
+  afterEach(() => {
+    localStorage.clear();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("sends the stored tag, read at submit time", async () => {
+    localStorage.setItem(`cdpi:lt:${event.id}`, "parceiros");
+    expect((await subscribedBody()).leadTag).toBe("parceiros");
+  });
+
+  it("omits the key when there is no tag", async () => {
+    expect(await subscribedBody()).not.toHaveProperty("leadTag");
+  });
+});

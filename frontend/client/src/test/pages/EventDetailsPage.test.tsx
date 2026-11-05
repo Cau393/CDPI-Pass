@@ -1010,3 +1010,31 @@ describe("EventDetailsPage — guest purchase (logged out)", () => {
     expect(screen.getByTestId("button-confirm-registration")).toBeDisabled();
   });
 });
+
+describe("EventDetailsPage — lead tag capture", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", mockApi(baseEvent));
+    localStorage.setItem("token", "test-token");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    localStorage.clear();
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("stores a valid ?tag= for this event and leaves the URL alone", async () => {
+    window.history.replaceState({}, "", `/event/${EVENT_ID}?tag=parceiros`);
+    renderPage();
+    await screen.findByText(/Comprar Ingresso/);
+    expect(localStorage.getItem(`cdpi:lt:${EVENT_ID}`)).toBe("parceiros");
+    expect(window.location.search).toBe("?tag=parceiros");
+  });
+
+  it("stores nothing for an unknown tag", async () => {
+    window.history.replaceState({}, "", `/event/${EVENT_ID}?tag=hacker`);
+    renderPage();
+    await screen.findByText(/Comprar Ingresso/);
+    expect(localStorage.getItem(`cdpi:lt:${EVENT_ID}`)).toBeNull();
+  });
+});

@@ -44,6 +44,7 @@ function participant(overrides: Partial<ParticipantExportRow> = {}): Participant
     presenca: "Não confirmou presença",
     orderStatus: "paid",
     registrationAnswers: [],
+    leadTag: null,
     ...overrides,
   };
 }
@@ -63,7 +64,7 @@ describe("statusLabelForExcel", () => {
 
 describe("buildParticipantSheet", () => {
   it("still has the header row when nobody is registered", () => {
-    expect(buildParticipantSheet([], [])).toEqual([FIXED_HEADERS]);
+    expect(buildParticipantSheet([], [])).toEqual([[...FIXED_HEADERS, "Origem"]]);
   });
 
   it("writes the fixed columns for a Brazilian buyer", () => {
@@ -80,7 +81,29 @@ describe("buildParticipantSheet", () => {
       "Não confirmou presença",
       "Pago",
       "",
+      "Direto",
     ]);
+  });
+
+  it("puts Origem last, after the question columns, and maps tags to their labels", () => {
+    const sheet = buildParticipantSheet(
+      [
+        participant({ leadTag: "parceiros", registrationAnswers: [{ fieldId: "q-turno", label: "Turno", value: "Tarde" }] }),
+        participant({ leadTag: null }),
+        participant({ leadTag: "email" }),
+        participant({ leadTag: "tampered" }),
+      ],
+      [field({ id: "q-turno", label: "Turno" })],
+    );
+    expect(sheet[0].at(-1)).toBe("Origem");
+    expect(sheet[0].slice(11)).toEqual(["Turno", "Origem"]);
+    expect(sheet.slice(1).map((r) => r.at(-1))).toEqual(["Parceiros", "Direto", "E-mail", "Direto"]);
+    expect(sheet[1][11]).toBe("Tarde");
+  });
+
+  it("numbers a question labelled Origem so the lead column keeps its name", () => {
+    const [header] = buildParticipantSheet([], [field({ id: "q-o", label: "Origem" })]);
+    expect(header.slice(11)).toEqual(["Origem (2)", "Origem"]);
   });
 
   it("fills the profile columns and gives the legacy questions no columns of their own", () => {
@@ -98,7 +121,7 @@ describe("buildParticipantSheet", () => {
       ],
       [...legacyForm, field({ id: "q-turno", label: "Turno" })],
     );
-    expect(sheet[0]).toEqual([...FIXED_HEADERS, "Turno"]);
+    expect(sheet[0]).toEqual([...FIXED_HEADERS, "Turno", "Origem"]);
     expect(sheet[1].slice(6, 8)).toEqual(["Médica", "Clínica Aurora"]);
     expect(sheet[1][10]).toBe("Pesquisa");
     expect(sheet[1][11]).toBe("Tarde");
@@ -113,7 +136,7 @@ describe("buildParticipantSheet", () => {
       ],
       [],
     );
-    expect(sheet[0]).toEqual([...FIXED_HEADERS]);
+    expect(sheet[0]).toEqual([...FIXED_HEADERS, "Origem"]);
   });
 
   it("shows Estrangeiro Sim and the passport for a foreign visitor", () => {
@@ -163,7 +186,7 @@ describe("buildParticipantSheet", () => {
       ],
       form,
     );
-    expect([sheet[0].slice(11), sheet[1].slice(11)]).toEqual([
+    expect([sheet[0].slice(11, -1), sheet[1].slice(11, -1)]).toEqual([
       ["Cargo", "Área"],
       ["Farmacêutica", "Indústria"],
     ]);
@@ -182,13 +205,13 @@ describe("buildParticipantSheet", () => {
       ],
       form,
     );
-    expect(header.slice(11)).toEqual(["Cargo", "Como soube (removida)"]);
+    expect(header.slice(11, -1)).toEqual(["Cargo", "Como soube (removida)"]);
   });
 
   it("drops an archived question nobody answered", () => {
     const form = [field({ id: "q-old", label: "Como soube", archived: true })];
     const [header] = buildParticipantSheet([participant()], form);
-    expect(header).toEqual(FIXED_HEADERS);
+    expect(header).toEqual([...FIXED_HEADERS, "Origem"]);
   });
 
   it("numbers a question whose label collides with another column", () => {
@@ -198,7 +221,7 @@ describe("buildParticipantSheet", () => {
       field({ id: "q-b", label: "Empresa" }),
     ];
     const [header] = buildParticipantSheet([], form);
-    expect(header.slice(11)).toEqual(["Telefone (2)", "Empresa", "Empresa (2)"]);
+    expect(header.slice(11, -1)).toEqual(["Telefone (2)", "Empresa", "Empresa (2)"]);
   });
 
   it("keeps a legacy interest-area answer even when the event form lost that question", () => {
@@ -212,7 +235,7 @@ describe("buildParticipantSheet", () => {
       ],
       [],
     );
-    expect([header.slice(11), row.slice(11)]).toEqual([
+    expect([header.slice(11, -1), row.slice(11, -1)]).toEqual([
       ["Área de interesse (removida)"],
       ["Pesquisa"],
     ]);

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Calendar, MapPin, Users, Clock, ArrowLeft, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
+import { captureLeadTagFromUrl } from "@/lib/leadTag";
 import { useAuth } from "@/hooks/useAuth";
 import { isAuthResolving } from "@/lib/authResolving";
 import { useToast } from "@/hooks/use-toast";
@@ -70,13 +71,20 @@ export default function EventDetailsPage() {
     const params = new URLSearchParams(window.location.search);
     setPromoCode(params.get("promo"));
     setCourtesyCode(params.get("cortesia"));
-  }, []);
+  }, [id]);
 
   // ✅ Fetch main event details
   const { data: event, isLoading, error } = useQuery<Event>({
     queryKey: [`/api/events/${id}`],
     enabled: !!id,
   });
+
+  // ADR-018: remember ?tag= once the event resolved, keyed by the server's event.id (the key the
+  // order senders read), never the raw route param. The URL keeps ?tag=, so a reload re-captures.
+  const resolvedEventId = event?.id;
+  useEffect(() => {
+    if (resolvedEventId) captureLeadTagFromUrl(resolvedEventId, window.location.search);
+  }, [resolvedEventId]);
 
   const { data: userOrdersData } = useQuery<{ orders: Order[] }>({
     queryKey: ["/api/orders", "event-details-gate"],

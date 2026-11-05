@@ -79,6 +79,14 @@ Admin create/edit (`EventFormFields`) has a Presencial/Online radio, a condition
 ## Event description (rich text)
 Stored as a sanitised HTML subset (`p, br, strong, b, em, i, u`; `client/src/lib/eventDescriptionHtml.ts`). Legacy rows are plain text with `\n` and are converted to `<p>` on first edit. The TipTap editor emits `<p>text<br></p>` for a hard break at the end of a paragraph and *shows* it as a blank line; browsers do not (measured: 2px gap, identical to no break, while a blank `<p></p>` gives 22px). `EventDescriptionDisplay` therefore renders through `prepareDescriptionHtmlForDisplay`, which turns each trailing `<br>` into an empty `<p></p>` (height `min-h-[1.3em]`; the `lh` unit is unsupported before iOS 16.4). Never render `event.description` with raw `dangerouslySetInnerHTML`; always go through that component.
 
+## Lead tags (ADR-018)
+- `client/src/lib/leadTag.ts`: `captureLeadTagFromUrl` (valid `?tag=` writes the cookie `cdpi_lt_<eventId>` (30 days), `localStorage` and `sessionStorage` `cdpi:lt:<eventId>`, and an in-memory Map; invalid or missing writes nothing), `getLeadTag`, `buildTaggedEventUrl`, `leadTagBody`. The list and labels come from `shared/leadTag.ts`.
+- **Capture:** `EventDetailsPage`, in the effect that reads `promo` / `cortesia`, on `/event/:id?tag=`. The URL is not rewritten.
+- **Senders** read the tag at submit time and add `leadTag` to the body: `PaymentModal` (`POST /api/orders`), `useFreeSubscribe`, `CourtesyRedeemPage` (event id from the courtesy lookup).
+- **Admin events list:** a **Copiar link** dropdown (aria-label `Copiar link (<title>)`) next to **Copiar ID** with E-mail / Parceiros / Patrocinado / Consultores; each copies `<origin>/event/<id>?tag=<tag>`. Hidden below `md`.
+- **Admin participants:** an **Origem** column (label, "Direto" when none) and **Origem** as the last Excel column.
+- E2E: `frontend/e2e/tests/lead-tag.spec.ts`.
+
 ## Conventions
 - **Server state**: TanStack Query; mutations invalidate queries. Query keys mirror API paths.
 - **Forms**: React Hook Form + Zod schemas (shared with backend via `shared/schema.ts` where possible).

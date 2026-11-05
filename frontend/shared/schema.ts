@@ -18,6 +18,7 @@ import {
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import type { RegistrationAnswer, RegistrationField } from "./eventRegistrationForm";
+import { LEAD_TAGS } from "./leadTag";
 
 /**
  * Account mailbox: trim and lowercase before format check.
@@ -358,7 +359,13 @@ export const orders = pgTable("orders", {
     .$type<RegistrationAnswer[]>()
     .notNull()
     .default(sql`'[]'::jsonb`),
+  /** ADR-018 lead tag of this ticket (null = direct). Set at insert only; see shared/leadTag.ts. */
+  leadTag: varchar("lead_tag", { length: 20 }),
 }, (table) => [
+  check(
+    "orders_lead_tag_chk",
+    sql`${table.leadTag} IS NULL OR ${table.leadTag} IN (${sql.raw(LEAD_TAGS.map((t) => `'${t}'`).join(","))})`,
+  ),
   // ADR-016: an online order may carry no document; never both.
   check(
     "orders_identity_document_chk",
@@ -723,7 +730,10 @@ export const insertEventSchema = createInsertSchema(events).omit({
   currentAttendees: true,
 });
 
-export const insertOrderSchema = createInsertSchema(orders).omit({
+export const insertOrderSchema = createInsertSchema(orders, {
+  // Never a free string: routes run parseLeadTag; this is the same list for any other caller.
+  leadTag: z.enum(LEAD_TAGS).nullable().optional(),
+}).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
